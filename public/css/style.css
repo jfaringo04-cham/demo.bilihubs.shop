@@ -1,0 +1,101 @@
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.hero {
+  background: linear-gradient(135deg, #ee4d2d 0%, #ff6b5b 100%);
+  color: white;
+  padding: 60px 0;
+}
+
+.product-card {
+  transition: transform 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+}
+
+.product-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important;
+}
+
+.product-image {
+  height: 200px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.price {
+  color: #ee4d2d;
+  font-weight: bold;
+  font-size: 1.1rem;
+}
+
+.btn-bili-hub {
+  background-color: #ee4d2d;
+  color: white;
+  border: none;
+}
+
+.btn-bili-hub:hover {
+  background-color: #d03d1f;
+  color: white;
+}
+
+.navbar-brand {
+  font-weight: bold;
+  color: #ee4d2d !important;
+}
+
+.cart-badge {
+  background-color: #ee4d2d;
+}
+
+footer {
+  background-color: #f8f9fa;
+  padding: 20px 0;
+  margin-top: 50px;
+}
+
+.pagination {
+  gap: 8px;
+}
+
+.pagination .page-link {
+  font-size: 1.1rem;
+  padding: 12px 20px;
+  border-radius: 8px;
+  min-width: 50px;
+  text-align: center;
+  color: #ee4d2d;
+  border: 2px solid #ee4d2d;
+  background-color: white;
+  transition: all 0.3s;
+}
+
+.pagination .page-link:hover {
+  background-color: #ee4d2d;
+  color: white;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(238, 77, 45, 0.3);
+}
+
+.pagination .page-item.active .page-link {
+  background-color: #ee4d2d;
+  border-color: #ee4d2d;
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 4px 8px rgba(238, 77, 45, 0.3);
+}
+
+.pagination .page-item.disabled .page-link {
+  background-color: #f8f9fa;
+  border-color: #dee2e6;
+  color: #6c757d;
+  cursor: not-allowed;
+}
+
+.pagination-lg .page-link {
+  font-size: 1.25rem;
+  padding: 16px 28px;
+  min-width: 60px;
+}
