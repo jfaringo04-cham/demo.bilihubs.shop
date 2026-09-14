@@ -27,6 +27,9 @@ RUN composer install --no-interaction --no-scripts --optimize-autoloader --no-de
 # Copy the rest of the project
 COPY . .
 
+# Set permissions for storage and bootstrap/cache
+RUN chmod -R 775 storage bootstrap/cache
+
 # Build frontend assets (optional, skip if package.json or npm unavailable)
 RUN if [ -f package.json ] && [ -f /usr/bin/npm ]; then \
       npm install --no-audit --no-fund 2>/dev/null && \
