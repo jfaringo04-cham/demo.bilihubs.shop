@@ -1,4 +1,4 @@
-FROM php:8.3-cli
+FROM php:8.4-cli
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -27,8 +27,8 @@ RUN composer install --no-interaction --no-scripts --optimize-autoloader --no-de
 # Copy the rest of the project
 COPY . .
 
-# Build frontend assets (optional, skip if package.json missing)
-RUN if [ -f package.json ]; then \
+# Build frontend assets (optional, skip if package.json or npm unavailable)
+RUN if [ -f package.json ] && [ -f /usr/bin/npm ]; then \
       npm install --no-audit --no-fund 2>/dev/null && \
       npm run build 2>/dev/null; \
     fi || true
