@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     libonig-dev \
     libxml2-dev \
     libfreetype6-dev \
-    && docker-php-ext-install pdo_mysql zip gd mbstring dom ctype
+    && docker-php-ext-install pdo_mysql pdo pdo_pgsql zip gd mbstring dom ctype
 
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
