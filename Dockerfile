@@ -21,19 +21,19 @@ WORKDIR /app
 # Copy composer files first (para may cache layer)
 COPY composer.json composer.lock ./
 
-# Install PHP dependencies
+# Install PHP dependencies (skip scripts to avoid artisan errors during build)
 RUN composer install --no-interaction --no-scripts --optimize-autoloader --no-dev
 
 # Copy the rest of the project
 COPY . .
 
-# Copy .env if available
-RUN if [ -f .env ]; then cp .env .env.docker; fi || true
+# Build frontend assets (optional, skip if package.json missing)
+RUN if [ -f package.json ]; then \
+      npm install --no-audit --no-fund 2>/dev/null && \
+      npm run build 2>/dev/null; \
+    fi || true
 
-# Install npm dependencies and build assets
-RUN if [ -f package.json ]; then npm install --no-audit --no-fund && npm run build; fi || true
-
-# Run package discovery
+# Run package discovery (needs full project files)
 RUN composer dump-autoload --optimize
 
 # Expose port
