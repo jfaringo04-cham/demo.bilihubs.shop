@@ -52,12 +52,14 @@ class ComplianceMonitor
         'blood', 'gore', 'wound', 'corpse', 'dead body', 'murder', 'kill',
         'assault', 'rape', 'torture', 'beheading', 'fight', 'war',
         'soldier', 'terrorist', 'terror', 'isis', 'al-qaeda',
+        'baril', 'sable', 'pistola', 'sandata', 'armadong',
     ];
 
     public const DRUGS_KEYWORDS = [
         'drug', 'cocaine', 'heroin', 'meth', 'methamphetamine', 'fentanyl',
         'ecstasy', 'mdma', 'lsd', 'ketamine', 'marijuana', 'weed', 'cannabis',
         'thc', 'cbd', 'pill', 'substance', 'narcotic', 'dealer',
+        'shabu', 'bato', 'tiktok',
     ];
 
     public const BRAND_COUNTERFEIT_KEYWORDS = [
@@ -550,11 +552,84 @@ class ComplianceMonitor
             $triggers[] = $imageTrigger;
         }
 
+        $textTrigger = self::checkProductText($product);
+        if ($textTrigger) {
+            $triggers[] = $textTrigger;
+        }
+
+        $categoryTrigger = self::checkRestrictedCategory($product);
+        if ($categoryTrigger) {
+            $triggers[] = $categoryTrigger;
+        }
+
         if (!empty($triggers)) {
             self::notifyAdmins($product, $triggers);
         }
 
         return $triggers;
+    }
+
+    public static function checkProductText(Product $product): ?array
+    {
+        $text = strtolower($product->name . ' ' . ($product->description ?? ''));
+        $matched = [];
+        $matchedSet = [];
+
+        $keywordGroups = [
+            'violence/weapons' => self::VIOLENCE_KEYWORDS,
+            'drugs/illegal substances' => self::DRUGS_KEYWORDS,
+            'banned items' => self::BANNED_KEYWORDS,
+            'nudity/sexual content' => self::NUDITY_KEYWORDS,
+        ];
+
+        foreach ($keywordGroups as $label => $keywords) {
+            foreach ($keywords as $keyword) {
+                if (preg_match('/\b' . preg_quote($keyword, '/') . '\b/i', $text)) {
+                    if (!in_array($keyword, $matchedSet, true)) {
+                        $matchedSet[] = $keyword;
+                        $matched[] = "{$label} ('{$keyword}')";
+                    }
+                }
+            }
+        }
+
+        if (!empty($matched)) {
+            return [
+                'bucket' => 'automated_bot',
+                'trigger' => 'restricted_product_text',
+                'message' => 'Product name/description contains restricted keywords (' . implode(', ', array_slice($matched, 0, 5)) . ').',
+                'severity' => 'critical',
+                'auto_flag' => true,
+                'auto_suspend' => true,
+                'reasons' => array_values(array_unique($matched)),
+            ];
+        }
+
+        return null;
+    }
+
+    public static function checkRestrictedCategory(Product $product): ?array
+    {
+        $category = $product->category;
+        if (!$category) {
+            return null;
+        }
+
+        $categoryName = strtolower($category->name);
+
+        if (in_array($categoryName, self::BANNED_CATEGORIES, true)) {
+            return [
+                'bucket' => 'automated_bot',
+                'trigger' => 'banned_category',
+                'message' => "Product is in a banned category ('{$category->name}') and cannot be listed on the platform.",
+                'severity' => 'critical',
+                'auto_flag' => true,
+                'auto_suspend' => true,
+                'reasons' => ["product is in banned category '{$category->name}'"],
+            ];
+        }
+
+        return null;
     }
 
     public static function checkUserReports(Product $product): ?array

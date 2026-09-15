@@ -14,6 +14,7 @@
         "laravel/socialite": "^5.30",
         "laravel/tinker": "^3.0",
         "simplesoftwareio/simple-qrcode": "*"
+        
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
