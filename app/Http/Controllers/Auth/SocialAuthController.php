@@ -38,6 +38,9 @@ class SocialAuthController extends Controller
                 if ($user->isSeller()) {
                     return redirect()->intended(route('seller.dashboard'));
                 }
+                if ($user->isAdmin()) {
+                    return redirect()->intended(route('admin.dashboard'));
+                }
                 return redirect()->intended(route('home'));
             }
 
@@ -79,6 +82,9 @@ class SocialAuthController extends Controller
                 }
                 if ($user->isSeller()) {
                     return redirect()->intended(route('seller.dashboard'));
+                }
+                if ($user->isAdmin()) {
+                    return redirect()->intended(route('admin.dashboard'));
                 }
                 return redirect()->intended(route('home'));
             }
