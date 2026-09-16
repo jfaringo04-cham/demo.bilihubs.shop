@@ -1,49 +1,26 @@
-FROM php:8.4-cli
+FROM php:8.2-apache
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    unzip \
-    git \
-    libpq-dev \
-    libzip-dev \
-    libpng-dev \
-    libonig-dev \
-    libxml2-dev \
-    libfreetype6-dev \
-    && docker-php-ext-install pdo_mysql pdo pdo_pgsql zip gd mbstring dom ctype
+    libpng-dev libjpeg-dev libfreetype6-dev zip git unzip \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install gd pdo pdo_mysql
 
-# Install Composer
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+# Enable Apache rewrite
+RUN a2enmod rewrite
+
+# Copy project files
+COPY . /var/www/html
 
 # Set working directory
-WORKDIR /app
+WORKDIR /var/www/html
 
-# Copy composer files first (para may cache layer)
-COPY composer.json composer.lock ./
-
-# Install PHP dependencies (skip scripts to avoid artisan errors during build)
-RUN composer install --no-interaction --no-scripts --optimize-autoloader --no-dev
-
-# Copy the rest of the project
-COPY . .
-
-# Set permissions for storage and bootstrap/cache
-RUN chmod -R 775 storage bootstrap/cache
-
-# Build frontend assets (optional, skip if package.json or npm unavailable)
-RUN if [ -f package.json ] && [ -f /usr/bin/npm ]; then \
-      npm install --no-audit --no-fund 2>/dev/null && \
-      npm run build 2>/dev/null; \
-    fi || true
-
-# Run package discovery (needs full project files)
-RUN composer dump-autoload --optimize
+# Permissions for Laravel storage and bootstrap/cache
+RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
 
 # Expose port
-EXPOSE 8000
+EXPOSE 80
 
-# Start Laravel
-CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+# Start Apache
+CMD ["apache2-foreground"]
 
-RUN apt-get update && apt-get install -y libpq-dev \
-    && docker-php-ext-install pdo pdo_pgsql
