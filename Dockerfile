@@ -23,6 +23,15 @@ WORKDIR /var/www/html
 # Install PHP dependencies
 RUN composer install --no-dev --optimize-autoloader
 
+# Clear Laravel caches + run migrations
+RUN php artisan config:clear && \
+    php artisan cache:clear && \
+    php artisan route:clear && \
+    php artisan view:clear && \
+    php artisan migrate --force && \
+    php artisan storage:link || true
+
+
 # Update Apache config to use Laravel public folder
 RUN sed -i 's|/var/www/html|/var/www/html/public|g' /etc/apache2/sites-available/000-default.conf
 
