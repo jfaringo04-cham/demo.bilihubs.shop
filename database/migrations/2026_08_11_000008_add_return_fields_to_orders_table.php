@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('orders', function (Blueprint $table) {
-            $table->enum('return_status', ['none', 'requested', 'approved', 'rejected', 'returned'])->default('none')->after('status');
+            $table->string('return_status', 50)->default('none')->after('status');
             $table->text('return_reason')->nullable()->after('return_status');
         });
     }

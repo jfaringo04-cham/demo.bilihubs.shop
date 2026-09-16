@@ -13,7 +13,7 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
             $table->string('subject');
             $table->text('message');
-            $table->enum('status', ['open', 'in_progress', 'resolved', 'closed'])->default('open');
+            $table->string('status', 50)->default('open');
             $table->text('response')->nullable();
             $table->timestamp('responded_at')->nullable();
             $table->timestamps();

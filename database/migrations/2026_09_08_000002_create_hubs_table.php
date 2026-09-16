@@ -18,7 +18,7 @@ return new class extends Migration
             $table->decimal('longitude', 10, 7)->nullable();
             $table->string('contact_person')->nullable();
             $table->string('phone')->nullable();
-            $table->enum('status', ['active', 'inactive'])->default('active');
+            $table->string('status', 50)->default('active');
             $table->timestamps();
 
             $table->index(['logistic_id', 'status']);

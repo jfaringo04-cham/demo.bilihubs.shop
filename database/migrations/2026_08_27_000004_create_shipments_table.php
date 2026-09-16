@@ -14,7 +14,7 @@ return new class extends Migration
             $table->foreignId('rider_id')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('order_id')->nullable()->constrained()->nullOnDelete();
             $table->string('tracking_number')->unique();
-            $table->enum('status', ['pending', 'assigned', 'picked_up', 'in_transit', 'delivered', 'cancelled', 'delayed'])->default('pending');
+            $table->string('status', 50)->default('pending');
             $table->string('courier')->nullable();
             $table->text('pickup_address')->nullable();
             $table->text('delivery_address')->nullable();

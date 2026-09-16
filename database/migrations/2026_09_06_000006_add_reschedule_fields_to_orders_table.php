@@ -13,17 +13,35 @@ return new class extends Migration
             $table->text('reschedule_reason')->nullable()->after('failure_reason');
             $table->timestamp('reschedule_requested_at')->nullable()->after('reschedule_reason');
             $table->timestamp('rescheduled_at')->nullable()->after('reschedule_requested_at');
+            $table->string('status')->default('pending')->change();
         });
 
-        DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('pending', 'processing', 'shipped', 'delivered', 'cancelled', 'reschedule_requested', 'rescheduled', 'return_requested', 'returned') DEFAULT 'pending'");
+        // Drop old constraint kung meron
+        DB::statement("ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;");
+
+        // Add updated constraint
+        DB::statement("ALTER TABLE orders ADD CONSTRAINT orders_status_check 
+            CHECK (status IN (
+                'pending',
+                'processing',
+                'shipped',
+                'delivered',
+                'cancelled',
+                'reschedule_requested',
+                'rescheduled',
+                'return_requested',
+                'returned'
+            ));");
     }
 
     public function down(): void
     {
         Schema::table('orders', function (Blueprint $table) {
             $table->dropColumn(['reschedule_reason', 'reschedule_requested_at', 'rescheduled_at']);
+            $table->string('status')->default('pending')->change();
         });
 
-        DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('pending', 'processing', 'shipped', 'delivered', 'cancelled') DEFAULT 'pending'");
+        // Drop constraint kapag rollback
+        DB::statement("ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;");
     }
 };

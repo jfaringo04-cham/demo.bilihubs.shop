@@ -9,8 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('products', function (Blueprint $table) {
-            $table->enum('compliance_status', ['pending', 'approved', 'flagged'])
-                ->default('pending')->after('stock');
+            $table->string('compliance_status', 50)->default('pending')->after('stock');
             $table->text('admin_notes')->nullable()->after('compliance_status');
             $table->text('flagged_reason')->nullable()->after('admin_notes');
         });

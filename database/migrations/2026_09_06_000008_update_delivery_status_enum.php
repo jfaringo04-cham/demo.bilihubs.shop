@@ -9,16 +9,40 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement("ALTER TABLE orders MODIFY COLUMN delivery_status ENUM('pending','assigned','assigned_to_rider','in_transit','out_for_delivery','delivered_to_sorting_center','ready_for_delivery_pickup','picked_up_from_sorting_center','delivered','delivery_failed','failed','on_the_way') DEFAULT 'pending'");
+        // Change delivery_status column to string + default
+        Schema::table('orders', function (Blueprint $table) {
+            $table->string('delivery_status')->default('pending')->change();
+        });
 
-        DB::statement("UPDATE orders SET delivery_status = 'out_for_delivery' WHERE delivery_status = 'on_the_way'");
-        DB::statement("UPDATE orders SET delivery_status = 'delivery_failed' WHERE delivery_status = 'failed'");
+        // Drop old constraint kung meron
+        DB::statement("ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_delivery_status_check;");
 
-        DB::statement("ALTER TABLE orders MODIFY COLUMN delivery_status ENUM('pending','assigned','assigned_to_rider','in_transit','out_for_delivery','delivered_to_sorting_center','ready_for_delivery_pickup','picked_up_from_sorting_center','delivered','delivery_failed') DEFAULT 'pending'");
+        // Add updated CHECK constraint para limit values sa Postgres
+        DB::statement("ALTER TABLE orders ADD CONSTRAINT orders_delivery_status_check 
+            CHECK (delivery_status IN (
+                'pending',
+                'assigned',
+                'assigned_to_rider',
+                'in_transit',
+                'out_for_delivery',
+                'delivered_to_sorting_center',
+                'ready_for_delivery_pickup',
+                'picked_up_from_sorting_center',
+                'delivered',
+                'delivery_failed',
+                'failed',
+                'on_the_way'
+            ));");
     }
 
     public function down(): void
     {
-        DB::statement("ALTER TABLE orders MODIFY COLUMN delivery_status ENUM('pending','assigned','delivered_to_sorting_center','ready_for_delivery_pickup','picked_up_from_sorting_center','on_the_way','delivered','failed') DEFAULT 'pending'");
+        // Rollback: balik sa string + default 'pending'
+        Schema::table('orders', function (Blueprint $table) {
+            $table->string('delivery_status')->default('pending')->change();
+        });
+
+        // Drop constraint kapag rollback
+        DB::statement("ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_delivery_status_check;");
     }
 };

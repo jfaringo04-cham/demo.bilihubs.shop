@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             $table->foreignId('logistic_id')->nullable()->after('status')->constrained()->nullOnDelete();
-            $table->enum('logistic_status', ['pending', 'approved', 'rejected'])->nullable()->after('logistic_id');
+            $table->string('logistic_status', 50)->nullable()->after('logistic_id');
             $table->timestamp('logistic_approved_at')->nullable()->after('logistic_status');
             $table->text('logistic_rejection_reason')->nullable()->after('logistic_approved_at');
 

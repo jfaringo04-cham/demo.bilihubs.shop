@@ -15,7 +15,7 @@ return new class extends Migration
             $table->decimal('order_total', 12, 2)->default(0);
             $table->decimal('rate', 5, 2)->default(10);
             $table->decimal('amount', 12, 2)->default(0);
-            $table->enum('status', ['pending', 'paid'])->default('pending');
+            $table->string('status', 50)->default('pending');
             $table->timestamp('paid_at')->nullable();
             $table->timestamps();
 

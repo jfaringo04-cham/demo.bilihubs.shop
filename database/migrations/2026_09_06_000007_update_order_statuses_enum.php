@@ -9,23 +9,48 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('placed', 'confirmed', 'preparing', 'ready_for_pickup', 'picked_up', 'at_sorting_center', 'sorted', 'assigned_to_rider', 'out_for_delivery', 'delivered', 'completed', 'delivery_failed', 'returned', 'cancelled', 'reschedule_requested', 'rescheduled', 'return_requested', 'pending', 'processing', 'shipped') DEFAULT 'placed'");
+        // Change status column to string + default
+        Schema::table('orders', function (Blueprint $table) {
+            $table->string('status')->default('placed')->change();
+        });
 
-        DB::statement("UPDATE orders SET status = 'placed' WHERE status = 'pending'");
-        DB::statement("UPDATE orders SET status = 'confirmed' WHERE status = 'processing'");
-        DB::statement("UPDATE orders SET status = 'ready_for_pickup' WHERE status = 'shipped'");
+        // Drop old constraint kung meron
+        DB::statement("ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;");
 
-        DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('placed', 'confirmed', 'preparing', 'ready_for_pickup', 'picked_up', 'at_sorting_center', 'sorted', 'assigned_to_rider', 'out_for_delivery', 'delivered', 'completed', 'delivery_failed', 'returned', 'cancelled', 'reschedule_requested', 'rescheduled', 'return_requested') DEFAULT 'placed'");
+        // Add updated CHECK constraint para limit values sa Postgres
+        DB::statement("ALTER TABLE orders ADD CONSTRAINT orders_status_check 
+            CHECK (status IN (
+                'placed',
+                'confirmed',
+                'preparing',
+                'ready_for_pickup',
+                'picked_up',
+                'at_sorting_center',
+                'sorted',
+                'assigned_to_rider',
+                'out_for_delivery',
+                'delivered',
+                'completed',
+                'delivery_failed',
+                'returned',
+                'cancelled',
+                'reschedule_requested',
+                'rescheduled',
+                'return_requested',
+                'pending',
+                'processing',
+                'shipped'
+            ));");
     }
 
     public function down(): void
     {
-        DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('pending', 'processing', 'shipped', 'delivered', 'cancelled', 'reschedule_requested', 'rescheduled', 'return_requested') DEFAULT 'pending'");
+        // Rollback: balik sa string + default 'pending'
+        Schema::table('orders', function (Blueprint $table) {
+            $table->string('status')->default('pending')->change();
+        });
 
-        DB::statement("UPDATE orders SET status = 'pending' WHERE status = 'placed'");
-        DB::statement("UPDATE orders SET status = 'processing' WHERE status = 'confirmed'");
-        DB::statement("UPDATE orders SET status = 'shipped' WHERE status = 'ready_for_pickup'");
-
-        DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('pending', 'processing', 'shipped', 'delivered', 'cancelled') DEFAULT 'pending'");
+        // Drop constraint kapag rollback
+        DB::statement("ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;");
     }
 };

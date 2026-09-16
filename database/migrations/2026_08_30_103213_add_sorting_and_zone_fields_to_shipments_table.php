@@ -11,8 +11,8 @@ return new class extends Migration
         Schema::table('shipments', function (Blueprint $table) {
             $table->string('sorting_area')->nullable()->after('notes');
             $table->string('delivery_zone')->nullable()->after('sorting_area');
-            $table->enum('delivery_type', ['standard', 'same_day', 'cod'])->default('standard')->after('delivery_zone');
-            $table->enum('sorting_status', ['pending', 'received', 'scanned', 'sorted', 'staged'])->default('pending')->after('delivery_type');
+            $table->string('delivery_type', 50)->default('standard')->after('delivery_zone');
+            $table->string('sorting_status', 50)->default('pending')->after('delivery_type');
             $table->string('rack_number')->nullable()->after('sorting_status');
             $table->timestamp('received_at')->nullable()->after('rack_number');
             $table->timestamp('scanned_at')->nullable()->after('received_at');

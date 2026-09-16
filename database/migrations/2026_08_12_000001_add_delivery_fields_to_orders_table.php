@@ -24,7 +24,7 @@ return new class extends Migration
 
         Schema::table('orders', function (Blueprint $table) {
             if (!Schema::hasColumn('orders', 'delivery_status')) {
-                $table->enum('delivery_status', ['pending', 'assigned', 'delivered_to_sorting_center', 'ready_for_delivery_pickup', 'picked_up_from_sorting_center', 'on_the_way', 'delivered', 'failed'])->default('pending')->after('return_status');
+                $table->string('delivery_status', 50)->default('pending')->after('return_status');
             }
             if (!Schema::hasColumn('orders', 'proof_type')) {
                 $table->string('proof_type')->nullable()->after('delivery_status');

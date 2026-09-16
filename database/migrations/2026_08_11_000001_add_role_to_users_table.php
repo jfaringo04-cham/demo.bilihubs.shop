@@ -9,10 +9,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->enum('role', ['customer', 'seller', 'admin', 'rider'])->default('customer')->after('email');
+            $table->string('role', 50)->default('customer')->after('email');
             $table->string('phone')->nullable()->after('role');
             $table->text('address')->nullable()->after('phone');
         });
+
+        DB::statement("ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('customer','seller','admin','rider','logistic_owner','guest'));");
     }
 
     public function down(): void

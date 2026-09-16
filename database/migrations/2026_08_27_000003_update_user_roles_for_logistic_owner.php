@@ -9,55 +9,30 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (Schema::getConnection()->getDriverName() === 'sqlite') {
-            Schema::table('users', function (Blueprint $table) {
-                $table->string('role_temp')->default('customer')->after('email');
-            });
+        // Palitan ang enum ng string + default
+        Schema::table('users', function (Blueprint $table) {
+            $table->string('role')->default('customer')->change();
+        });
 
-            DB::table('users')->update(['role_temp' => DB::raw('role')]);
+        // Drop any existing CHECK constraints on role column (handles both
+        // PostgreSQL auto-generated names and named constraints from
+        // earlier migrations)
+        DB::statement("ALTER TABLE users DROP CONSTRAINT IF EXISTS role_check;");
+        DB::statement("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;");
 
-            Schema::table('users', function (Blueprint $table) {
-                $table->dropColumn('role');
-            });
-
-            Schema::table('users', function (Blueprint $table) {
-                $table->enum('role', ['customer', 'seller', 'admin', 'rider', 'logistic_owner'])->default('customer')->after('email');
-            });
-
-            Schema::table('users', function (Blueprint $table) {
-                $table->dropColumn('role_temp');
-            });
-        } else {
-            Schema::table('users', function (Blueprint $table) {
-                $table->enum('role', ['customer', 'seller', 'admin', 'rider', 'logistic_owner'])->default('customer')->change();
-            });
-        }
+        // Add CHECK constraint with all valid roles including logistic_owner
+        DB::statement("ALTER TABLE users ADD CONSTRAINT role_check 
+            CHECK (role IN ('customer','seller','admin','rider','logistic_owner','guest'));");
     }
 
     public function down(): void
     {
-        if (Schema::getConnection()->getDriverName() === 'sqlite') {
-            Schema::table('users', function (Blueprint $table) {
-                $table->string('role_temp')->default('customer')->after('email');
-            });
+        // Rollback: balik sa simpleng string + default
+        Schema::table('users', function (Blueprint $table) {
+            $table->string('role')->default('customer')->change();
+        });
 
-            DB::table('users')->update(['role_temp' => DB::raw('role')]);
-
-            Schema::table('users', function (Blueprint $table) {
-                $table->dropColumn('role');
-            });
-
-            Schema::table('users', function (Blueprint $table) {
-                $table->enum('role', ['customer', 'seller', 'admin', 'rider'])->default('customer')->after('email');
-            });
-
-            Schema::table('users', function (Blueprint $table) {
-                $table->dropColumn('role_temp');
-            });
-        } else {
-            Schema::table('users', function (Blueprint $table) {
-                $table->enum('role', ['customer', 'seller', 'admin', 'rider'])->default('customer')->change();
-            });
-        }
+        // Drop constraint kapag rollback
+        DB::statement("ALTER TABLE users DROP CONSTRAINT IF EXISTS role_check;");
     }
 };
