@@ -2,7 +2,7 @@ FROM php:8.2-apache
 
 # Install system dependencies + PHP extensions
 RUN apt-get update && apt-get install -y \
-    libpng-dev libjpeg-dev libfreetype6-dev zip git unzip libzip-dev \
+    libpng-dev libjpeg-dev libfreetype6-dev zip git unzip libzip-dev libonig-dev \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install gd pdo pdo_mysql bcmath mbstring zip
 
@@ -29,5 +29,3 @@ RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cac
 
 EXPOSE 80
 CMD ["apache2-foreground"]
-
-
