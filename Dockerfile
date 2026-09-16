@@ -1,6 +1,5 @@
 FROM php:8.4-apache
 
-
 # Install system dependencies + PHP extensions
 RUN apt-get update && apt-get install -y \
     libpng-dev libjpeg-dev libfreetype6-dev zip git unzip libzip-dev libonig-dev \
@@ -22,6 +21,13 @@ WORKDIR /var/www/html
 
 # Install PHP dependencies
 RUN composer install --no-dev --optimize-autoloader
+
+# Clear Laravel caches + run migrations (no shell needed)
+RUN php artisan config:clear && \
+    php artisan cache:clear && \
+    php artisan route:clear && \
+    php artisan view:clear && \
+    php artisan migrate --force
 
 # Update Apache config to use Laravel public folder
 RUN sed -i 's|/var/www/html|/var/www/html/public|g' /etc/apache2/sites-available/000-default.conf
