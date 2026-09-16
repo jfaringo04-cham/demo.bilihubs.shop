@@ -1,13 +1,11 @@
-FROM php:8.2-apache
+FROM php:8.3-apache
 
 # Install system dependencies + PHP extensions
 RUN apt-get update && apt-get install -y \
     libpng-dev libjpeg-dev libfreetype6-dev zip git unzip libzip-dev libonig-dev \
-    pkg-config build-essential autoconf \
+    pkg-config build-essential autoconf libicu-dev \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install gd pdo pdo_mysql bcmath mbstring zip
-
-
+    && docker-php-ext-install gd pdo pdo_mysql bcmath mbstring zip intl
 
 # Enable Apache rewrite
 RUN a2enmod rewrite
