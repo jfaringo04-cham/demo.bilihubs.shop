@@ -42,7 +42,7 @@ return [
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),
-        'redirect' => env('GOOGLE_REDIRECT_URI', 'https://demo.bilihubs.shop/auth/google/callback'),
+        'redirect' => env('GOOGLE_REDIRECT_URI', 'https://demo-bilihubs-shop.onrender.com/auth/google/callback'),
     ],
 
     'facebook' => [
