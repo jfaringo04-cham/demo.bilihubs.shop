@@ -62,6 +62,7 @@ Route::middleware('auth')->group(function () {
 
     Route::prefix('admin')->name('admin.')->middleware('admin')->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+        Route::get('/buyers', [DashboardController::class, 'buyers'])->name('buyers');
         Route::get('/sellers', [DashboardController::class, 'sellers'])->name('sellers');
         Route::get('/products', [DashboardController::class, 'products'])->name('products');
         Route::get('/riders', [DashboardController::class, 'riders'])->name('riders');
@@ -107,8 +108,6 @@ Route::middleware('auth')->group(function () {
             Route::post('/{logistic}/reject', [AdminLogisticController::class, 'reject'])->name('reject');
             Route::post('/{logistic}/suspend', [AdminLogisticController::class, 'suspend'])->name('suspend');
             Route::post('/{logistic}/activate', [AdminLogisticController::class, 'activate'])->name('activate');
-            Route::post('/riders/{rider}/approve', [AdminLogisticController::class, 'approveRider'])->name('riders.approve');
-            Route::post('/riders/{rider}/reject', [AdminLogisticController::class, 'rejectRider'])->name('riders.reject');
         });
 
         Route::prefix('shipments')->name('shipments.')->group(function () {
@@ -219,7 +218,6 @@ Route::middleware('auth')->group(function () {
         Route::get('/riders/{rider}', [LogisticController::class, 'showRider'])->name('riders.show');
         Route::post('/riders/{rider}/approve', [LogisticController::class, 'approveRiderApplication'])->name('riders.approve');
         Route::post('/riders/{rider}/reject', [LogisticController::class, 'rejectRiderApplication'])->name('riders.reject');
-        Route::post('/riders/{rider}/submit', [LogisticController::class, 'submitRiderToAdmin'])->name('riders.submit');
         Route::post('/riders/{rider}/location', [LogisticController::class, 'updateRiderLocation'])->name('riders.location');
         Route::get('/applications', [LogisticController::class, 'pendingApplications'])->name('applications');
         Route::get('/riders/register', [LogisticController::class, 'showRiderRegistration'])->name('riders.register');
@@ -255,6 +253,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/hubs/{hub}/riders/assign', [LogisticController::class, 'assignRiderToHub'])->name('hubs.riders.assign');
         Route::post('/hubs/{hub}/riders/unassign', [LogisticController::class, 'unassignRiderFromHub'])->name('hubs.riders.unassign');
         Route::get('/notifications', [LogisticController::class, 'notifications'])->name('notifications');
+        Route::get('/about', [LogisticController::class, 'about'])->name('about');
 
         Route::get('/messages', [SharedMessageController::class, 'index'])->name('messages.index');
         Route::get('/messages/{user}', [SharedMessageController::class, 'show'])->name('messages.show');

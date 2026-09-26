@@ -1,6 +1,11 @@
 @extends('seller.layout')
 
+@push('styles')
+  @vite('resources/css/seller/products.css')
+@endpush
+
 @section('content')
+
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
   <h1 class="h2">Edit Product</h1>
   <a href="{{ route('seller.products') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back</a>
@@ -84,7 +89,7 @@
     <div class="row">
       <div class="col-md-6 mb-3">
         <label for="price" class="form-label">Price ($)</label>
-        <input type="number" name="price" id="price" class="form-control" value="{{ old('price', $product->price) }}" step="0.01" min="0" required>
+        <input type="number" name="price" id="price" class="form-control" value="{{ old('price', ($product->price_minor / 100)) }}" step="0.01" min="0" required>
         @error('price') <div class="text-danger">{{ $message }}</div> @enderror
       </div>
       <div class="col-md-6 mb-3">
@@ -159,65 +164,185 @@
 
     <hr>
 
+     <div class="mb-3">
+       <label class="form-label">Product Images</label>
+       <p class="text-muted small">Manage your product images. Each image appears in the product gallery.</p>
+       <input type="hidden" name="primary_image_id" id="primary-image-id" value="{{ $product->images()->where('is_primary', true)->first()?->id ?? '' }}">
+       @if($product->images->count() > 0)
+         <div class="row row-cols-auto g-2 mb-2" id="image-gallery">
+           @foreach($product->images as $img)
+             <div class="col" id="image-item-{{ $img->id }}">
+               <div class="position-relative border rounded" style="width: 80px; height: 80px;">
+                 <img src="{{ $img->url }}" class="w-100 h-100 rounded" style="object-fit: cover;" alt="{{ $img->alt_text ?? $product->name }}">
+                 @if($img->is_primary)
+                   <span class="position-absolute top-0 start-0 badge bg-success rounded-0" style="font-size: 0.6rem;"><i class="bi bi-star-fill"></i></span>
+                 @else
+                   <button type="button" class="btn btn-sm btn-outline-secondary position-absolute top-0 start-0 rounded-0" style="font-size: 0.5rem; padding: 2px 4px;" onclick="setPrimaryImage({{ $img->id }})" title="Set as Main Image">
+                     <i class="bi bi-star"></i>
+                   </button>
+                 @endif
+                 <button type="button" class="btn btn-sm btn-outline-danger position-absolute bottom-0 end-0 rounded-0" style="font-size: 0.5rem; padding: 2px 4px;" onclick="markRemoveImage({{ $img->id }}, '{{ addslashes($img->alt_text ?? $product->name) }}')" title="Remove image">
+                   <i class="bi bi-x"></i>
+                 </button>
+               </div>
+             </div>
+           @endforeach
+         </div>
+         <div id="remove-inputs"></div>
+       @endif
+       <label for="new_images" class="form-label mt-2">Add more images</label>
+       <input type="file" name="new_images[]" id="new_images" class="form-control" accept="image/*" multiple>
+       <small class="text-muted">You can upload multiple images (jpeg, png, jpg, gif). Max 2MB each.</small>
+       @error('new_images') <div class="text-danger">{{ $message }}</div> @enderror
+       @error('new_images.*') <div class="text-danger">{{ $message }}</div> @enderror
+     </div>
 
+     <div id="new-image-previews" class="row row-cols-auto g-2 mb-3"></div>
+
+    <hr>
 
     <div class="mb-3">
-      <label class="form-label">Price per Image (Buyable Options)</label>
-      <p class="text-muted small">Each image is a buyable option. Edit the price, name, and stock of each option below. Click <strong>Remove</strong> on any row to delete that image and its variation on save.</p>
-      @if($product->images->count() > 0)
-        <div class="table-responsive">
-          <table class="table table-bordered align-middle" id="image-variations-table">
-            <thead class="table-light">
-              <tr>
-                <th style="width:80px;">Image</th>
-                <th>Variation Name</th>
-                <th style="width:130px;">Price</th>
-                <th style="width:100px;">Stock</th>
-                <th>SKU (optional)</th>
-                <th style="width:120px;" class="text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              @foreach($product->images as $img)
-                @php
-                  $linkedVar = $product->variations->firstWhere('image_id', $img->id);
-                @endphp
-                <tr id="image-row-{{ $img->id }}">
-                  <td>
-                    <img src="{{ $img->url }}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;" alt="">
-                    <input type="hidden" name="image_variations[{{ $img->id }}][image_id]" value="{{ $img->id }}">
-                  </td>
-                  <td>
-                    <input type="text" name="image_variations[{{ $img->id }}][name]" class="form-control form-control-sm" value="{{ old('image_variations.' . $img->id . '.name', $linkedVar->name ?? $product->name) }}" required>
-                  </td>
-                  <td>
-                    <input type="number" name="image_variations[{{ $img->id }}][price]" class="form-control form-control-sm" step="0.01" min="0" value="{{ old('image_variations.' . $img->id . '.price', $linkedVar->price ?? $product->price) }}" required>
-                  </td>
-                  <td>
-                    <input type="number" name="image_variations[{{ $img->id }}][stock]" class="form-control form-control-sm" min="0" value="{{ old('image_variations.' . $img->id . '.stock', $linkedVar->stock ?? 1) }}" required>
-                  </td>
-                  <td>
-                    <input type="text" name="image_variations[{{ $img->id }}][sku]" class="form-control form-control-sm" value="{{ old('image_variations.' . $img->id . '.sku', $linkedVar->sku ?? '') }}">
-                  </td>
-                  <td class="text-center">
-                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="markRemoveImage({{ $img->id }}, '{{ addslashes($img->alt_text ?? $product->name) }}')" title="Remove this image and its variation">
-                      <i class="bi bi-trash"></i> Remove
-                    </button>
-                  </td>
-                </tr>
-              @endforeach
-            </tbody>
-          </table>
-        </div>
-        <div id="remove-inputs"></div>
-      @endif
-      <div id="new-image-price-list"></div>
-      <label for="new_images" class="form-label mt-2">Add more images (new options will appear below)</label>
-      <input type="file" name="new_images[]" id="new_images" class="form-control" accept="image/*" multiple>
-      <small class="text-muted">You can upload multiple images (jpeg, png, jpg, gif). Max 2MB each.</small>
-      @error('new_images') <div class="text-danger">{{ $message }}</div> @enderror
-      @error('new_images.*') <div class="text-danger">{{ $message }}</div> @enderror
+      <label class="form-label fw-medium">Product Variations</label>
+      <p class="text-muted small">Create buyable options with color, size, price, and stock. Each row is an independent purchasable variant.</p>
+      <p class="text-muted small mb-3">Color and size are optional. Leave Price blank to use the product's base price.</p>
+      <p class="text-muted small mb-3">If a variant has no image, it falls back to the product's cover image on the storefront.</p>
+
+      <div id="variants-list" class="variants-list">
+        @php
+          $existingVariations = $product->variations;
+          $variantIndex = 0;
+        @endphp
+        @forelse($existingVariations as $variation)
+          <div class="variant-row card mb-3" data-variation-id="{{ $variation->id }}" data-index="{{ $variantIndex }}">
+            <div class="card-body">
+              <input type="hidden" name="variations[{{ $variantIndex }}][id]" value="{{ $variation->id }}">
+              <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                  <label class="form-label form-label-sm mb-0">Image</label>
+                  <div class="variant-image-uploader" data-index="{{ $variantIndex }}">
+                    @if($variation->image_url)
+                      <div id="variant-image-placeholder-{{ $variantIndex }}" class="image-upload-placeholder d-none">
+                        <i class="bi bi-image"></i>
+                        <span>Upload Image</span>
+                      </div>
+                      <div id="variant-image-preview-{{ $variantIndex }}" class="image-preview-container">
+                        <img src="{{ $variation->image_url }}" class="image-preview-thumb" alt="Variant preview">
+                        <button type="button" class="btn-change" onclick="changeVariantImage({{ $variantIndex }})">Change</button>
+                        <button type="button" class="btn-remove" onclick="removeVariantImage({{ $variantIndex }})">×</button>
+                        <input type="file" name="variations[{{ $variantIndex }}][image]" class="variant-image-input" style="display:none;" accept="image/*">
+                      </div>
+                    @else
+                      <div id="variant-image-placeholder-{{ $variantIndex }}" class="image-upload-placeholder" onclick="changeVariantImage({{ $variantIndex }})">
+                        <i class="bi bi-image"></i>
+                        <span>Upload Image</span>
+                      </div>
+                      <div id="variant-image-preview-{{ $variantIndex }}" class="image-preview-container d-none">
+                        <img src="" class="image-preview-thumb" alt="Variant preview">
+                        <button type="button" class="btn-change" onclick="changeVariantImage({{ $variantIndex }})">Change</button>
+                        <button type="button" class="btn-remove" onclick="removeVariantImage({{ $variantIndex }})">×</button>
+                        <input type="file" name="variations[{{ $variantIndex }}][image]" class="variant-image-input" style="display:none;" accept="image/*">
+                      </div>
+                    @endif
+                  </div>
+                </div>
+
+                <div class="col-md-2">
+                  <label class="form-label form-label-sm mb-0">Color</label>
+                  <input type="text" name="variations[{{ $variantIndex }}][color]" class="form-control form-control-sm" placeholder="e.g. White" value="{{ $variation->color ?? '' }}">
+                </div>
+
+                <div class="col-md-2">
+                  <label class="form-label form-label-sm mb-0">Size</label>
+                  <input type="text" name="variations[{{ $variantIndex }}][size]" class="form-control form-control-sm" placeholder="e.g. 8 / XL" value="{{ $variation->size ?? '' }}">
+                </div>
+
+                <div class="col-md-2">
+                  <label class="form-label form-label-sm mb-0">Price</label>
+                  <input type="number" name="variations[{{ $variantIndex }}][price]" class="form-control form-control-sm" placeholder="Optional" step="0.01" min="0" value="{{ ($variation->price_minor !== null ? $variation->price_minor / 100 : '') }}">
+                  <small class="text-muted small d-block">Blank = uses product price</small>
+                </div>
+
+                <div class="col-md-1">
+                  <label class="form-label form-label-sm mb-0">Stock</label>
+                  <input type="number" name="variations[{{ $variantIndex }}][stock]" class="form-control form-control-sm" placeholder="0" min="0" value="{{ $variation->stock ?? 0 }}">
+                </div>
+
+                <div class="col-md-1">
+                  <label class="form-label form-label-sm mb-0">SKU</label>
+                  <input type="text" name="variations[{{ $variantIndex }}][sku]" class="form-control form-control-sm" placeholder="Optional" value="{{ $variation->sku ?? '' }}">
+                </div>
+
+                <div class="col-md-auto d-flex align-items-end">
+                  <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeVariantRow({{ $variantIndex }})" title="Remove this variant">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          @php $variantIndex++; @endphp
+        @empty
+          <div class="variant-row card mb-3" data-index="0">
+            <div class="card-body">
+              <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                  <label class="form-label form-label-sm mb-0">Image</label>
+                  <div class="variant-image-uploader" data-index="0">
+                    <div id="variant-image-placeholder-0" class="image-upload-placeholder" onclick="changeVariantImage(0)">
+                      <i class="bi bi-image"></i>
+                      <span>Upload Image</span>
+                    </div>
+                    <div id="variant-image-preview-0" class="image-preview-container d-none">
+                      <img src="" class="image-preview-thumb" alt="Variant preview">
+                      <button type="button" class="btn-change" onclick="changeVariantImage(0)">Change</button>
+                      <button type="button" class="btn-remove" onclick="removeVariantImage(0)">×</button>
+                      <input type="file" name="variations[0][image]" class="variant-image-input" style="display:none;" accept="image/*">
+                    </div>
+                  </div>
+                </div>
+
+                <div class="col-md-2">
+                  <label class="form-label form-label-sm mb-0">Color</label>
+                  <input type="text" name="variations[0][color]" class="form-control form-control-sm" placeholder="e.g. White">
+                </div>
+
+                <div class="col-md-2">
+                  <label class="form-label form-label-sm mb-0">Size</label>
+                  <input type="text" name="variations[0][size]" class="form-control form-control-sm" placeholder="e.g. 8 / XL">
+                </div>
+
+                <div class="col-md-2">
+                  <label class="form-label form-label-sm mb-0">Price</label>
+                  <input type="number" name="variations[0][price]" class="form-control form-control-sm" placeholder="Optional" step="0.01" min="0">
+                  <small class="text-muted small d-block">Blank = uses product price</small>
+                </div>
+
+                <div class="col-md-1">
+                  <label class="form-label form-label-sm mb-0">Stock</label>
+                  <input type="number" name="variations[0][stock]" class="form-control form-control-sm" placeholder="0" min="0" value="0">
+                </div>
+
+                <div class="col-md-1">
+                  <label class="form-label form-label-sm mb-0">SKU</label>
+                  <input type="text" name="variations[0][sku]" class="form-control form-control-sm" placeholder="Optional">
+                </div>
+
+                <div class="col-md-auto d-flex align-items-end">
+                  <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeVariantRow(0)" title="Remove this variant">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        @endforelse
+      </div>
+
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="add-variant-btn" onclick="addVariantRowEdit()">
+        <i class="bi bi-plus"></i> Add Another Variant
+      </button>
     </div>
+
     <div class="mb-3">
       <label class="form-label">Sizes</label>
       <div class="row">
@@ -297,147 +422,9 @@
 @endsection
 
 @push('scripts')
-<script>
-  function removeVideoAndSubmit() {
-    document.getElementById('remove-video-input').value = '1';
-    var btn = document.querySelector('button[type="submit"]');
-    if (btn) btn.click();
-  }
-
-  function removeSecondaryImageAndSubmit() {
-    document.getElementById('remove-secondary-image-input').value = '1';
-    var btn = document.querySelector('button[type="submit"]');
-    if (btn) btn.click();
-  }
-
-  function syncSizeStockState() {
-    document.querySelectorAll('.size-checkbox').forEach(function(cb) {
-      const stockInput = cb.closest('.col-md-4').querySelector('.size-stock-input');
-      if (stockInput) {
-        stockInput.disabled = !cb.checked;
-      }
-    });
-  }
-  syncSizeStockState();
-
-  document.querySelectorAll('.size-checkbox').forEach(function(checkbox) {
-    checkbox.addEventListener('change', function() {
-      const stockInput = this.closest('.col-md-4').querySelector('.size-stock-input');
-      stockInput.disabled = !this.checked;
-      if (!this.checked) {
-        stockInput.value = 0;
-      }
-    });
-  });
-
-  function markRemoveImage(id, name) {
-    if (!confirm('Remove "' + name + '" and its variation? This will be saved when you click Update Product.')) {
-      return;
-    }
-    const row = document.getElementById('image-row-' + id);
-    if (row) {
-      row.style.display = 'none';
-      row.querySelectorAll('input').forEach(function(input) {
-        input.disabled = true;
-      });
-    }
-    const container = document.getElementById('remove-inputs');
-    if (!container) return;
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'remove_images[]';
-    input.value = id;
-    container.appendChild(input);
-  }
-
-  function confirmRemoveProduct(id, name) {
-    if (!confirm('Are you sure you want to permanently remove "' + name + '"?\n\nThis will also delete all of its images, variations, and remove it from your shop. This action cannot be undone.')) {
-      return;
-    }
-    document.getElementById('remove-product-form-' + id).submit();
-  }
-
-  document.getElementById('new_images')?.addEventListener('change', function(e) {
-    const list = document.getElementById('new-image-price-list');
-    list.innerHTML = '';
-    const files = Array.from(e.target.files);
-    if (files.length === 0) return;
-
-    const heading = document.createElement('h6');
-    heading.className = 'mt-3 mb-2';
-    heading.textContent = 'Set price for new images (each becomes a buyable option)';
-    list.appendChild(heading);
-
-    files.forEach((file, idx) => {
-      const row = document.createElement('div');
-      row.className = 'card mb-2';
-      row.innerHTML = `
-        <div class="card-body py-2 px-3">
-          <div class="d-flex align-items-center gap-3">
-            <img src="${URL.createObjectURL(file)}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;" alt="preview">
-            <div class="flex-grow-1">
-              <div class="small text-muted">New Image #${idx + 1}</div>
-              <div class="fw-bold">${file.name}</div>
-            </div>
-            <div style="min-width: 240px;">
-              <div class="row g-1">
-                <div class="col-7">
-                  <input type="text" name="new_image_variations[${idx}][name]" class="form-control form-control-sm" placeholder="Variation name" value="${file.name.replace(/\.[^.]+$/, '')}" required>
-                </div>
-                <div class="col-5">
-                  <input type="number" name="new_image_variations[${idx}][price]" class="form-control form-control-sm" placeholder="Price" step="0.01" min="0" required>
-                </div>
-              </div>
-              <div class="row g-1 mt-1">
-                <div class="col-7">
-                  <input type="number" name="new_image_variations[${idx}][stock]" class="form-control form-control-sm" placeholder="Stock" min="0" value="1" required>
-                </div>
-                <div class="col-5">
-                  <input type="text" name="new_image_variations[${idx}][sku]" class="form-control form-control-sm" placeholder="SKU (optional)">
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-      list.appendChild(row);
-    });
-  });
-
-  function updateDiscountPreviewEdit() {
-    const pct = parseFloat(document.getElementById('discount_percent')?.value || 0);
-    const preview = document.getElementById('discount-preview');
-    const text = document.getElementById('discount-preview-text');
-    if (pct > 0) {
-      const prices = document.querySelectorAll('#image-variations-table input[name^=\"image_variations\"][name$=\"[price]\"]');
-      if (prices.length > 0) {
-        let firstPrice = parseFloat(prices[0].value || 0);
-        if (firstPrice > 0) {
-          const discounted = (firstPrice * (1 - pct / 100)).toFixed(2);
-          text.textContent = `${pct}% off → first image will sell at ₱${discounted} (was ₱${firstPrice.toFixed(2)}). Buyers save ₱${(firstPrice - discounted).toFixed(2)}.`;
-          preview.style.display = 'block';
-          return;
-        }
-      }
-      text.textContent = `${pct}% discount will be applied to the price of each image/variation.`;
-      preview.style.display = 'block';
-    } else {
-      preview.style.display = 'none';
-    }
-  }
-
-  document.getElementById('discount_percent')?.addEventListener('input', updateDiscountPreviewEdit);
-  document.addEventListener('input', function(e) {
-    if (e.target.name && e.target.name.startsWith('image_variations') && e.target.name.endsWith('[price]')) {
-      updateDiscountPreviewEdit();
-    }
-  });
-
-  @if(in_array($product->compliance_status, ['flagged', 'auto_flagged']))
-  const flaggedModal = new bootstrap.Modal(document.getElementById('flaggedModal'));
-  flaggedModal.show();
-  @endif
-</script>
+@vite('resources/js/seller/products/edit.js')
 @endpush
+
+
 
 

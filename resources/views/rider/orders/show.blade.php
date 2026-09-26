@@ -85,8 +85,8 @@
               <tr>
                 <td>{{ $item->product_name }}</td>
                 <td>{{ $item->quantity }}</td>
-                <td>&#8369;{{ number_format($item->price, 2) }}</td>
-                <td>&#8369;{{ number_format($item->subtotal, 2) }}</td>
+                <td>&#8369;{{ number_format(($item->price_minor / 100), 2) }}</td>
+                <td>&#8369;{{ number_format(($item->subtotal_minor / 100), 2) }}</td>
               </tr>
             @endforeach
           </tbody>
@@ -197,7 +197,7 @@
         </span>
       </div>
       <div class="mb-3">
-        <strong>Total Amount:</strong> &#8369;{{ number_format($order->total, 2) }}
+        <strong>Total Amount:</strong> &#8369;{{ number_format(($order->total_minor / 100), 2) }}
       </div>
 
       @if($order->payment_method == 'cod' && $order->payment_status == 'unpaid')
@@ -210,7 +210,7 @@
           @csrf
           <div class="mb-2">
             <label class="form-label">Amount Collected</label>
-            <input type="number" name="amount_collected" class="form-control" step="0.01" value="{{ $order->total }}" required>
+            <input type="number" name="amount_collected" class="form-control" step="0.01" value="{{ ($order->total_minor / 100) }}" required>
           </div>
           <button type="submit" class="btn btn-bili-hub w-100">Collect Payment</button>
         </form>
@@ -218,7 +218,7 @@
 
       @if($order->payment_status == 'paid')
         <div class="alert alert-success mt-2">
-          <strong>Collected:</strong> &#8369;{{ number_format($order->amount_collected, 2) }}<br>
+          <strong>Collected:</strong> &#8369;{{ number_format(($order->amount_collected_minor / 100), 2) }}<br>
           <small>{{ $order->collected_at->format('M d, Y H:i') }}</small>
           @if($order->collector)
             <br><small>by {{ $order->collector->name }}</small>
@@ -231,54 +231,13 @@
 @endsection
 
 @push('scripts')
-<script>
-  document.addEventListener('DOMContentLoaded', function() {
-    @if(config('services.googlemaps.key'))
-      var map = new google.maps.Map(document.getElementById('rider-map'), {
-        zoom: 14,
-        center: { lat: 14.5995, lng: 120.9842 }
-      });
-
-      var geocoder = new google.maps.Geocoder();
-      geocoder.geocode({ address: '{{ $order->shipping_address }}' }, function(results, status) {
-        if (status == 'OK') {
-          map.setCenter(results[0].geometry.location);
-          new google.maps.Marker({
-            map: map,
-            position: results[0].geometry.location,
-            title: '{{ $order->user->name ?? 'Customer' }}'
-          });
-        }
-      });
-    @else
-      var map = L.map('rider-map').setView([14.5995, 120.9842], 14);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-      }).addTo(map);
-
-      L.marker([14.5995, 120.9842]).addTo(map)
-        .bindPopup('{{ $order->user->name ?? 'Customer' }}<br>{{ $order->shipping_address }}');
-    @endif
-
-    // Show/hide proof of delivery fields when "Delivered" is selected
-    const statusSelect = document.getElementById('delivery_status');
-    const proofFields = document.getElementById('delivery-proof-fields');
-    const photoInput = document.getElementById('proof_of_delivery');
-
-    function toggleProofFields() {
-      if (statusSelect.value === 'delivered') {
-        proofFields.style.display = 'block';
-        photoInput.required = true;
-      } else {
-        proofFields.style.display = 'none';
-        photoInput.required = false;
-      }
-    }
-
-    statusSelect.addEventListener('change', toggleProofFields);
-    toggleProofFields(); // Initial check
-  });
-</script>
+  @vite('resources/js/rider/deliveries.js')
 @endpush
+
+<script type="application/json" id="rider-delivery-data">@php $riderDeliveryData = [
+  'address' => $order->shipping_address,
+  'customerName' => $order->user->name ?? 'Customer',
+    ]; @endphp @json($riderDeliveryData)</script>
+
 
 

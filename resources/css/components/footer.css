@@ -1,0 +1,215 @@
+/*
+ * BiliHub shared footer
+ * Single stylesheet for the <x-footer /> component used by the buyer,
+ * seller, admin and rider layouts. No page-specific overrides live here.
+ */
+
+.bili-footer {
+  --bili-footer-bg: #2b1858;
+  --bili-footer-text: #cbd5e1;
+  --bili-footer-link: #c4b5f6;
+  --bili-footer-divider: rgba(196, 181, 246, 0.22);
+
+  background-color: var(--bili-footer-bg);
+  color: var(--bili-footer-text);
+  padding: 1.75rem 0;
+  margin-top: auto;
+  width: 100%;
+}
+
+.bili-footer a {
+  color: var(--bili-footer-link);
+  text-decoration: none;
+  transition: color 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.bili-footer a:hover {
+  color: #ffffff;
+}
+
+.bili-footer a:focus-visible,
+.bili-footer__brand:focus-visible {
+  outline: 2px solid #c4b5f6;
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+
+/* Top section: brand on the left, social buttons on the right */
+
+.bili-footer__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+}
+
+.bili-footer__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.bili-footer__brand:hover {
+  color: inherit;
+}
+
+.bili-footer__logo {
+  height: 44px;
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.bili-footer__brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.bili-footer__name {
+  color: #ffffff;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.bili-footer__tagline {
+  color: var(--bili-footer-text);
+  font-size: 0.8125rem;
+}
+
+.bili-footer__quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8125rem;
+}
+
+.bili-footer__quick-links a {
+  color: var(--bili-footer-text);
+}
+
+.bili-footer__quick-links a:hover {
+  color: #ffffff;
+  text-decoration: underline;
+}
+
+.bili-footer__social {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bili-footer__social-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--bili-footer-divider);
+  color: var(--bili-footer-link);
+  font-size: 1rem;
+}
+
+.bili-footer__social-link:hover {
+  background-color: rgba(139, 92, 246, 0.25);
+  border-color: rgba(196, 181, 246, 0.5);
+  color: #ffffff;
+}
+
+/* Divider between the brand/social row and the legal row */
+
+.bili-footer__divider {
+  height: 1px;
+  border: 0;
+  margin: 1.25rem 0 1rem;
+  background-color: var(--bili-footer-divider);
+}
+
+/* Bottom section: copyright on the left, legal links on the right */
+
+.bili-footer__bottom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  font-size: 0.8125rem;
+}
+
+.bili-footer__copyright {
+  margin: 0;
+  color: var(--bili-footer-text);
+}
+
+.bili-footer__legal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bili-footer__legal-item {
+  color: var(--bili-footer-link);
+}
+
+.bili-footer__legal-item.is-pending {
+  color: var(--bili-footer-text);
+  opacity: 0.7;
+  cursor: default;
+}
+
+/* Compact variant used on short pages such as auth screens */
+
+.bili-footer-compact {
+  padding: 1.25rem 0;
+}
+
+.bili-footer-compact .bili-footer__logo {
+  height: 36px;
+}
+
+.bili-footer-compact .bili-footer__divider {
+  margin: 1rem 0 0.75rem;
+}
+
+/* Tablet and mobile */
+
+@media (max-width: 991.98px) {
+  .bili-footer__top {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .bili-footer {
+    padding: 1.5rem 0;
+    text-align: left;
+  }
+
+  .bili-footer__top,
+  .bili-footer__bottom {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .bili-footer__legal {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+}

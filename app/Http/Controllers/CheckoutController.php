@@ -5,9 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\SellerOrder;
 use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class CheckoutController extends Controller
@@ -22,6 +24,7 @@ class CheckoutController extends Controller
             'link' => $link,
         ]);
     }
+
     private function geocodeAddress($address)
     {
         $apiKey = config('services.googlemaps.key');
@@ -92,16 +95,23 @@ class CheckoutController extends Controller
             return redirect()->route('cart.index')->with('error', 'Your cart is empty.');
         }
 
-        $subtotal = $cartItems->sum(function ($item) {
-            $price = $item->variation
-                ? (float) $item->variation->effective_price
-                : (float) ($item->product->effective_price ?? $item->product->price);
-            return $price * $item->quantity;
+        $subtotalMinor = $cartItems->sum(function ($item) {
+            $priceMinor = $item->variation
+                ? (int) $item->variation->effective_price_minor
+                : (int) $item->product->effective_price_minor;
+
+            return $priceMinor * $item->quantity;
         });
 
-        $tax = $subtotal * 0.1;
-        $shipping = 50;
-        $total = $subtotal + $tax + $shipping;
+        $taxMinor = intdiv(($subtotalMinor * 10) + 50, 100);
+        $shippingMinor = 5000;
+        $totalMinor = $subtotalMinor + $taxMinor + $shippingMinor;
+
+        // Convert to pesos only at the display boundary.
+        $subtotal = $subtotalMinor / 100;
+        $tax = $taxMinor / 100;
+        $shipping = $shippingMinor / 100;
+        $total = $totalMinor / 100;
         $paymentMethods = ['cod' => 'Cash on Delivery', 'gcash' => 'GCash', 'credit_card' => 'Credit Card'];
 
         $user = Auth::user();
@@ -134,32 +144,52 @@ class CheckoutController extends Controller
         ]);
 
         $cartItems = CartItem::where('user_id', Auth::id())
-            ->with(['product.sizes', 'size', 'variation'])
+            ->with(['product.sizes', 'product.seller', 'size', 'variation'])
             ->get();
 
         if ($cartItems->isEmpty()) {
             return redirect()->route('cart.index')->with('error', 'Your cart is empty.');
         }
 
-        $subtotal = $cartItems->sum(function ($item) {
-            $price = $item->variation
-                ? (float) $item->variation->effective_price
-                : (float) ($item->product->effective_price ?? $item->product->price);
-            return $price * $item->quantity;
+        // Every product must already belong to the new sellers table.
+        $missingSeller = $cartItems->first(function ($item) {
+            return !$item->product || !$item->product->seller_id;
         });
 
-        $tax = $subtotal * 0.1;
-        $shipping = 50;
-        $total = $subtotal + $tax + $shipping;
+        if ($missingSeller) {
+            return redirect()->route('cart.index')
+                ->with('error', 'One or more products are not connected to a seller shop yet.');
+        }
+
+        $subtotalMinor = $cartItems->sum(function ($item) {
+            $priceMinor = $item->variation
+                ? (int) $item->variation->effective_price_minor
+                : (int) $item->product->effective_price_minor;
+
+            return $priceMinor * $item->quantity;
+        });
+
+        $taxMinor = intdiv(($subtotalMinor * 10) + 50, 100);
+        $shippingMinor = 5000;
+        $totalMinor = $subtotalMinor + $taxMinor + $shippingMinor;
+
+        // Temporary legacy peso values for dual-write compatibility.
+        $subtotal = $subtotalMinor / 100;
+        $tax = $taxMinor / 100;
+        $shipping = $shippingMinor / 100;
+        $total = $totalMinor / 100;
 
         $fullAddress = $request->shipping_address;
         $contactLines = [];
+
         if ($request->filled('contact_name')) {
             $contactLines[] = 'Recipient: ' . $request->contact_name;
         }
+
         if ($request->filled('contact_phone')) {
             $contactLines[] = 'Phone: ' . $request->contact_phone;
         }
+
         if (!empty($contactLines)) {
             $fullAddress = implode("\n", $contactLines) . "\n" . $fullAddress;
         }
@@ -169,66 +199,146 @@ class CheckoutController extends Controller
         $customerLng = $geocoded['lng'] ?? null;
         $deliveryZone = $this->determineDeliveryZone($customerLat, $customerLng);
 
-        $order = Order::create([
-            'user_id' => Auth::id(),
-            'order_number' => 'ORD-' . strtoupper(Str::random(10)),
-            'status' => 'placed',
-            'subtotal' => $subtotal,
-            'tax' => $tax,
-            'shipping' => $shipping,
-            'total' => $total,
-            'shipping_address' => $fullAddress,
-            'notes' => $request->notes,
-            'ordered_at' => now(),
-            'payment_method' => $request->payment_method,
-            'payment_status' => $request->payment_method === 'cod' ? 'unpaid' : 'paid',
-            'customer_latitude' => $customerLat,
-            'customer_longitude' => $customerLng,
-            'delivery_zone' => $deliveryZone,
-        ]);
-
-        foreach ($cartItems as $item) {
-            $unitPrice = $item->variation
-                ? (float) $item->variation->effective_price
-                : (float) ($item->product->effective_price ?? $item->product->price);
-            $itemSubtotal = $unitPrice * $item->quantity;
-            $productName = $item->product->name;
-            if ($item->variation) {
-                $productName .= ' (' . $item->variation->name . ')';
-            }
-
-            OrderItem::create([
-                'order_id' => $order->id,
-                'product_id' => $item->product_id,
-                'variation_id' => $item->variation_id,
-                'size_id' => $item->size_id,
-                'product_name' => $productName,
-                'price' => $unitPrice,
-                'quantity' => $item->quantity,
-                'subtotal' => $itemSubtotal,
+        $order = DB::transaction(function () use (
+            $request,
+            $cartItems,
+            $subtotal,
+            $tax,
+            $shipping,
+            $total,
+            $subtotalMinor,
+            $taxMinor,
+            $shippingMinor,
+            $totalMinor,
+            $fullAddress,
+            $customerLat,
+            $customerLng,
+            $deliveryZone
+        ) {
+            $order = Order::create([
+                'user_id' => Auth::id(),
+                'order_number' => 'ORD-' . strtoupper(Str::random(10)),
+                'status' => 'placed',
+                'subtotal_minor' => $subtotalMinor,
+                'tax_minor' => $taxMinor,
+                'shipping_minor' => $shippingMinor,
+                'total_minor' => $totalMinor,
+                'shipping_address' => $fullAddress,
+                'notes' => $request->notes,
+                'ordered_at' => now(),
+                'payment_method' => $request->payment_method,
+                'payment_status' => $request->payment_method === 'cod' ? 'unpaid' : 'paid',
+                'customer_latitude' => $customerLat,
+                'customer_longitude' => $customerLng,
+                'delivery_zone' => $deliveryZone,
             ]);
 
-            if ($item->size_id) {
-                $size = $item->product->sizes->firstWhere('id', $item->size_id);
-                if ($size) {
-                    $item->product->sizes()->updateExistingPivot($item->size_id, [
-                        'stock' => max(0, $size->pivot->stock - $item->quantity),
+            // Split this buyer checkout into one SellerOrder per shop.
+            $itemsBySeller = $cartItems->groupBy(function ($item) {
+                return $item->product->seller_id;
+            });
+
+            $sellerCount = max(1, $itemsBySeller->count());
+            $sellerIndex = 0;
+            $allocatedShippingMinor = 0;
+            $allocatedTaxMinor = 0;
+
+            foreach ($itemsBySeller as $sellerId => $sellerItems) {
+                $sellerIndex++;
+
+                $sellerSubtotalMinor = $sellerItems->sum(function ($item) {
+                    $unitPriceMinor = $item->variation
+                        ? (int) $item->variation->effective_price_minor
+                        : (int) $item->product->effective_price_minor;
+
+                    return $unitPriceMinor * $item->quantity;
+                });
+
+                // Allocate integer centavos. The final seller receives any remainder
+                // so all SellerOrder totals reconcile exactly with the parent Order.
+                if ($sellerIndex === $sellerCount) {
+                    $sellerShippingMinor = $shippingMinor - $allocatedShippingMinor;
+                    $sellerTaxMinor = $taxMinor - $allocatedTaxMinor;
+                } else {
+                    $sellerShippingMinor = intdiv($shippingMinor, $sellerCount);
+                    $sellerTaxMinor = $subtotalMinor > 0
+                        ? intdiv($taxMinor * $sellerSubtotalMinor, $subtotalMinor)
+                        : 0;
+
+                    $allocatedShippingMinor += $sellerShippingMinor;
+                    $allocatedTaxMinor += $sellerTaxMinor;
+                }
+
+                $sellerTotalMinor = $sellerSubtotalMinor + $sellerTaxMinor + $sellerShippingMinor;
+
+                // Temporary legacy peso values for dual-write compatibility.
+                $sellerSubtotal = $sellerSubtotalMinor / 100;
+                $sellerShipping = $sellerShippingMinor / 100;
+                $sellerTax = $sellerTaxMinor / 100;
+                $sellerTotal = $sellerTotalMinor / 100;
+
+                $sellerOrder = SellerOrder::create([
+                    'order_id' => $order->id,
+                    'seller_id' => $sellerId,
+                    'status' => 'pending',
+                    'subtotal_minor' => $sellerSubtotalMinor,
+                    'shipping_minor' => $sellerShippingMinor,
+                    'total_minor' => $sellerTotalMinor,
+                ]);
+
+                foreach ($sellerItems as $item) {
+                    $unitPriceMinor = $item->variation
+                        ? (int) $item->variation->effective_price_minor
+                        : (int) $item->product->effective_price_minor;
+
+                    $itemSubtotalMinor = $unitPriceMinor * $item->quantity;
+
+                    // Temporary legacy peso values for dual-write compatibility.
+                    $unitPrice = $unitPriceMinor / 100;
+                    $itemSubtotal = $itemSubtotalMinor / 100;
+                    $productName = $item->product->name;
+
+                    if ($item->variation) {
+                        $productName .= ' (' . ($item->variation->display_name ?: $item->variation->name) . ')';
+                    }
+
+                    OrderItem::create([
+                        'seller_order_id' => $sellerOrder->id,
+                        'product_id' => $item->product_id,
+                        'variant_id' => $item->variant_id,
+                        'size_id' => $item->size_id,
+                        'product_name' => $productName,
+                        'price_minor' => $unitPriceMinor,
+                        'quantity' => $item->quantity,
+                        'subtotal_minor' => $itemSubtotalMinor,
+                    ]);
+
+                    if ($item->size_id) {
+                        $size = $item->product->sizes->firstWhere('id', $item->size_id);
+
+                        if ($size) {
+                            $item->product->sizes()->updateExistingPivot($item->size_id, [
+                                'stock' => max(0, $size->pivot->stock - $item->quantity),
+                            ]);
+                        }
+                    }
+
+                    if ($item->variation) {
+                        $item->variation->update([
+                            'stock' => max(0, $item->variation->stock - $item->quantity),
+                        ]);
+                    }
+
+                    $item->product->update([
+                        'stock' => max(0, $item->product->stock - $item->quantity),
                     ]);
                 }
             }
 
-            if ($item->variation) {
-                $item->variation->update([
-                    'stock' => max(0, $item->variation->stock - $item->quantity),
-                ]);
-            }
+            CartItem::where('user_id', Auth::id())->delete();
 
-            $item->product->update([
-                'stock' => max(0, $item->product->stock - $item->quantity),
-            ]);
-        }
-
-        CartItem::where('user_id', Auth::id())->delete();
+            return $order;
+        });
 
         $this->createNotification(
             Auth::id(),
@@ -241,3 +351,4 @@ class CheckoutController extends Controller
         return redirect()->route('orders.show', $order)->with('success', 'Order placed successfully!');
     }
 }
+

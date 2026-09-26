@@ -49,9 +49,22 @@ class ShipmentQrController extends Controller
 
     public function label(Shipment $shipment)
     {
+        $shipment->loadMissing([
+            'sellerOrder.order.user',
+            'sellerOrder.items.product',
+            'sellerOrder.seller.owner',
+            'rider',
+            'logistic',
+        ]);
+
         $user = Auth::user();
-        $isOwner = $user->id === $shipment->order->user_id;
-        $isSeller = $user->id === optional($shipment->order->items->first())->product->user_id;
+        $sellerOrder = $shipment->sellerOrder;
+        $order = $sellerOrder?->order;
+
+        abort_unless($sellerOrder && $order, 404, 'Seller order for this shipment was not found.');
+
+        $isOwner = $user->id === $order->user_id;
+        $isSeller = $user->id === $sellerOrder->seller?->user_id;
         $isRider = $user->id === $shipment->rider_id;
         $isLogistic = $shipment->logistic && $user->id === $shipment->logistic->owner_user_id;
         $isAdmin = $user->isAdmin();
@@ -60,7 +73,6 @@ class ShipmentQrController extends Controller
             abort(403);
         }
 
-        $shipment->load(['order.items.product', 'order.user', 'rider', 'logistic']);
         return view('shipments.qr-label', compact('shipment'));
     }
 
@@ -69,6 +81,14 @@ class ShipmentQrController extends Controller
         $request->validate([
             'qr_token' => 'required|string',
         ]);
+
+        $shipment->loadMissing('sellerOrder.order');
+        $sellerOrder = $shipment->sellerOrder;
+        $order = $sellerOrder?->order;
+
+        if (!$sellerOrder || !$order) {
+            return back()->with('error', 'This shipment is not linked to a valid seller order.');
+        }
 
         $rider = Auth::user();
         if (!$rider->isRider()) {
@@ -93,7 +113,9 @@ class ShipmentQrController extends Controller
             'picked_up_at' => now(),
         ]);
 
-        $shipment->order->update([
+        // Temporary order-level synchronization while legacy rider/order
+        // screens still keep delivery status on the parent Order.
+        $order->update([
             'rider_id' => $rider->id,
             'delivery_status' => 'in_transit',
             'assigned_at' => now(),
@@ -101,11 +123,11 @@ class ShipmentQrController extends Controller
         ]);
 
         \App\Models\Notification::create([
-            'user_id' => $shipment->order->user_id,
+            'user_id' => $order->user_id,
             'title' => 'Rider Picked Up Your Parcel',
             'type' => 'delivery',
-            'message' => 'A rider has scanned and picked up your order ' . $shipment->order->order_number . ' from the seller. It is now on the way to the sorting center.',
-            'link' => route('orders.show', $shipment->order),
+            'message' => 'A rider has scanned and picked up parcel #' . $sellerOrder->id . ' from order ' . $order->order_number . '. It is now on the way to the sorting center.',
+            'link' => route('orders.show', $order),
         ]);
 
         if ($shipment->logistic && $shipment->logistic->owner_user_id) {
@@ -118,7 +140,7 @@ class ShipmentQrController extends Controller
             ]);
         }
 
-        return redirect()->route('rider.orders.show', $shipment->order)
+        return redirect()->route('rider.orders.show', $order)
             ->with('success', 'QR code verified! Parcel picked up. Please deliver to the sorting center.');
     }
 
@@ -129,6 +151,14 @@ class ShipmentQrController extends Controller
             'delivery_zone' => 'nullable|string|max:255',
             'delivery_type' => 'nullable|in:standard,same_day,cod',
         ]);
+
+        $shipment->loadMissing('sellerOrder.order');
+        $sellerOrder = $shipment->sellerOrder;
+        $order = $sellerOrder?->order;
+
+        if (!$sellerOrder || !$order) {
+            return back()->with('error', 'This shipment is not linked to a valid seller order.');
+        }
 
         $user = Auth::user();
         $isLogistic = $shipment->logistic && $user->id === $shipment->logistic->owner_user_id;
@@ -153,7 +183,8 @@ class ShipmentQrController extends Controller
             'delivery_type' => $request->delivery_type,
         ]);
 
-        $shipment->order->update([
+        // Temporary parent-order synchronization.
+        $order->update([
             'delivery_status' => 'at_sorting_center',
             'delivery_zone' => $request->delivery_zone,
         ]);
@@ -167,16 +198,16 @@ class ShipmentQrController extends Controller
                 'user_id' => $bestRider->id,
                 'title' => 'New Delivery Assigned from Hub',
                 'type' => 'delivery',
-                'message' => 'Order ' . $shipment->order->order_number . ' has been sorted at the hub. Destination: ' . ($request->delivery_zone ?: 'N/A') . '. Please pick it up for final delivery to the customer.',
+                'message' => 'Parcel #' . $sellerOrder->id . ' from order ' . $order->order_number . ' has been sorted at the hub. Destination: ' . ($request->delivery_zone ?: 'N/A') . '. Please pick it up for final delivery to the customer.',
                 'link' => route('rider.pickups', ['status' => 'sorting_center']),
             ]);
 
             \App\Models\Notification::create([
-                'user_id' => $shipment->order->user_id,
-                'title' => 'Order Sorted at Hub',
+                'user_id' => $order->user_id,
+                'title' => 'Parcel Sorted at Hub',
                 'type' => 'delivery',
-                'message' => 'Your order ' . $shipment->order->order_number . ' has been sorted at the hub and assigned to a rider for final delivery.',
-                'link' => route('orders.show', $shipment->order),
+                'message' => 'A parcel from your order ' . $order->order_number . ' has been sorted at the hub and assigned to a rider for final delivery.',
+                'link' => route('orders.show', $order),
             ]);
         }
 
@@ -190,16 +221,36 @@ class ShipmentQrController extends Controller
             ]);
         }
 
-        return back()->with('success', 'Parcel scanned at hub. ' . ($availableRider ? 'Sorted and assigned to rider ' . $availableRider->name . ' for final delivery.' : 'Awaiting rider assignment.'));
+        return back()->with(
+            'success',
+            'Parcel scanned at hub. ' .
+            ($bestRider
+                ? 'Sorted and assigned to rider ' . $bestRider->name . ' for final delivery.'
+                : 'Awaiting rider assignment.')
+        );
     }
 
+    /**
+     * Compatibility route for old order-based QR actions.
+     * Resolve the parcel through SellerOrder instead of Order::shipment.
+     */
     public function scanByOrder(Request $request, \App\Models\Order $order)
     {
-        $shipment = $order->shipment;
-        if (!$shipment) {
+        $order->loadMissing('sellerOrders.shipment');
+
+        $shipments = $order->sellerOrders
+            ->map(fn ($sellerOrder) => $sellerOrder->shipment)
+            ->filter()
+            ->values();
+
+        if ($shipments->isEmpty()) {
             return back()->with('error', 'No shipment found for this order.');
         }
 
-        return $this->scan($request, $shipment);
+        if ($shipments->count() > 1) {
+            return back()->with('error', 'This order contains multiple parcels. Please scan the QR code for the specific parcel.');
+        }
+
+        return $this->scan($request, $shipments->first());
     }
 }

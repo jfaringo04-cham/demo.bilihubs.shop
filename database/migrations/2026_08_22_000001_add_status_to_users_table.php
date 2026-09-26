@@ -9,7 +9,8 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->string('status', 50)->default('active')->after('role');
+            $table->enum('status', ['pending', 'active', 'suspended', 'deactivated', 'rejected'])
+                ->default('active')->after('role');
             $table->text('rejection_reason')->nullable()->after('status');
             $table->timestamp('approved_at')->nullable()->after('rejection_reason');
         });

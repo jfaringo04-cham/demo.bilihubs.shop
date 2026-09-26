@@ -1,0 +1,123 @@
+/* Speedy Express Logistics Theme */
+:root {
+  --se-primary: #6D35F2;
+  --se-primary-dark: #2D1763;
+  --se-bright-violet: #8B5CF6;
+  --se-light-lavender: #F0EAFF;
+  --se-bg: #F8F7FC;
+  --se-card-bg: #FFFFFF;
+  --se-header-bg: #FFFFFF;
+  --se-sidebar-bg: #2D1763;
+  --se-border: #E5E7EB;
+  --se-input-bg: #F9FAFB;
+  --se-text: #111827;
+  --se-text-muted: #6B7280;
+  --se-hover: #F1EFFA;
+  --se-danger: #EF4444;
+  --se-success: #10B981;
+  --se-warning: #F59E0B;
+  --se-info: #3B82F6;
+  --se-orange: #F97316;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.hero {
+  background: linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%);
+  color: white;
+  padding: 60px 0;
+}
+
+.product-card {
+  transition: transform 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+}
+
+.product-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important;
+}
+
+.product-image {
+  height: 200px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.price {
+  color: #8b5cf6;
+  font-weight: bold;
+  font-size: 1.1rem;
+}
+
+.btn-bili-hub {
+  background-color: #8b5cf6;
+  color: white;
+  border: none;
+}
+
+.btn-bili-hub:hover {
+  background-color: #7c3aed;
+  color: white;
+}
+
+.navbar-brand {
+  font-weight: bold;
+  color: #8b5cf6 !important;
+}
+
+.cart-badge {
+  background-color: #8b5cf6;
+}
+
+footer {
+  background-color: #f8f9fa;
+  padding: 20px 0;
+  margin-top: 50px;
+}
+
+.pagination {
+  gap: 8px;
+}
+
+.pagination .page-link {
+  font-size: 1.1rem;
+  padding: 12px 20px;
+  border-radius: 8px;
+  min-width: 50px;
+  text-align: center;
+  color: #8b5cf6;
+  border: 2px solid #8b5cf6;
+  background-color: white;
+  transition: all 0.3s;
+}
+
+.pagination .page-link:hover {
+  background-color: #8b5cf6;
+  color: white;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(139, 92, 246, 0.3);
+}
+
+.pagination .page-item.active .page-link {
+  background-color: #8b5cf6;
+  border-color: #8b5cf6;
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 4px 8px rgba(139, 92, 246, 0.3);
+}
+
+.pagination .page-item.disabled .page-link {
+  background-color: #f8f9fa;
+  border-color: #dee2e6;
+  color: #6c757d;
+  cursor: not-allowed;
+}
+
+.pagination-lg .page-link {
+  font-size: 1.25rem;
+  padding: 16px 28px;
+  min-width: 60px;
+}

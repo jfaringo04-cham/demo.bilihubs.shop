@@ -12,15 +12,18 @@ class CartController extends Controller
     public function index()
     {
         $cartItems = CartItem::where('user_id', Auth::id())
-            ->with(['product', 'size'])
+            ->with(['product', 'size', 'variation'])
             ->get();
 
-        $total = $cartItems->sum(function ($item) {
-            $price = $item->variation
-                ? (float) $item->variation->effective_price
-                : (float) ($item->product->effective_price ?? $item->product->price);
-            return $price * $item->quantity;
+        $totalMinor = $cartItems->sum(function ($item) {
+            $priceMinor = $item->variation
+                ? (int) $item->variation->effective_price_minor
+                : (int) $item->product->effective_price_minor;
+
+            return $priceMinor * $item->quantity;
         });
+
+        $total = $totalMinor / 100;
 
         return view('cart.index', compact('cartItems', 'total'));
     }
@@ -30,11 +33,15 @@ class CartController extends Controller
         $request->validate([
             'quantity' => 'required|integer|min:1',
             'size_id' => 'nullable|exists:sizes,id',
-            'variation_id' => 'nullable|exists:product_variations,id',
+            'variant_id' => 'nullable|exists:product_variants,id',
         ]);
 
-        if ($request->filled('variation_id')) {
-            $variation = $product->variations()->where('id', $request->variation_id)->first();
+        if (! $product->isPublished() && !($product->user_id === Auth::id())) {
+            return back()->with('error', 'This product is not currently available.');
+        }
+
+        if ($request->filled('variant_id')) {
+            $variation = $product->variations()->where('id', $request->variant_id)->first();
             if (!$variation) {
                 return back()->with('error', 'Selected variation is invalid.');
             }
@@ -56,7 +63,7 @@ class CartController extends Controller
         $cartItem = CartItem::where('user_id', Auth::id())
             ->where('product_id', $product->id)
             ->where('size_id', $request->size_id)
-            ->where('variation_id', $request->variation_id)
+            ->where('variant_id', $request->variant_id)
             ->first();
 
         if ($cartItem) {
@@ -66,7 +73,7 @@ class CartController extends Controller
                 'user_id' => Auth::id(),
                 'product_id' => $product->id,
                 'size_id' => $request->size_id,
-                'variation_id' => $request->variation_id,
+                'variant_id' => $request->variant_id,
                 'quantity' => $request->quantity,
             ]);
         }
@@ -112,8 +119,12 @@ class CartController extends Controller
         $request->validate([
             'quantity' => 'required|integer|min:1',
             'size_id' => 'nullable|exists:sizes,id',
-            'variation_id' => 'nullable|exists:product_variations,id',
+            'variant_id' => 'nullable|exists:product_variants,id',
         ]);
+
+        if (! $product->isPublished() && !($product->user_id === Auth::id())) {
+            return back()->with('error', 'This product is not currently available.');
+        }
 
         $hasAvailableSize = $product->sizes->count() == 0;
 
@@ -133,8 +144,8 @@ class CartController extends Controller
         }
 
         $variation = null;
-        if ($request->filled('variation_id')) {
-            $variation = $product->variations()->where('id', $request->variation_id)->first();
+        if ($request->filled('variant_id')) {
+            $variation = $product->variations()->where('id', $request->variant_id)->first();
             if (!$variation) {
                 return back()->with('error', 'Selected variation is invalid.');
             }
@@ -159,7 +170,7 @@ class CartController extends Controller
             'user_id' => Auth::id(),
             'product_id' => $product->id,
             'size_id' => $request->size_id,
-            'variation_id' => $variation ? $variation->id : null,
+            'variant_id' => $variation ? $variation->id : null,
             'quantity' => $request->quantity,
             'is_buy_now' => true,
         ]);
@@ -167,3 +178,4 @@ class CartController extends Controller
         return redirect()->route('checkout.index')->with('success', 'Proceeding to checkout for ' . $product->name . '.');
     }
 }
+

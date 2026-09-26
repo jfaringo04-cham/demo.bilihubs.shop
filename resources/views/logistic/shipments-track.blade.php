@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.logistic', ['title' => 'Track Shipment', 'logistic' => $logistic])
 
 @section('content')
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
@@ -98,59 +98,23 @@
 
 @push('scripts')
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    var map = L.map('map').setView([14.5995, 120.9842], 12);
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-    }).addTo(map);
-
-    var markers = [];
-
-    @if($shipment->latitude && $shipment->longitude)
-        var pickupMarker = L.marker([{{ $shipment->latitude }}, {{ $shipment->longitude }}])
-            .addTo(map)
-            .bindPopup('<b>Shipment Location</b><br>{{ $shipment->pickup_address }}');
-        markers.push(pickupMarker);
-    @endif
-
-    @if($shipment->rider_latitude && $shipment->rider_longitude)
-        var riderMarker = L.marker([{{ $shipment->rider_latitude }}, {{ $shipment->rider_longitude }}], {
-            icon: L.icon({
-                iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-                iconSize: [25, 41],
-                iconAnchor: [12, 41],
-                popupAnchor: [1, -34],
-                shadowSize: [41, 41]
-            })
-        })
-            .addTo(map)
-            .bindPopup('<b>Rider Location</b><br>Last known position');
-        markers.push(riderMarker);
-    @endif
-
-    @if($riderLocation && $riderLocation->latitude && $riderLocation->longitude)
-        var lastLocationMarker = L.marker([{{ $riderLocation->latitude }}, {{ $riderLocation->longitude }}], {
-            icon: L.icon({
-                iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-                iconSize: [25, 41],
-                iconAnchor: [12, 41],
-                popupAnchor: [1, -34],
-                shadowSize: [41, 41]
-            })
-        })
-            .addTo(map)
-            .bindPopup('<b>Rider Last Known Location</b><br>Updated: {{ $riderLocation->updated_at->diffForHumans() }}');
-        markers.push(lastLocationMarker);
-    @endif
-
-    if (markers.length > 1) {
-        var group = new L.featureGroup(markers);
-        map.fitBounds(group.getBounds().pad(0.1));
-    }
-});
-</script>
+@vite('resources/js/logistics/shipments.js')
+<script type="application/json" id="shipment-tracking-data">@php $shipmentTrackingData = [
+  'pickup' => $shipment->latitude && $shipment->longitude ? [
+    'latitude' => $shipment->latitude,
+    'longitude' => $shipment->longitude,
+    'address' => $shipment->pickup_address,
+  ] : null,
+  'rider' => $shipment->rider_latitude && $shipment->rider_longitude ? [
+    'latitude' => $shipment->rider_latitude,
+    'longitude' => $shipment->rider_longitude,
+  ] : null,
+  'lastKnown' => $riderLocation && $riderLocation->latitude && $riderLocation->longitude ? [
+    'latitude' => $riderLocation->latitude,
+    'longitude' => $riderLocation->longitude,
+    'updatedLabel' => $riderLocation->updated_at->diffForHumans(),
+  ] : null,
+]; @endphp @json($shipmentTrackingData)</script>
 @endpush
+
+

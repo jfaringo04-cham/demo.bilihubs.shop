@@ -22,14 +22,26 @@ class UserController extends Controller
 
     public function index(Request $request)
     {
-        $query = User::query()->where('role', '!=', 'admin');
+        $query = User::query()->whereDoesntHave('roles', fn ($q) => $q->where('name', 'admin'));
 
-        if ($request->filled('role')) {
-            $query->where('role', $request->role);
-        }
-
+        // User Management lists accounts that already got past approval.
+        // Never-approved applicants live in Admin -> Registrations, and
+        // rejected / permanently deactivated accounts are not managed ones.
+        // An explicit ?status= filter is still honoured so the admin can audit
+        // a specific status on purpose.
         if ($request->filled('status')) {
             $query->where('status', $request->status);
+        } else {
+            $query->whereNotIn('status', [
+                User::STATUS_PENDING,
+                User::STATUS_REJECTED,
+                User::STATUS_DEACTIVATED,
+            ]);
+        }
+
+        if ($request->filled('role')) {
+            $requestedRole = match ($request->role) { 'customer' => 'buyer', 'logistic_owner', 'logistic' => 'logistics', default => $request->role };
+            $query->whereHas('roles', fn ($q) => $q->where('name', $requestedRole));
         }
 
         if ($request->filled('search')) {

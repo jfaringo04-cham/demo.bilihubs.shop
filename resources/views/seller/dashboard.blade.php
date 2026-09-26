@@ -1,170 +1,257 @@
 @extends('seller.layout')
 
+@section('page-title', 'Dashboard')
+
 @section('content')
-<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-  <h1 class="h2">Seller Dashboard</h1>
+<div class="dashboard-content">
+<!-- Welcome Header -->
+<div class="dashboard-header d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
+  <div>
+    <h2 class="mb-1" style="color: var(--color-text-dark);">
+      Good morning, {{ Auth::user()->first_name ?? Auth::user()->name }} 👋
+    </h2>
+    <p class="text-muted mb-0">Here's what's happening with your store today.</p>
+  </div>
+  <a href="{{ route('seller.products.create') }}" class="btn btn-primary btn-lg rounded-xl px-4">
+    <i class="bi bi-plus-lg me-2"></i> Add Product
+  </a>
 </div>
 
-<div class="row g-3 mb-3">
-  <div class="col-md-3">
-    <div class="card stat-card">
-      <div class="card-body d-flex align-items-center">
-        <div class="stat-icon bg-primary text-white me-3"><i class="bi bi-box"></i></div>
-        <div>
-          <h6 class="text-muted mb-1">Total Products</h6>
-          <h3 class="mb-0">{{ $totalProducts }}</h3>
-        </div>
+<!-- Stat Cards -->
+<div class="stat-grid w-100">
+  <div class="stat-card h-100">
+    <div class="stat-card-body">
+      <div class="stat-icon">
+        <i class="bi bi-box"></i>
       </div>
+      <h6 class="stat-label">Total Products</h6>
+      <h3 class="stat-value">{{ $totalProducts }}</h3>
+      <a href="{{ route('seller.products') }}" class="stat-link">View products →</a>
     </div>
   </div>
-  <div class="col-md-3">
-    <div class="card stat-card">
-      <div class="card-body d-flex align-items-center">
-        <div class="stat-icon bg-success text-white me-3"><i class="bi bi-receipt"></i></div>
-        <div>
-          <h6 class="text-muted mb-1">Total Orders</h6>
-          <h3 class="mb-0">{{ $totalOrders }}</h3>
-        </div>
+  <div class="stat-card h-100">
+    <div class="stat-card-body">
+      <div class="stat-icon">
+        <i class="bi bi-receipt"></i>
       </div>
+      <h6 class="stat-label">Total Orders</h6>
+      <h3 class="stat-value">{{ $totalOrders }}</h3>
+      <a href="{{ route('seller.orders') }}" class="stat-link">View orders →</a>
     </div>
   </div>
-  <div class="col-md-3">
-    <div class="card stat-card">
-      <div class="card-body d-flex align-items-center">
-        <div class="stat-icon bg-warning text-white me-3"><i class="bi bi-currency-dollar"></i></div>
-        <div>
-          <h6 class="text-muted mb-1">Total Revenue</h6>
-          <h3 class="mb-0">&#8369;{{ number_format($totalRevenue, 2) }}</h3>
-        </div>
+  <div class="stat-card h-100">
+    <div class="stat-card-body">
+      <div class="stat-icon">
+        <i class="bi bi-currency-exchange"></i>
       </div>
+      <h6 class="stat-label">Total Revenue</h6>
+      <h3 class="stat-value">₱{{ number_format($totalRevenue, 2) }}</h3>
+      <a href="{{ route('seller.reports') }}" class="stat-link">View reports →</a>
     </div>
   </div>
-  <div class="col-md-3">
-    <div class="card stat-card">
-      <div class="card-body d-flex align-items-center">
-        <div class="stat-icon bg-info text-white me-3"><i class="bi bi-people"></i></div>
-        <div>
-          <h6 class="text-muted mb-1">Customers</h6>
-          @php
-            $customerIds = $recentOrders->pluck('user_id')->unique();
-          @endphp
-          <h3 class="mb-0">{{ $customerIds->count() }}</h3>
-        </div>
+  <div class="stat-card h-100">
+    <div class="stat-card-body">
+      <div class="stat-icon">
+        <i class="bi bi-people"></i>
       </div>
+      <h6 class="stat-label">Customers</h6>
+      <h3 class="stat-value">{{ $totalCustomers }}</h3>
+      <a href="{{ route('seller.orders') }}" class="stat-link">View orders →</a>
     </div>
   </div>
 </div>
 
-<div class="row g-3 mb-3">
-  <div class="col-md-6">
-    <div class="card shadow">
-      <div class="card-body">
-        <h5 class="card-title mb-3">Recent Orders</h5>
+  <!-- Analytics Row -->
+  @if($totalRevenue > 0 || $totalOrders > 0)
+  <div class="analytics-grid w-100 mb-4">
+    <div class="analytics-card h-100">
+      <div class="analytics-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0 fw-semibold" style="color: var(--color-text-dark);">Revenue Overview</h5>
+        <select class="form-select form-select-sm" id="revenuePeriod" style="width: auto;">
+          <option>Last 7 Days</option>
+          <option>Last 30 Days</option>
+          <option>This Month</option>
+          <option>This Year</option>
+        </select>
+      </div>
+      <div class="analytics-body">
+        <canvas id="revenueChart"></canvas>
+      </div>
+    </div>
+    <div class="analytics-card h-100">
+      <div class="analytics-header">
+        <h5 class="mb-0 fw-semibold" style="color: var(--color-text-dark);">Order Status</h5>
+      </div>
+      <div class="analytics-body">
+        <div class="d-flex align-items-center justify-content-center h-100">
+          <div class="text-center">
+            <canvas id="statusChart"></canvas>
+            <div class="mt-3">
+              <p class="fw-bold mb-2">{{ $totalOrders }} Orders</p>
+              <div class="d-flex flex-column gap-2 small">
+                @php
+                  $statusLabels = [
+                    'delivered' => 'Delivered',
+                    'processing' => 'Processing',
+                    'pending' => 'Pending',
+                    'shipped' => 'Shipped',
+                    'cancelled' => 'Cancelled',
+                  ];
+                  $statusCounts = $recentOrders->groupBy('status')->map->count();
+                @endphp
+                @foreach($statusLabels as $key => $label)
+                  @if(isset($statusCounts[$key]) && $statusCounts[$key] > 0)
+                    <div class="d-flex justify-content-between">
+                      <span>{{ $label }}</span>
+                      <span class="fw-semibold">{{ $statusCounts[$key] }}</span>
+                    </div>
+                  @endif
+                @endforeach
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  @else
+  <!-- Empty State for Analytics -->
+  <div class="card border-0 rounded-16 mb-4 w-100">
+    <div class="card-body text-center py-5">
+      <i class="bi bi-clipboard-data display-5 text-muted mb-3"></i>
+      <h4 class="fw-semibold mb-2" style="color: var(--color-text-dark);">No sales data yet</h4>
+      <p class="text-muted mb-3">Your revenue analytics will appear here once customers start placing orders.</p>
+      <a href="{{ route('seller.products.create') }}" class="btn btn-primary rounded-xl">
+        <i class="bi bi-plus-lg me-1"></i> Add Your First Product
+      </a>
+    </div>
+  </div>
+  @endif
+
+  <!-- Quick Actions & Inventory Alerts -->
+  <div class="dashboard-grid w-100 mb-4">
+    <div class="quick-actions-card h-100">
+      <h5 class="fw-semibold mb-3" style="color: var(--color-text-dark);">QUICK ACTIONS</h5>
+      <div class="d-flex gap-3 flex-wrap">
+        <a href="{{ route('seller.products.create') }}" class="quick-action d-flex align-items-center gap-2">
+          <i class="bi bi-plus-lg"></i> Add Product
+        </a>
+        <a href="{{ route('seller.orders') }}" class="quick-action d-flex align-items-center gap-2">
+          <i class="bi bi-receipt"></i> View Orders
+        </a>
+        <a href="{{ route('seller.account') }}" class="quick-action d-flex align-items-center gap-2">
+          <i class="bi bi-gear"></i> Store Settings
+        </a>
+      </div>
+    </div>
+    @if($lowStockProducts && $lowStockProducts->isNotEmpty())
+    <div class="quick-actions-card h-100">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-semibold mb-0" style="color: var(--color-text-dark);">INVENTORY ALERTS</h5>
+        <a href="{{ route('seller.products') }}" class="small text-decoration-none" style="color: var(--color-primary);">Manage inventory →</a>
+      </div>
+      <div class="d-flex flex-column gap-3">
+        @foreach($lowStockProducts as $product)
+          <div class="d-flex align-items-center gap-3">
+            @if($product->image_path)
+              <img src="{{ asset('storage/' . $product->image_path) }}" alt="{{ $product->name }}" class="inventory-thumb">
+            @else
+              <div class="inventory-thumb d-flex align-items-center justify-content-center">
+                <i class="bi bi-image text-muted"></i>
+              </div>
+            @endif
+            <div class="flex-fill">
+              <h6 class="fw-semibold mb-1 small">{{ \Str::limit($product->name, 30) }}</h6>
+              <span class="text-muted small">{{ $product->stock }} left</span>
+            </div>
+          </div>
+        @endforeach
+      </div>
+    </div>
+    @endif
+  </div>
+
+  <!-- Recent Orders -->
+  <div class="card border-0 rounded-16 mb-4 w-100">
+    <div class="card-header bg-white border-0 py-3 d-flex justify-content-between align-items-center">
+      <h5 class="fw-semibold mb-0" style="color: var(--color-text-dark);">Recent Orders</h5>
+      <a href="{{ route('seller.orders') }}" class="small text-decoration-none" style="color: var(--color-primary);">View All →</a>
+    </div>
+    <div class="card-body p-0">
+      @if($recentOrders->isEmpty())
+        <div class="text-center py-5">
+          <i class="bi bi-truck display-5 text-muted mb-3"></i>
+          <h5 class="fw-semibold mb-2" style="color: var(--color-text-dark);">No orders yet</h5>
+          <p class="text-muted small">Your customer orders will appear here.</p>
+        </div>
+      @else
         <div class="table-responsive">
-          <table class="table table-hover align-middle">
+          <table class="table table-hover align-middle mb-0">
             <thead class="table-light">
               <tr>
-                <th>Order #</th>
-                <th>Customer</th>
-                <th>Status</th>
-                <th>Total</th>
-                <th>Date</th>
+                <th scope="col" class="text-uppercase small fw-semibold" style="color: var(--color-text-dark);">ORDER ID</th>
+                <th scope="col" class="text-uppercase small fw-semibold" style="color: var(--color-text-dark);">CUSTOMER</th>
+                <th scope="col" class="text-uppercase small fw-semibold" style="color: var(--color-text-dark);">PRODUCT</th>
+                <th scope="col" class="text-uppercase small fw-semibold" style="color: var(--color-text-dark);">STATUS</th>
+                <th scope="col" class="text-uppercase small fw-semibold" style="color: var(--color-text-dark);">TOTAL</th>
+                <th scope="col" class="text-uppercase small fw-semibold" style="color: var(--color-text-dark);">DATE</th>
+                <th scope="col" class="text-uppercase small fw-semibold" style="color: var(--color-text-dark);">ACTION</th>
               </tr>
             </thead>
             <tbody>
-              @forelse($recentOrders as $order)
+              @foreach($recentOrders as $order)
                 <tr>
-                  <td>{{ $order->order_number }}</td>
+                  <td><span class="fw-medium small">{{ $order->order_number }}</span></td>
                   <td>{{ $order->user->name ?? 'N/A' }}</td>
-                   <span class="badge bg-{{ $order->statusBadgeClass() }}">{{ ucfirst(str_replace('_', ' ', $order->status)) }}</span></td>
-                  <td>&#8369;{{ number_format($order->total, 2) }}</td>
+                  <td>
+                    @if($order->items && $order->items->isNotEmpty())
+                      @php
+                        $firstItem = $order->items->first();
+                        $productName = $firstItem->product ? \Str::limit($firstItem->product->name, 30) : \Str::limit($firstItem->name ?? 'N/A', 30);
+                      @endphp
+                      {{ $productName }}
+                      @if($order->items->count() > 1)
+                        <span class="text-muted small">+{{ $order->items->count() - 1 }} more</span>
+                      @endif
+                    @else
+                      <span class="text-muted">N/A</span>
+                    @endif
+                  </td>
+                  <td>
+                    <span class="badge bg-{{ $order->statusBadgeClass() }} small">
+                      {{ ucfirst(str_replace('_', ' ', $order->status)) }}
+                    </span>
+                  </td>
+                  <td>₱{{ number_format(($order->total_minor / 100), 2) }}</td>
                   <td>{{ $order->ordered_at->format('M d, Y') }}</td>
+                  <td>
+                    <a href="{{ route('seller.orders.show', $order) }}" class="text-decoration-none small" style="color: var(--color-primary);">View →</a>
+                  </td>
                 </tr>
-              @empty
-                <tr><td colspan="5" class="text-center text-muted py-4">No orders yet.</td></tr>
-              @endforelse
+              @endforeach
             </tbody>
           </table>
         </div>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-6">
-    <div class="card shadow">
-      <div class="card-body">
-        <h5 class="card-title mb-3">Order Status Distribution</h5>
-        <div style="height: 320px;">
-          <canvas id="statusChart"></canvas>
-        </div>
-      </div>
+      @endif
     </div>
   </div>
 </div>
-
-<div class="row g-3 mb-3">
-  <div class="col-md-12">
-    <div class="card shadow">
-      <div class="card-body">
-        <h5 class="card-title mb-3">Revenue Trend</h5>
-        <div style="height: 300px;">
-          <canvas id="revenueChart"></canvas>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script>
-  const statusCtx = document.getElementById('statusChart');
-  if (statusCtx) {
-    const delivered = {{ $recentOrders->where('status', 'delivered')->count() }};
-    const processing = {{ $recentOrders->where('status', 'processing')->count() }};
-    const pending = {{ $recentOrders->where('status', 'pending')->count() }};
-    const shipped = {{ $recentOrders->where('status', 'shipped')->count() }};
-    const cancelled = {{ $recentOrders->where('status', 'cancelled')->count() }};
-    
-    new Chart(statusCtx, {
-      type: 'doughnut',
-      data: {
-        labels: ['Delivered', 'Processing', 'Pending', 'Shipped', 'Cancelled'],
-        datasets: [{
-          data: [delivered, processing, pending, shipped, cancelled],
-          backgroundColor: ['#198754', '#0dcaf0', '#ffc107', '#0d6efd', '#dc3545'],
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-      }
-    });
-  }
-
-  const revenueCtx = document.getElementById('revenueChart');
-  if (revenueCtx) {
-    const revenueData = @json($recentOrders->groupBy(function($order) {
-      return $order->ordered_at->format('M d, Y');
-    })->map->sum('total')->sortKeys());
-    
-    new Chart(revenueCtx, {
-      type: 'bar',
-      data: {
-        labels: revenueData.keys(),
-        datasets: [{
-          label: 'Revenue',
-          data: revenueData.values(),
-          backgroundColor: '#ee4d2d',
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          y: { beginAtZero: true }
-        }
-      }
-    });
-  }
-</script>
 @endsection
+
+@push('scripts')
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script type="application/json" id="seller-dashboard-data">@php $sellerDashboardData = [
+  'statusCounts' => [
+    'delivered' => $recentOrders->where('status', 'delivered')->count(),
+    'processing' => $recentOrders->where('status', 'processing')->count(),
+    'pending' => $recentOrders->where('status', 'pending')->count(),
+    'shipped' => $recentOrders->where('status', 'shipped')->count(),
+    'cancelled' => $recentOrders->where('status', 'cancelled')->count(),
+  ],
+  'revenueData' => $recentOrders->groupBy(function ($order) {
+    return $order->ordered_at->format('M d');
+  })->map->sum('total')->sortKeys(),
+]; @endphp @json($sellerDashboardData)</script>
+@vite('resources/js/seller/dashboard.js')
+@endpush
 

@@ -109,7 +109,7 @@
                   <div>{{ $item->product_name }} x{{ $item->quantity }}@if($item->size) ({{ $item->size->name }})@endif</div>
                 @endforeach
               </td>
-              <td>&#8369;{{ number_format($order->total, 2) }}</td>
+              <td>&#8369;{{ number_format(($order->total_minor / 100), 2) }}</td>
               <td>
                 <span class="badge bg-{{ $order->status == 'delivered' ? 'success' : ($order->status == 'cancelled' ? 'danger' : ($order->status == 'shipped' ? 'info' : 'warning')) }}">
                   {{ ucfirst($order->status) }}
@@ -134,4 +134,5 @@
   </div>
 </div>
 @endsection
+
 

@@ -9,39 +9,23 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
-  <link rel="stylesheet" href="{{ asset('css/app.css') }}">
-  <style>
-    body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
-    .admin-sidebar { background: #ffffff; border-right: 1px solid #e2e8f0; min-height: 100vh; }
-    .admin-nav .nav-link { color: #475569; border-radius: 8px; margin-bottom: 4px; font-weight: 500; }
-    .admin-nav .nav-link:hover { background-color: #f1f5f9; color: #0ea5e9; }
-    .admin-nav .nav-link.active { background-color: #f1f5f9; color: #0ea5e9; }
-    .admin-nav .nav-link i { width: 20px; text-align: center; }
-    .stat-card { border: none; border-radius: 16px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.04); transition: all 0.2s; }
-    .stat-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.06); }
-    .stat-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; }
-    .table-container { background: #ffffff; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); border: 1px solid #e2e8f0; overflow: hidden; padding: 1.5rem; }
-    .icon-badge { position: relative; display: inline-flex; align-items: center; }
-    .notification-badge { font-size: 0.7rem; min-width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; }
-    .cart-badge { background-color: #0ea5e9; }
-    .navbar { border-bottom: 1px solid #e2e8f0; }
-    .nav-link { font-weight: 500; color: #475569; }
-    .nav-link:hover { color: #0ea5e9; }
-    .dropdown-menu { border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.08); }
-    .badge { border-radius: 8px; font-weight: 500; }
-    .btn-primary { background-color: #0ea5e9; border-color: #0ea5e9; border-radius: 10px; }
-    .btn-primary:hover { background-color: #0284c7; border-color: #0284c7; }
-    .alert { border-radius: 12px; border: none; }
-  </style>
+  @vite([
+    'resources/css/app.css',
+    'resources/css/shared-layout.css',
+    'resources/css/components/footer.css',
+    'resources/css/admin/admin-layout.css',
+    'resources/js/app.js',
+  ])
+  @stack('styles')
 </head>
-<body>
+<body class="d-flex flex-column min-vh-100">
   <nav class="navbar navbar-expand-lg navbar-light bg-white">
     <div class="container-fluid px-4">
-      <a class="navbar-brand fw-bold text-sky-500 d-flex align-items-center gap-2" href="{{ route('home') }}">
+      <a class="navbar-brand fw-bold text-violet-500 d-flex align-items-center gap-2" href="{{ route('home') }}">
         <img src="{{ asset('images/bilihublogo.png') }}" alt="Bili Hub" style="height: 42px; width: auto;">
         <span class="fs-5">Bili Hub</span>
       </a>
-      <span class="badge bg-sky-100 text-sky-600 px-3 py-2 rounded-pill">Admin Panel</span>
+      <span class="badge bg-violet-100 text-violet-600 px-3 py-2 rounded-pill">Admin Panel</span>
       <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#adminNavbar">
         <span class="navbar-toggler-icon"></span>
       </button>
@@ -62,7 +46,7 @@
           </li>
           <li class="nav-item dropdown">
             <a class="nav-link dropdown-toggle d-flex align-items-center gap-2" href="#" id="adminUserDropdown" role="button" data-bs-toggle="dropdown">
-              <div class="rounded-full bg-sky-100 text-sky-600 d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;">
+              <div class="rounded-full bg-violet-100 text-violet-600 d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;">
                 <i class="bi bi-person-fill"></i>
               </div>
               <span class="d-none d-md-inline fw-medium">{{ Auth::user()->name }}</span>
@@ -70,7 +54,7 @@
             <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="adminUserDropdown">
               <li><h6 class="dropdown-header fw-semibold">{{ Auth::user()->email }}</h6></li>
               <li><hr class="dropdown-divider"></li>
-              <li><a class="dropdown-item" href="{{ route('admin.dashboard') }}"><i class="bi bi-speedometer2 me-2 text-sky-500"></i>Dashboard</a></li>
+              <li><a class="dropdown-item" href="{{ route('admin.dashboard') }}"><i class="bi bi-speedometer2 me-2 text-violet-500"></i>Dashboard</a></li>
               <li><a class="dropdown-item" href="{{ route('profile.edit') }}"><i class="bi bi-person me-2 text-slate-400"></i>Account Settings</a></li>
               <li><hr class="dropdown-divider"></li>
               <li>
@@ -102,6 +86,9 @@
             </a>
             <a class="nav-link {{ request()->routeIs('admin.users.*') ? 'active' : '' }}" href="{{ route('admin.users.index') }}">
               <i class="bi bi-people"></i> Users
+            <a class="nav-link {{ request()->routeIs('admin.buyers') ? 'active' : '' }}" href="{{ route('admin.buyers') }}">
+  <i class="bi bi-person-check"></i> Buyers
+</a>
             </a>
             <a class="nav-link {{ request()->routeIs('admin.sellers') ? 'active' : '' }}" href="{{ route('admin.sellers') }}">
               <i class="bi bi-shop"></i> Sellers
@@ -152,7 +139,7 @@
         </div>
       </nav>
 
-      <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 py-4">
+      <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 py-4 d-flex flex-column flex-grow-1">
         @if(session('success'))
           <div class="alert alert-success alert-dismissible fade show rounded-2 border-0 shadow-sm">
             <div class="d-flex align-items-center">
@@ -171,16 +158,14 @@
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
           </div>
         @endif
-        @yield('content')
+        <div class="flex-grow-1">
+          @yield('content')
+        </div>
+
+        <x-footer />
       </main>
     </div>
   </div>
-
-  <footer class="bg-white border-top border-slate-200 py-4 mt-auto">
-    <div class="container text-center">
-      <p class="mb-0 text-muted small">&copy; {{ date('Y') }} Bili Hub. All rights reserved.</p>
-    </div>
-  </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   @stack('scripts')

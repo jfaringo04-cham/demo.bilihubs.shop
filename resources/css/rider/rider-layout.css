@@ -1,0 +1,33 @@
+body {
+  background-color: #f8f9fa;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+main {
+  flex: 1;
+}
+
+#map,
+#rider-map {
+  height: 400px;
+  border-radius: 10px;
+}
+
+.proof-section {
+  background: #f8f9fa;
+  padding: 15px;
+  border-radius: 10px;
+  margin-top: 15px;
+}
+
+.icon-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.table-container {
+  margin: 0 10px;
+}

@@ -19,8 +19,10 @@ class NewRegistrationAdmin extends Mailable
 
     public function envelope(): Envelope
     {
+        $roleName = $this->user->roles->pluck('name')->first() ?? 'user';
+
         return new Envelope(
-            subject: 'New Registration: ' . $this->user->name . ' (' . ucfirst($this->user->role) . ')',
+            subject: 'New Registration: ' . $this->user->name . ' (' . ucfirst($roleName) . ')',
         );
     }
 

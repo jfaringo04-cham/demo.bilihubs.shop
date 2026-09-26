@@ -31,7 +31,7 @@ class ShipmentController extends Controller
     public function show(Shipment $shipment)
     {
         $shipment->load(['logistic', 'rider', 'order']);
-        $riders = User::where('role', 'rider')->get();
+        $riders = User::whereHas('roles', fn ($q) => $q->where('name', 'rider'))->get();
 
         return view('admin.shipments.show', compact('shipment', 'riders'));
     }

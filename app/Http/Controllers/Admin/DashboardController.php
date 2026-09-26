@@ -13,8 +13,13 @@ use Illuminate\Http\Request;
 
 class DashboardController extends Controller
 {
-    private function createNotification($userId, $title, $message, $type = 'order', $link = null)
-    {
+    private function createNotification(
+        $userId,
+        $title,
+        $message,
+        $type = 'order',
+        $link = null
+    ) {
         Notification::create([
             'user_id' => $userId,
             'title' => $title,
@@ -26,86 +31,311 @@ class DashboardController extends Controller
 
     public function index()
     {
-        $totalSellers = User::where('role', 'seller')->count();
-        $totalProducts = Product::count();
-        $totalOrders = Order::count();
-        $totalRevenue = Order::where('status', 'delivered')->sum('total');
-        $totalLogistics = Logistic::count();
+        /*
+        |--------------------------------------------------------------------------
+        | DASHBOARD SUMMARY
+        |--------------------------------------------------------------------------
+        */
 
-        $pendingRegistrations = User::where('status', 'pending')
-            ->whereIn('role', ['customer', 'seller', 'rider', 'logistic_owner'])
+        $totalBuyers = User::where('status', User::STATUS_ACTIVE)
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'buyer');
+            })->count();
+
+        $totalSellers = User::where('status', User::STATUS_ACTIVE)
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'seller');
+            })->count();
+
+        $totalRiders = User::where('status', User::STATUS_ACTIVE)
+            ->where('logistic_status', 'approved')
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'rider');
+            })->count();
+
+        $totalProducts = Product::count();
+
+        $totalOrders = Order::count();
+
+        $totalLogistics = Logistic::where('status', 'active')
+            ->whereHas('owner', function ($query) {
+                $query->where('status', User::STATUS_ACTIVE);
+            })->count();
+
+        $totalRevenue = 0;
+
+        if ($totalOrders > 0) {
+            $totalRevenue = Order::where('status', 'delivered')
+                ->sum('total_minor') / 100;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | PENDING REGISTRATIONS
+        |--------------------------------------------------------------------------
+        */
+
+        $pendingRegistrations = User::where('status', User::STATUS_PENDING)
+            ->whereHas('roles', function ($query) {
+                $query->whereIn('name', [
+                    'buyer',
+                    'seller',
+                    'logistics'
+                ]);
+            })
             ->latest()
             ->take(5)
             ->get();
 
-        $pendingRegistrationsCount = User::where('status', 'pending')
-            ->whereIn('role', ['customer', 'seller', 'rider', 'logistic_owner'])
+        $pendingRegistrationsCount = User::where('status', User::STATUS_PENDING)
+            ->whereHas('roles', function ($query) {
+                $query->whereIn('name', [
+                    'buyer',
+                    'seller',
+                    'logistics'
+                ]);
+            })
             ->count();
 
-        $resubmittedProducts = Product::where('compliance_status', 'pending')
+
+        /*
+        |--------------------------------------------------------------------------
+        | RESUBMITTED PRODUCTS
+        |--------------------------------------------------------------------------
+        */
+
+        $resubmittedProducts = Product::where(
+            'compliance_status',
+            'pending'
+        )
             ->latest()
             ->take(5)
             ->get();
 
-        $resubmittedProductsCount = Product::where('compliance_status', 'pending')->count();
+        $resubmittedProductsCount = Product::where(
+            'compliance_status',
+            'pending'
+        )->count();
 
-        $flaggedProducts = Product::whereIn('compliance_status', ['flagged', 'auto_flagged'])
+
+        /*
+        |--------------------------------------------------------------------------
+        | FLAGGED PRODUCTS
+        |--------------------------------------------------------------------------
+        */
+
+        $flaggedProducts = Product::whereIn(
+            'compliance_status',
+            [
+                'flagged',
+                'auto_flagged'
+            ]
+        )
             ->latest()
             ->take(5)
             ->get();
 
-        $flaggedProductsCount = Product::whereIn('compliance_status', ['flagged', 'auto_flagged'])->count();
+        $flaggedProductsCount = Product::whereIn(
+            'compliance_status',
+            [
+                'flagged',
+                'auto_flagged'
+            ]
+        )->count();
 
-        $recentOrders = Order::with('user')->latest()->take(5)->get();
-        $topProducts = Product::with('seller')->orderByDesc('id')->take(5)->get();
+
+        /*
+        |--------------------------------------------------------------------------
+        | RECENT ORDERS
+        |--------------------------------------------------------------------------
+        */
+
+        $recentOrders = Order::with('user')
+            ->latest()
+            ->take(5)
+            ->get();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | RECENT PRODUCTS
+        |--------------------------------------------------------------------------
+        */
+
+        $topProducts = Product::with('seller')
+            ->orderByDesc('id')
+            ->take(5)
+            ->get();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ADMIN DASHBOARD VIEW
+        |--------------------------------------------------------------------------
+        */
 
         return view('admin.dashboard', compact(
-            'totalSellers', 'totalProducts', 'totalOrders', 'totalRevenue',
-            'recentOrders', 'topProducts', 'totalLogistics',
-            'pendingRegistrations', 'pendingRegistrationsCount',
-            'resubmittedProducts', 'resubmittedProductsCount',
-            'flaggedProducts', 'flaggedProductsCount'
+            'totalBuyers',
+            'totalSellers',
+            'totalRiders',
+            'totalProducts',
+            'totalOrders',
+            'totalRevenue',
+            'totalLogistics',
+
+            'pendingRegistrations',
+            'pendingRegistrationsCount',
+
+            'resubmittedProducts',
+            'resubmittedProductsCount',
+
+            'flaggedProducts',
+            'flaggedProductsCount',
+
+            'recentOrders',
+            'topProducts'
         ));
     }
 
+
     public function riders()
     {
-        $riders = User::where('role', 'rider')
-            ->withCount(['orders as active_deliveries_count' => function ($query) {
-                $query->whereIn('delivery_status', ['assigned_to_rider', 'out_for_delivery']);
-            }])
+        // Admin Rider Management is a monitoring list of riders that already
+        // went through their Logistics provider's approval. Riders still
+        // pending (or rejected) by that provider stay in the provider's
+        // "Pending Riders" queue instead.
+        $riders = User::whereHas('roles', function ($query) {
+            $query->where('name', 'rider');
+        })
+            ->where('logistic_status', 'approved')
+            ->whereNotIn('status', [
+                User::STATUS_PENDING,
+                User::STATUS_REJECTED,
+                User::STATUS_DEACTIVATED,
+            ])
+            ->with('logistic')
+            ->withCount([
+                'orders as active_deliveries_count' => function ($query) {
+                    $query->whereIn('delivery_status', [
+                        'assigned_to_rider',
+                        'out_for_delivery'
+                    ]);
+                }
+            ])
             ->get();
 
         return view('admin.riders', compact('riders'));
     }
 
-    public function sellers()
-    {
-        $sellers = User::where('role', 'seller')
-            ->withCount('products')
-            ->with(['products' => function ($query) {
-                $query->select('user_id', 'name', 'price', 'stock')->take(5);
-            }])
-            ->get();
+    public function buyers(Request $request)
+{
+    // Buyer Management only lists buyer accounts that already passed
+    // Admin approval. Pending applications remain in Admin -> Registrations.
+    // Rejected and deactivated buyers are excluded, while suspended buyers
+    // remain visible so the admin can continue managing the account.
+    $query = User::query()
+        ->whereHas('roles', function ($query) {
+            $query->where('name', 'buyer');
+        })
+        ->whereNotIn('status', [
+            User::STATUS_PENDING,
+            User::STATUS_REJECTED,
+            User::STATUS_DEACTIVATED,
+        ]);
 
-        return view('admin.sellers', compact('sellers'));
+    // Search buyer by name, email, or phone.
+    if ($request->filled('search')) {
+        $search = trim($request->search);
+
+        $query->where(function ($q) use ($search) {
+            $q->where('name', 'like', "%{$search}%")
+              ->orWhere('email', 'like', "%{$search}%")
+              ->orWhere('phone', 'like', "%{$search}%");
+        });
     }
+
+    // Filter managed buyers by account status.
+    if ($request->filled('status')) {
+        $query->where('status', $request->status);
+    }
+
+    $buyers = $query
+        ->latest()
+        ->paginate(10)
+        ->withQueryString();
+
+    return view('admin.buyers', compact('buyers'));
+}
+
+
+   public function sellers(Request $request)
+{
+    $query = User::query()
+        ->whereHas('roles', function ($query) {
+            $query->where('name', 'seller');
+        })
+        ->whereNotIn('status', [
+            User::STATUS_PENDING,
+            User::STATUS_REJECTED,
+            User::STATUS_DEACTIVATED,
+        ])
+        ->withCount('products');
+
+    // Search by seller name, email, or phone
+    if ($request->filled('search')) {
+        $search = trim($request->search);
+
+        $query->where(function ($q) use ($search) {
+            $q->where('name', 'like', "%{$search}%")
+              ->orWhere('email', 'like', "%{$search}%")
+              ->orWhere('phone', 'like', "%{$search}%");
+        });
+    }
+
+    // Filter active/suspended managed sellers
+    if ($request->filled('status')) {
+        $query->where('status', $request->status);
+    }
+
+    $sellers = $query
+        ->latest()
+        ->paginate(10)
+        ->withQueryString();
+
+    return view('admin.sellers', compact('sellers'));
+}
+
 
     public function products(Request $request)
     {
-        $query = Product::with('seller', 'category')->latest();
+        $query = Product::with('seller', 'category')
+            ->latest();
 
         if ($request->filled('category')) {
-            $query->where('category_id', $request->category);
+            $query->where(
+                'category_id',
+                $request->category
+            );
         }
 
         if ($request->filled('seller')) {
-            $query->where('user_id', $request->seller);
+            $query->where(
+                'user_id',
+                $request->seller
+            );
         }
 
         $products = $query->paginate(20);
+
         $categories = Category::all();
 
-        return view('admin.products', compact('products', 'categories'));
+        return view(
+            'admin.products',
+            compact(
+                'products',
+                'categories'
+            )
+        );
     }
 }

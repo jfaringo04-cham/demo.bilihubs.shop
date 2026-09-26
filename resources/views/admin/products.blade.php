@@ -54,7 +54,7 @@
             </td>
             <td><span class="badge bg-light text-dark border">{{ $product->category->name ?? 'Uncategorized' }}</span></td>
             <td class="text-muted">{{ $product->seller->name ?? 'N/A' }}</td>
-            <td class="fw-semibold text-slate-900">&#8369;{{ number_format($product->price, 2) }}</td>
+            <td class="fw-semibold text-slate-900">&#8369;{{ number_format(($product->price_minor / 100), 2) }}</td>
             <td>
               @if($product->stock > 0)
                 <span class="badge bg-success">{{ $product->stock }} in stock</span>
@@ -79,3 +79,4 @@
   <div class="p-3 border-top">{{ $products->appends(request()->query())->links('pagination::bootstrap-5') }}</div>
 </div>
 @endsection
+

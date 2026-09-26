@@ -1,5 +1,9 @@
 @extends('layouts.app')
 
+@push('styles')
+  @vite('resources/css/buyer/home.css')
+@endpush
+
 @section('content')
 <!-- Hero -->
 <section class="hero-gradient py-5">
@@ -17,9 +21,9 @@
       <div class="col-lg-6">
         <div class="card border-0 shadow-sm rounded-2 h-100">
           <div class="card-body p-4">
-            <h3 class="fw-bold text-sky-500 mb-3">Mission Statement</h3>
+            <h3 class="fw-bold text-violet-500 mb-3">Mission Statement</h3>
             <p class="typography-body mb-3">At BiliHub, our mission is to create a trusted and innovative marketplace that connects buyers, sellers, and riders in one seamless ecosystem. We aim to empower local entrepreneurs, provide convenient shopping experiences, and deliver reliable logistics all while fostering growth, inclusivity, and sustainability in e-commerce.</p>
-            <h3 class="fw-bold text-sky-500 mb-3 mt-4">Vision Statement</h3>
+            <h3 class="fw-bold text-violet-500 mb-3 mt-4">Vision Statement</h3>
             <p class="typography-body mb-0">We envision BiliHub as a leading online marketplace recognized for its simplicity, reliability, and community-driven approach. Our vision is to build a platform where opportunities thrive, transactions are effortless, and every Filipino can access and benefit from digital commerce locally and globally.</p>
           </div>
         </div>
@@ -27,10 +31,10 @@
       <div class="col-lg-6">
         <div class="card border-0 shadow-sm rounded-2 h-100">
           <div class="card-body p-4">
-            <h3 class="fw-bold text-sky-500 mb-3">Core Values</h3>
+            <h3 class="fw-bold text-violet-500 mb-3">Core Values</h3>
             <div class="d-flex mb-3">
               <div class="flex-shrink-0">
-                <div class="bg-sky-100 text-sky-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">1</div>
+                <div class="bg-violet-100 text-violet-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">1</div>
               </div>
               <div class="flex-grow-1 ms-3">
                 <h6 class="fw-semibold mb-1">Customer First</h6>
@@ -39,7 +43,7 @@
             </div>
             <div class="d-flex mb-3">
               <div class="flex-shrink-0">
-                <div class="bg-sky-100 text-sky-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">2</div>
+                <div class="bg-violet-100 text-violet-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">2</div>
               </div>
               <div class="flex-grow-1 ms-3">
                 <h6 class="fw-semibold mb-1">Integrity & Transparency</h6>
@@ -48,7 +52,7 @@
             </div>
             <div class="d-flex mb-3">
               <div class="flex-shrink-0">
-                <div class="bg-sky-100 text-sky-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">3</div>
+                <div class="bg-violet-100 text-violet-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">3</div>
               </div>
               <div class="flex-grow-1 ms-3">
                 <h6 class="fw-semibold mb-1">Quality & Reliability</h6>
@@ -57,7 +61,7 @@
             </div>
             <div class="d-flex mb-3">
               <div class="flex-shrink-0">
-                <div class="bg-sky-100 text-sky-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">4</div>
+                <div class="bg-violet-100 text-violet-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">4</div>
               </div>
               <div class="flex-grow-1 ms-3">
                 <h6 class="fw-semibold mb-1">Innovation & Growth</h6>
@@ -66,7 +70,7 @@
             </div>
             <div class="d-flex mb-3">
               <div class="flex-shrink-0">
-                <div class="bg-sky-100 text-sky-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">5</div>
+                <div class="bg-violet-100 text-violet-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">5</div>
               </div>
               <div class="flex-grow-1 ms-3">
                 <h6 class="fw-semibold mb-1">Inclusivity & Empowerment</h6>
@@ -75,7 +79,7 @@
             </div>
             <div class="d-flex">
               <div class="flex-shrink-0">
-                <div class="bg-sky-100 text-sky-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">6</div>
+                <div class="bg-violet-100 text-violet-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px;">6</div>
               </div>
               <div class="flex-grow-1 ms-3">
                 <h6 class="fw-semibold mb-1">Community & Collaboration</h6>
@@ -91,7 +95,7 @@
       <div class="col-12">
         <div class="card border-0 shadow-sm rounded-2">
           <div class="card-body p-4">
-            <h3 class="fw-bold text-sky-500 mb-3">Company Goals</h3>
+            <h3 class="fw-bold text-violet-500 mb-3">Company Goals</h3>
             <div class="row g-4">
               <div class="col-md-4">
                 <h6 class="fw-semibold mb-2">Short-Term Goals</h6>
@@ -131,15 +135,15 @@
   </div>
 </section>
 
-<!-- CTA Section -->
-<section class="py-5 bg-sky-500 text-white text-center">
-  <div class="container py-4">
-    <h2 class="display-5 fw-bold mb-3">Ready to Start Selling or Buying?</h2>
-    <p class="lead mb-4 opacity-90">Join thousands of happy customers and sellers on BiliHub today!</p>
-    <div class="d-flex justify-content-center gap-2">
-      <a href="{{ route('register') }}" class="btn btn-light btn-lg rounded-xl px-4">Get Started</a>
-      <a href="{{ route('products.index') }}" class="btn btn-outline-light btn-lg rounded-xl px-4">Shop Now</a>
+  <!-- CTA Section -->
+  <section class="hero-bg py-5 text-center">
+    <div class="container py-5 position-relative" style="z-index: 2;">
+      <h2 class="display-5 fw-bold mb-3">Ready to Start Selling or Buying?</h2>
+      <p class="lead mb-4 opacity-90">Join thousands of happy customers and sellers on BiliHub today!</p>
+      <div class="d-flex justify-content-center gap-2">
+        <a href="{{ route('register') }}" class="btn btn-light btn-lg rounded-xl px-4">Get Started</a>
+        <a href="{{ route('products.index') }}" class="btn btn-outline-light btn-lg rounded-xl px-4">Shop Now</a>
+      </div>
     </div>
-  </div>
-</section>
+  </section>
 @endsection

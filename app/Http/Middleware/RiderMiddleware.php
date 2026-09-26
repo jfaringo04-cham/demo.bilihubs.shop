@@ -14,6 +14,12 @@ class RiderMiddleware
             abort(403, 'Only riders can access this page.');
         }
 
+        $user = Auth::user();
+
+        if (!$user->isActive() || $user->logistic_status !== 'approved') {
+            abort(403, 'Your rider account is still awaiting logistics approval.');
+        }
+
         return $next($request);
     }
 }

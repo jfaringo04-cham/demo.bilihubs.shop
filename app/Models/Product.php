@@ -10,21 +10,56 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Product extends Model
 {
     protected $fillable = [
-        'name', 'price', 'image', 'alt_text', 'category_id', 'user_id', 'description',
-        'stock', 'image_path', 'video_path', 'secondary_image_path', 'compliance_status', 'admin_notes', 'flagged_reason', 'flagged_at',
-        'discount_percent', 'discounted_price', 'discount_starts_at', 'discount_ends_at',
+        'name',
+        'price_minor',
+        'image',
+        'alt_text',
+        'category_id',
+        'user_id',
+        'seller_id',
+        'description',
+        'stock',
+        'image_path',
+        'video_path',
+        'secondary_image_path',
+        'compliance_status',
+        'admin_notes',
+        'flagged_reason',
+        'flagged_at',
+        'discount_percent',
+        'discounted_price_minor',
+        'discount_starts_at',
+        'discount_ends_at',
+        'subcategory_id',
+        'sku',
+        'low_stock_threshold',
+        'attributes',
+        'status',
     ];
 
     protected $casts = [
-        'price' => 'decimal:2',
+        'price_minor' => 'integer',
         'discount_percent' => 'decimal:2',
-        'discounted_price' => 'decimal:2',
+        'discounted_price_minor' => 'integer',
         'flagged_at' => 'datetime',
         'discount_starts_at' => 'datetime',
         'discount_ends_at' => 'datetime',
+        'attributes' => 'array',
     ];
 
+    public const STATUS_DRAFT = 'draft';
+    public const STATUS_PUBLISHED = 'published';
     public const RESUBMIT_DEADLINE_DAYS = 7;
+
+    public function isDraft(): bool
+    {
+        return ($this->status ?? self::STATUS_PUBLISHED) === self::STATUS_DRAFT;
+    }
+
+    public function isPublished(): bool
+    {
+        return !$this->isDraft();
+    }
 
     public function isFlagged(): bool
     {
@@ -59,15 +94,45 @@ class Product extends Model
         if (!$this->flagged_at) {
             return false;
         }
+
         return now()->greaterThan($this->flaggedDeadline());
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Relationships
+    |--------------------------------------------------------------------------
+    */
 
     public function category(): BelongsTo
     {
         return $this->belongsTo(Category::class);
     }
 
+    public function subcategory(): BelongsTo
+    {
+        return $this->belongsTo(Category::class, 'subcategory_id');
+    }
+
+    /**
+     * New Milestone 4 relationship.
+     *
+     * products.seller_id -> sellers.id
+     */
     public function seller(): BelongsTo
+    {
+        return $this->belongsTo(Seller::class, 'seller_id');
+    }
+
+    /**
+     * Legacy seller-user relationship.
+     *
+     * products.user_id -> users.id
+     *
+     * Temporary habang ginagamit pa ng ibang parts
+     * ng existing application ang user_id.
+     */
+    public function sellerUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
     }
@@ -84,7 +149,8 @@ class Product extends Model
 
     public function sizes(): BelongsToMany
     {
-        return $this->belongsToMany(Size::class, 'product_size')->withPivot('stock');
+        return $this->belongsToMany(Size::class, 'product_size')
+            ->withPivot('stock');
     }
 
     public function reviews()
@@ -92,39 +158,61 @@ class Product extends Model
         return $this->hasMany(Review::class);
     }
 
-    public function variations()
+    public function variants(): HasMany
     {
-        return $this->hasMany(ProductVariation::class);
+        return $this->hasMany(ProductVariant::class, 'product_id');
+    }
+
+    /**
+     * Legacy compatibility alias.
+     */
+    public function variations(): HasMany
+    {
+        return $this->variants();
     }
 
     public function images(): HasMany
     {
-        return $this->hasMany(ProductImage::class)->orderBy('sort_order')->orderBy('id');
+        return $this->hasMany(ProductImage::class)
+            ->orderBy('sort_order')
+            ->orderBy('id');
     }
 
     public function primaryImage()
     {
-        return $this->hasOne(ProductImage::class)->where('is_primary', true);
+        return $this->hasOne(ProductImage::class)
+            ->where('is_primary', true);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Image / Media Helpers
+    |--------------------------------------------------------------------------
+    */
 
     public function getDisplayImageAttribute(): ?ProductImage
     {
         $primary = $this->primaryImage;
+
         if ($primary) {
             return $primary;
         }
+
         return $this->images()->first();
     }
 
     public function getImageUrlAttribute(): string
     {
         $img = $this->display_image;
+
         if ($img) {
             return $img->url;
         }
+
         if ($this->image) {
             return asset('storage/' . $this->image);
         }
+
         return 'https://via.placeholder.com/300x200?text=No+Image';
     }
 
@@ -133,12 +221,14 @@ class Product extends Model
         if ($this->video_path) {
             return asset('storage/' . $this->video_path);
         }
+
         return null;
     }
 
     public function hasVideo(): bool
     {
-        return !empty($this->video_path) && file_exists(storage_path('app/public/' . $this->video_path));
+        return !empty($this->video_path)
+            && file_exists(storage_path('app/public/' . $this->video_path));
     }
 
     public function getSecondaryImageUrlAttribute()
@@ -146,38 +236,126 @@ class Product extends Model
         if ($this->secondary_image_path) {
             return asset('storage/' . $this->secondary_image_path);
         }
+
         return null;
     }
 
     public function hasSecondaryImage(): bool
     {
-        return !empty($this->secondary_image_path) && file_exists(storage_path('app/public/' . $this->secondary_image_path));
+        return !empty($this->secondary_image_path)
+            && file_exists(
+                storage_path('app/public/' . $this->secondary_image_path)
+            );
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Discount Helpers
+    |--------------------------------------------------------------------------
+    */
 
     public function hasActiveDiscount(): bool
     {
         if (!$this->discount_percent || $this->discount_percent <= 0) {
             return false;
         }
+
         $now = now();
-        if ($this->discount_starts_at && $now->lt($this->discount_starts_at)) {
+
+        if (
+            $this->discount_starts_at
+            && $now->lt($this->discount_starts_at)
+        ) {
             return false;
         }
-        if ($this->discount_ends_at && $now->gt($this->discount_ends_at)) {
+
+        if (
+            $this->discount_ends_at
+            && $now->gt($this->discount_ends_at)
+        ) {
             return false;
         }
+
         return true;
+    }
+
+    public function getEffectivePriceMinorAttribute(): int
+    {
+        $priceMinor = (int) ($this->price_minor ?? 0);
+
+        if (!$this->hasActiveDiscount()) {
+            return $priceMinor;
+        }
+
+        if ($this->discounted_price_minor !== null) {
+            return (int) $this->discounted_price_minor;
+        }
+
+        return (int) round(
+            $priceMinor * (1 - ((float) $this->discount_percent / 100))
+        );
     }
 
     public function getEffectivePriceAttribute(): float
     {
-        return $this->hasActiveDiscount()
-            ? (float) ($this->discounted_price ?? round($this->price * (1 - $this->discount_percent / 100), 2))
-            : (float) $this->price;
+        return $this->effective_price_minor / 100;
     }
 
     public function getDisplayPriceAttribute(): float
     {
-        return $this->effective_price;
+        return $this->effective_price_minor / 100;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Query Scopes
+    |--------------------------------------------------------------------------
+    */
+
+    public function scopeTrending($query, $limit = 8, $days = 30)
+    {
+        return $query
+            ->where('compliance_status', 'approved')
+            ->whereHas('orderItems.sellerOrder.order', function ($q) use ($days) {
+                $q->whereIn('status', ['completed', 'delivered'])
+                    ->where(
+                        'created_at',
+                        '>=',
+                        now()->subDays($days)
+                    );
+            })
+            ->withSum(
+                [
+                    'orderItems as sold_count' => function ($query) use ($days) {
+                        $query
+                            ->join(
+                                'seller_orders',
+                                'seller_orders.id',
+                                '=',
+                                'order_items.seller_order_id'
+                            )
+                            ->join(
+                                'orders',
+                                'orders.id',
+                                '=',
+                                'seller_orders.order_id'
+                            )
+                            ->whereIn(
+                                'orders.status',
+                                ['completed', 'delivered']
+                            )
+                            ->where(
+                                'orders.created_at',
+                                '>=',
+                                now()->subDays($days)
+                            );
+                    },
+                ],
+                'quantity'
+            )
+            ->orderByDesc('sold_count')
+            ->limit($limit);
     }
 }
+
+

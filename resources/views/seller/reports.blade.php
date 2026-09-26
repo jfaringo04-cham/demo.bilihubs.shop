@@ -123,7 +123,7 @@
                   <div>{{ $item->product_name }} x{{ $item->quantity }}</div>
                 @endforeach
               </td>
-              <td>&#8369;{{ number_format($order->total, 2) }}</td>
+              <td>&#8369;{{ number_format(($order->total_minor / 100), 2) }}</td>
               <td>
                 <span class="badge bg-{{ $order->statusBadgeClass() }}">
                   {{ ucfirst(str_replace('_', ' ', $order->status)) }}
@@ -140,33 +140,14 @@
   </div>
 </div>
 
+@push('scripts')
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script>
-  const ctx = document.getElementById('salesChart');
-  if (ctx) {
-    const labels = @json($chartData->keys());
-    const data = @json($chartData->values());
-    new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: 'Sales',
-          data: data,
-          borderColor: '#ee4d2d',
-          backgroundColor: 'rgba(238, 77, 45, 0.1)',
-          fill: true,
-          tension: 0.3,
-        }]
-      },
-      options: {
-        responsive: true,
-        scales: {
-          y: { beginAtZero: true }
-        }
-      }
-    });
-  }
-</script>
+<script type="application/json" id="seller-reports-data">@php $sellerReportsData = [
+  'labels' => $chartData->keys(),
+  'data' => $chartData->values(),
+]; @endphp @json($sellerReportsData)</script>
+@vite('resources/js/seller/reports.js')
+@endpush
 @endsection
+
 

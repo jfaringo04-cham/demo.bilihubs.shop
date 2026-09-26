@@ -9,13 +9,70 @@ use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
 
-#[Fillable(['name', 'email', 'password', 'role', 'phone', 'address', 'store_name', 'business_address', 'business_documents', 'id_verification', 'mobile_number', 'selling_categories', 'first_name', 'middle_name', 'last_name', 'sex', 'birthday', 'age', 'house_number', 'street_address', 'barangay', 'barangay_name', 'municipality', 'municipality_name', 'province', 'province_name', 'region', 'region_name', 'business_name', 'logo', 'business_permit', 'vehicle_type', 'license_number', 'rider_documents', 'or_document', 'cr_document', 'status', 'rejection_reason', 'approved_at', 'logistic_id', 'hub_id', 'logistic_status', 'logistic_approved_at', 'logistic_rejection_reason', 'max_capacity', 'current_load', 'availability_status', 'assigned_zone', 'last_active_at', 'suspended_at', 'appeal_submitted_at', 'appeal_message', 'preferred_logistic_id', 'daily_pickups_completed', 'daily_deliveries_completed', 'last_quota_reset_date'])]
+#[Fillable([
+    'name',
+    'email',
+    'password',
+    'phone',
+    'address',
+    'store_name',
+    'business_address',
+    'business_documents',
+    'id_verification',
+    'mobile_number',
+    'selling_categories',
+    'first_name',
+    'middle_name',
+    'last_name',
+    'sex',
+    'birthday',
+    'age',
+    'house_number',
+    'street_address',
+    'barangay',
+    'barangay_name',
+    'municipality',
+    'municipality_name',
+    'province',
+    'province_name',
+    'region',
+    'region_name',
+    'business_name',
+    'logo',
+    'business_permit',
+    'vehicle_type',
+    'license_number',
+    'rider_documents',
+    'or_document',
+    'cr_document',
+    'status',
+    'rejection_reason',
+    'approved_at',
+    'logistic_id',
+    'hub_id',
+    'logistic_status',
+    'logistic_approved_at',
+    'logistic_rejection_reason',
+    'max_capacity',
+    'current_load',
+    'availability_status',
+    'assigned_zone',
+    'last_active_at',
+    'suspended_at',
+    'appeal_submitted_at',
+    'appeal_message',
+    'preferred_logistic_id',
+    'daily_pickups_completed',
+    'daily_deliveries_completed',
+    'last_quota_reset_date'
+])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, Notifiable;
+    use HasApiTokens, HasFactory, Notifiable;
 
     public const STATUS_PENDING = 'pending';
     public const STATUS_ACTIVE = 'active';
@@ -36,40 +93,81 @@ class User extends Authenticatable
         ];
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | ROLE CHECKING
+    |--------------------------------------------------------------------------
+    */
+
+    public function hasRole(string $role): bool
+    {
+        // Load roles only once for this User instance.
+        // This prevents repeated role queries while rendering the page.
+        $this->loadMissing('roles');
+
+        return $this->roles->contains('name', $role);
+    }
+
+    public function hasAnyRole(array $roles): bool
+    {
+        // Load roles only once for this User instance.
+        $this->loadMissing('roles');
+
+        return $this->roles
+            ->pluck('name')
+            ->intersect($roles)
+            ->isNotEmpty();
+    }
+
+    /**
+     * Check if the user has administrator privileges.
+     * Both admin and superadmin are allowed to access admin areas.
+     */
     public function isAdmin(): bool
     {
-        return $this->role === 'admin';
+        return $this->hasAnyRole([
+            'admin',
+            'superadmin'
+        ]);
     }
 
     public function isSeller(): bool
     {
-        return $this->role === 'seller';
+        return $this->hasRole('seller');
     }
 
     public function allowedCategoryIds(): array
     {
-        return is_array($this->selling_categories) ? $this->selling_categories : [];
+        return is_array($this->selling_categories)
+            ? $this->selling_categories
+            : [];
     }
 
     public function isCustomer(): bool
     {
-        return $this->role === 'customer';
+        return $this->hasRole('buyer');
     }
 
     public function isRider(): bool
     {
-        return $this->role === 'rider';
+        return $this->hasRole('rider');
     }
 
     public function isLogisticOwner(): bool
     {
-        return $this->role === 'logistic_owner';
+        return $this->hasRole('logistics');
     }
 
     public function isGuest(): bool
     {
-        return $this->role === 'guest';
+        return false;
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | STATUS
+    |--------------------------------------------------------------------------
+    */
 
     public function isActive(): bool
     {
@@ -98,7 +196,8 @@ class User extends Authenticatable
 
     public function canLogin(): bool
     {
-        return $this->status === self::STATUS_ACTIVE || $this->status === self::STATUS_SUSPENDED;
+        return $this->status === self::STATUS_ACTIVE
+            || $this->status === self::STATUS_SUSPENDED;
     }
 
     public function statusBadgeClass(): string
@@ -113,9 +212,20 @@ class User extends Authenticatable
         };
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | RELATIONSHIPS
+    |--------------------------------------------------------------------------
+    */
+
     public function products()
     {
         return $this->hasMany(Product::class);
+    }
+
+    public function cart()
+    {
+        return $this->hasOne(Cart::class);
     }
 
     public function cartItems()
@@ -175,13 +285,24 @@ class User extends Authenticatable
 
     public function complaintsAgainst()
     {
-        return $this->hasMany(SupportTicket::class, 'against_user_id');
+        return $this->hasMany(
+            SupportTicket::class,
+            'against_user_id'
+        );
     }
 
     public function unreadMessagesCount()
     {
-        return $this->receivedMessages()->where('is_read', false)->count();
+        return $this->receivedMessages()
+            ->where('is_read', false)
+            ->count();
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | LOGISTICS
+    |--------------------------------------------------------------------------
+    */
 
     public function logistic()
     {
@@ -190,13 +311,36 @@ class User extends Authenticatable
 
     public function ownedLogistic()
     {
-        return $this->hasOne(Logistic::class, 'owner_user_id');
+        return $this->hasOne(
+            Logistic::class,
+            'owner_user_id'
+        );
     }
 
     public function logisticRiders()
     {
-        return $this->hasMany(User::class, 'logistic_id');
+        return $this->hasMany(
+            User::class,
+            'logistic_id'
+        );
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | RIDER
+    |--------------------------------------------------------------------------
+    */
+
+    public function riderProfile()
+    {
+        return $this->hasOne(Rider::class);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | HUB
+    |--------------------------------------------------------------------------
+    */
 
     public function hub()
     {
@@ -205,7 +349,10 @@ class User extends Authenticatable
 
     public function hubRiders()
     {
-        return $this->hasMany(User::class, 'hub_id');
+        return $this->hasMany(
+            User::class,
+            'hub_id'
+        );
     }
 
     public function logisticStatusBadgeClass(): string
@@ -216,5 +363,27 @@ class User extends Authenticatable
             'rejected' => 'danger',
             default => 'secondary',
         };
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | ROLES
+    |--------------------------------------------------------------------------
+    */
+
+    public function roles()
+    {
+        return $this->belongsToMany(Role::class);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SELLER
+    |--------------------------------------------------------------------------
+    */
+
+    public function seller()
+    {
+        return $this->hasOne(Seller::class);
     }
 }

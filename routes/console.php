@@ -19,7 +19,7 @@ Schedule::call(function () {
     Product::where('compliance_status', 'flagged')
         ->whereNotNull('flagged_at')
         ->where('flagged_at', '<', now()->subDays(Product::RESUBMIT_DEADLINE_DAYS))
-        ->with('seller')
+        ->with(['seller', 'sellerUser'])
         ->chunk(100, function ($products) {
             foreach ($products as $product) {
                 $product->update([
@@ -28,9 +28,9 @@ Schedule::call(function () {
                         '[AUTO] Resubmission deadline of ' . Product::RESUBMIT_DEADLINE_DAYS . ' days passed. Product auto-rejected on ' . now()->format('M d, Y g:i A') . '.',
                 ]);
 
-                if ($product->seller) {
+                if ($product->sellerUser) {
                     \App\Models\Notification::create([
-                        'user_id' => $product->seller->id,
+                        'user_id' => $product->sellerUser->id,
                         'title' => 'Product Auto-Rejected - Deadline Passed',
                         'message' => "Your product \"{$product->name}\" was automatically rejected because the " . Product::RESUBMIT_DEADLINE_DAYS . "-day resubmission deadline passed. Please contact admin support if you want to restore it.",
                         'type' => 'product',
@@ -43,7 +43,9 @@ Schedule::call(function () {
 
 // Reset daily quota for riders at midnight
 Schedule::call(function () {
-    User::where('role', 'rider')
+    User::whereHas('roles', function ($query) {
+        $query->where('name', 'rider');
+    })
         ->where('last_quota_reset_date', '<', now()->toDateString())
         ->update([
             'daily_pickups_completed' => 0,

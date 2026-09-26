@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60" width="200" height="60">
+  <!-- Speedy Express Logo: Purple delivery truck with motion effect -->
+  <defs>
+    <linearGradient id="seGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6D35F2"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <linearGradient id="seGradientDark" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2D1763"/>
+      <stop offset="100%" stop-color="#6D35F2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Motion streak behind truck -->
+  <path d="M20 30 Q40 20 60 30 T100 30" stroke="#8B5CF6" stroke-width="2" fill="none" opacity="0.5" stroke-linecap="round"/>
+
+  <!-- Truck body -->
+  <rect x="30" y="22" width="50" height="18" rx="4" fill="url(#seGradient)" stroke="none"/>
+  <!-- Truck cabin -->
+  <polygon points="30,22 40,12 70,12 70,22" fill="url(#seGradientDark)" stroke="none"/>
+  <!-- Truck roof -->
+  <rect x="40" y="12" width="16" height="2" fill="url(#seGradientDark)" opacity="0.7"/>
+  <!-- Truck wheels -->
+  <circle cx="38" cy="44" r="4" fill="#2D1763"/>
+  <circle cx="62" cy="44" r="4" fill="#2D1763"/>
+  <!-- Delivery box on truck -->
+  <rect x="42" y="28" width="12" height="8" rx="1" fill="#FFFFFF" opacity="0.8"/>
+
+  <!-- Speed lines -->
+  <path d="M10 32 L16 32" stroke="#8B5CF6" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+  <path d="M10 36 L18 36" stroke="#8B5CF6" stroke-width="2" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- Text -->
+  <text x="95" y="20" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#2D1763" letter-spacing="-0.5">SPEEDY</text>
+  <text x="95" y="36" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#6D35F2" letter-spacing="-0.5">EXPRESS</text>
+
+  <!-- Tagline -->
+  <text x="95" y="46" font-family="Arial, sans-serif" font-size="8" fill="#6B7280" font-style="italic">FAST. RELIABLE. EVERYWHERE.</text>
+</svg>

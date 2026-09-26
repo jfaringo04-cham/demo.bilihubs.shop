@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.logistic', ['title' => 'Hub Details', 'logistic' => $logistic])
 
 @section('content')
 <div class="container-fluid py-4">
@@ -113,3 +113,5 @@
     </div>
 </div>
 @endsection
+
+

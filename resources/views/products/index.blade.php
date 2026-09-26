@@ -42,11 +42,11 @@
                   <h6 class="fw-semibold text-slate-800 mb-2" style="min-height: 40px;">{{ $product->name }}</h6>
                   @if($product->hasActiveDiscount())
                     <p class="price mb-1">
-                      <span class="text-danger">&#8369;{{ number_format($product->effective_price, 2) }}</span>
-                      <small class="text-muted text-decoration-line-through ms-1">&#8369;{{ number_format($product->price, 2) }}</small>
+                      <span class="text-danger">&#8369;{{ number_format($product->effective_price_minor / 100, 2) }}</span>
+                      <small class="text-muted text-decoration-line-through ms-1">&#8369;{{ number_format($product->price_minor / 100, 2) }}</small>
                     </p>
                   @else
-                    <p class="price mb-1">&#8369;{{ number_format($product->price, 2) }}</p>
+                    <p class="price mb-1">&#8369;{{ number_format($product->price_minor / 100, 2) }}</p>
                   @endif
                   @if($product->stock > 0)
                     <small class="text-muted">{{ $product->category->name ?? 'Uncategorized' }}</small>
@@ -72,3 +72,4 @@
   </div>
 </div>
 @endsection
+

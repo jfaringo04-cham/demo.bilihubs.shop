@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.logistic', ['title' => 'Sorting Area', 'logistic' => $logistic])
 
 @section('content')
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
@@ -60,9 +60,9 @@
               @forelse($pendingShipments as $shipment)
                 <tr>
                   <td><code>{{ $shipment->tracking_number }}</code></td>
-                  <td>{{ $shipment->order->order_number ?? 'N/A' }}</td>
+                  <td>{{ $shipment->sellerOrder?->order?->order_number ?? 'N/A' }}</td>
                   <td>
-                    @foreach($shipment->order->items ?? [] as $item)
+                    @foreach($shipment->sellerOrder?->items ?? [] as $item)
                       <small class="d-block">{{ $item->product_name }} x{{ $item->quantity }}</small>
                     @endforeach
                   </td>
@@ -114,9 +114,9 @@
               @forelse($receivedShipments as $shipment)
                 <tr>
                   <td><code>{{ $shipment->tracking_number }}</code></td>
-                  <td>{{ $shipment->order->order_number ?? 'N/A' }}</td>
+                  <td>{{ $shipment->sellerOrder?->order?->order_number ?? 'N/A' }}</td>
                   <td>
-                    @foreach($shipment->order->items ?? [] as $item)
+                    @foreach($shipment->sellerOrder?->items ?? [] as $item)
                       <small class="d-block">{{ $item->product_name }} x{{ $item->quantity }}</small>
                     @endforeach
                   </td>
@@ -203,7 +203,7 @@
               @forelse($sortedShipments as $shipment)
                 <tr>
                   <td><code>{{ $shipment->tracking_number }}</code></td>
-                  <td>{{ $shipment->order->order_number ?? 'N/A' }}</td>
+                  <td>{{ $shipment->sellerOrder?->order?->order_number ?? 'N/A' }}</td>
                   <td><span class="badge bg-info">{{ $shipment->delivery_zone }}</span></td>
                   <td>
                     @if($shipment->delivery_type == 'same_day')
@@ -375,7 +375,7 @@
                   @foreach($zoneParcels as $shipment)
                     <tr>
                       <td><code>{{ $shipment->tracking_number }}</code></td>
-                      <td>{{ $shipment->order->order_number ?? 'N/A' }}</td>
+                      <td>{{ $shipment->sellerOrder?->order?->order_number ?? 'N/A' }}</td>
                       <td><small>{{ Str::limit($shipment->delivery_address, 50) }}</small></td>
                       <td>
                         <span class="badge bg-{{ $shipment->sorting_status == 'staged' ? 'success' : 'primary' }}">{{ ucfirst($shipment->sorting_status) }}</span>
@@ -450,3 +450,4 @@
   </div>
 </div>
 @endsection
+

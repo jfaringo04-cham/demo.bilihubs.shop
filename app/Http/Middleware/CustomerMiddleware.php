@@ -14,6 +14,10 @@ class CustomerMiddleware
             abort(403, 'Only buyers can access this page.');
         }
 
+        if (!Auth::user()->isActive()) {
+            abort(403, 'Your account is not approved yet.');
+        }
+
         return $next($request);
     }
 }

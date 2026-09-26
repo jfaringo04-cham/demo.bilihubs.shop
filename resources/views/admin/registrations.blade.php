@@ -15,9 +15,9 @@
         <label for="role" class="form-label fw-medium">Filter by Role</label>
         <select name="role" id="role" class="form-select rounded-xl" onchange="this.form.submit()">
           <option value="">All Roles</option>
-          <option value="customer" {{ request('role') == 'customer' ? 'selected' : '' }}>Buyer</option>
+          <option value="buyer" {{ request('role') == 'buyer' ? 'selected' : '' }}>Buyer</option>
           <option value="seller" {{ request('role') == 'seller' ? 'selected' : '' }}>Seller</option>
-          <option value="rider" {{ request('role') == 'rider' ? 'selected' : '' }}>Courier</option>
+          <option value="logistics" {{ request('role') == 'logistics' ? 'selected' : '' }}>Logistics</option>
         </select>
       </div>
     </form>
@@ -51,7 +51,7 @@
               </div>
             </td>
             <td class="text-muted">{{ $app->email }}</td>
-            <td><span class="badge bg-info text-capitalize">{{ $app->role }}</span></td>
+            <td><span class="badge bg-info text-capitalize">{{ $app->roles->first()->name ?? 'N/A' }}</span></td>
             <td class="text-muted">{{ $app->created_at->format('M d, Y') }}</td>
             <td>
               <a href="{{ route('admin.registrations.show', $app) }}" class="btn btn-primary btn-sm rounded-xl">

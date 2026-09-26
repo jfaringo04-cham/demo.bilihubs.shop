@@ -12,7 +12,8 @@ class Shipment extends Model
         'logistic_id',
         'hub_id',
         'rider_id',
-        'order_id',
+        'rider_profile_id',
+        'seller_order_id',
         'tracking_number',
         'qr_token',
         'status',
@@ -73,7 +74,7 @@ class Shipment extends Model
         return json_encode([
             't' => $this->tracking_number,
             'q' => $this->qr_token,
-            'o' => $this->order_id,
+            'so' => $this->seller_order_id,
         ]);
     }
 
@@ -92,14 +93,24 @@ class Shipment extends Model
         return $this->belongsTo(User::class, 'rider_id');
     }
 
-    public function order(): BelongsTo
+    public function riderProfile(): BelongsTo
     {
-        return $this->belongsTo(Order::class);
+        return $this->belongsTo(Rider::class, 'rider_profile_id');
+    }
+
+    public function sellerOrder(): BelongsTo
+    {
+        return $this->belongsTo(SellerOrder::class, 'seller_order_id');
     }
 
     public function messages()
     {
         return $this->hasMany(ShipmentMessage::class);
+    }
+
+    public function events(): HasMany
+    {
+        return $this->hasMany(DeliveryEvent::class);
     }
 
     public function timelineSteps(): array

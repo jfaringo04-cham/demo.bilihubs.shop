@@ -32,11 +32,17 @@
               <td>{{ $order->order_number }}</td>
               <td>{{ $order->user->name ?? 'N/A' }}</td>
               <td>
-                @foreach($sellerItems as $item)
-                  <div>{{ $item->product_name }} x{{ $item->quantity }}@if($item->size) ({{ $item->size->name }})@endif</div>
-                @endforeach
-              </td>
-              <td>&#8369;{{ number_format($order->total, 2) }}</td>
+                 @foreach($sellerItems as $item)
+                   <div>{{ $item->product_name }} x{{ $item->quantity }}
+                     @if($item->variation)
+                       <small class="text-muted">({{ $item->variation->display_name ?: $item->variation->name }})</small>
+                     @elseif($item->size)
+                       <small class="text-muted">({{ $item->size->name }})</small>
+                     @endif
+                   </div>
+                 @endforeach
+               </td>
+              <td>&#8369;{{ number_format(($order->total_minor / 100), 2) }}</td>
               <td>
                 <span class="badge bg-{{ $order->statusBadgeClass() }} mb-1 d-block">
                   {{ ucfirst(str_replace('_', ' ', $order->status)) }}
@@ -51,7 +57,7 @@
                   elseif (in_array($order->status, ['delivered', 'completed'])) $progress = 100;
                 @endphp
                 <div class="progress" style="height: 6px; background: #e2e8f0; border-radius: 3px; min-width: 100px;">
-                  <div class="progress-bar" role="progressbar" style="width: {{ $progress }}%; background: #0ea5e9; border-radius: 3px;"></div>
+                  <div class="progress-bar" role="progressbar" style="width: {{ $progress }}%; background: #8b5cf6; border-radius: 3px;"></div>
                 </div>
                 <form action="{{ route('seller.orders.updateStatus', $order) }}" method="POST" class="d-inline">
                   @csrf
@@ -131,5 +137,6 @@
   </div>
 </div>
 @endsection
+
 
 

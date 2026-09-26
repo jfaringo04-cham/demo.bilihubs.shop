@@ -47,31 +47,47 @@
       
       @if($product->hasActiveDiscount())
         <div class="d-flex align-items-center gap-3 mt-3">
-          <span class="price text-danger fs-3 fw-bold" id="display-price">&#8369;{{ number_format($product->effective_price, 2) }}</span>
-          <small class="text-muted text-decoration-line-through fs-5">&#8369;{{ number_format($product->price, 2) }}</small>
+          <span class="price text-danger fs-3 fw-bold" id="display-price">&#8369;{{ number_format(($product->effective_price_minor / 100), 2) }}</span>
+          <small class="text-muted text-decoration-line-through fs-5">&#8369;{{ number_format(($product->price_minor / 100), 2) }}</small>
           <span class="badge bg-danger rounded-pill">-{{ rtrim(rtrim(number_format($product->discount_percent, 2), '0'), '.') }}%</span>
         </div>
         @if($product->discount_ends_at)
           <small class="text-muted mt-2 d-block"><i class="bi bi-clock me-1"></i>Sale ends {{ $product->discount_ends_at->format('M d, Y g:i A') }}</small>
         @endif
       @else
-        <p class="price fs-3 mt-3" id="display-price">&#8369;{{ number_format($product->price, 2) }}</p>
+      <p class="price fs-3 mt-3" id="display-price">&#8369;{{ number_format(($product->price_minor / 100), 2) }}</p>
       @endif
 
       <div class="mt-4">
         <span class="text-muted d-block mb-1">Category: <span class="text-slate-800">{{ $product->category->name ?? 'Uncategorized' }}</span></span>
-        <span class="text-muted d-block mb-1">Seller: <a href="{{ route('seller.storefront', $product->seller) }}" class="text-sky-500">{{ $product->seller->business_name ?? $product->seller->name ?? 'Unknown' }}</a></span>
+        <span class="text-muted d-block mb-1">
+          Seller:
+          @if($product->seller)
+            <a href="{{ route('seller.storefront', $product->sellerUser) }}" class="text-sky-500">
+              {{ $product->seller->name ?? $product->sellerUser->business_name ?? $product->sellerUser->name ?? 'Unknown' }}
+            </a>
+          @else
+            <span class="text-slate-800">{{ $product->sellerUser->business_name ?? $product->sellerUser->name ?? 'Unknown' }}</span>
+          @endif
+        </span>
         @if($product->stock > 0)
-          <span class="text-muted d-block">Stock: <span class="text-slate-800">{{ $product->stock }} units</span></span>
+          <span class="text-muted d-block" id="stock-display">
+            Stock: <span class="text-slate-800" id="stock-amount">{{ $product->stock }} units</span>
+          </span>
         @else
-          <span class="badge bg-danger rounded-pill">Sold Out</span>
+          <span class="badge bg-danger rounded-pill" id="stock-display">Sold Out</span>
         @endif
+        <div id="selected-variant-info" class="mt-2" style="display:none;">
+          <span class="text-muted small">Selected:</span>
+          <span class="fw-medium small" id="selected-variant-name"></span>
+        </div>
       </div>
 
       @php
         $hasAnySize = $product->sizes->count() > 0;
         $hasAvailableSize = !$hasAnySize || $product->sizes->contains(function($size) { return $size->pivot->stock > 0; });
         $canPurchase = $product->stock > 0 && $hasAvailableSize;
+        $productMainImageUrl = $product->image_url;
       @endphp
 
       @if($product->variations->count() > 1)
@@ -79,19 +95,33 @@
           <label class="form-label fw-medium mb-2">Options</label>
           <div class="d-flex flex-wrap gap-2" id="variation-selector">
             @foreach($product->variations as $variation)
-              <div class="border rounded-2 p-2 text-center cursor-pointer variation-thumb {{ $variation->stock > 0 ? 'border-sky-500 bg-sky-50' : 'border-slate-300 bg-slate-100 opacity-50' }}"
-                   style="min-width: 120px; min-height: 120px;"
+              @php
+                $displayName = $variation->display_name ?: $variation->name;
+                $variantPrice = $variation->price_minor !== null ? ($variation->effective_price_minor / 100) : ($product->effective_price_minor / 100);
+                $variantOriginalPrice = $variation->price_minor !== null ? ($variation->price_minor / 100) : ($product->price_minor / 100);
+              @endphp
+              <div class="border rounded-2 p-2 text-center cursor-pointer variation-thumb {{ $variation->stock > 0 ? '' : 'variation-sold-out' }}"
+                   style="min-width: 120px; min-height: 140px;"
                    data-variation-id="{{ $variation->id }}"
                    data-variation-stock="{{ $variation->stock }}"
-                   data-variation-price="{{ $variation->effective_price }}">
-                <img src="{{ $variation->image_url }}" class="rounded" style="width: 50px; height: 50px; object-fit: cover;" alt="{{ $variation->name }}">
-                <div class="fw-medium mt-2">{{ $variation->name }}</div>
-                <div class="fw-bold text-sky-600 mb-1">&#8369;{{ number_format($variation->effective_price, 2) }}</div>
-                <div class="{{ $variation->stock > 0 ? 'text-muted' : 'text-danger' }} small">{{ $variation->stock }} left</div>
+                   data-variation-price="{{ $variantPrice }}"
+                   data-variation-original-price="{{ $variantOriginalPrice }}"
+                   data-variation-image="{{ $variation->image_url }}"
+                   data-variation-name="{{ $displayName }}"
+                   data-variation-color="{{ $variation->color ?? '' }}"
+                   data-variation-size="{{ $variation->size ?? '' }}">
+                <img src="{{ $variation->image_url }}" class="rounded" style="width: 50px; height: 50px; object-fit: cover;" alt="{{ $displayName }}">
+                <div class="fw-medium mt-2 small">{{ $displayName }}</div>
+                <div class="fw-bold text-sky-600 mb-1 small">&#8369;{{ number_format($variantPrice, 2) }}</div>
+                @if($variation->stock > 0)
+                <div class="text-muted small">{{ $variation->stock }} left</div>
+                @else
+                  <div class="text-danger small fw-medium">Sold Out</div>
+                @endif
               </div>
             @endforeach
           </div>
-          <input type="hidden" name="variation_id" id="selected-variation-id" value="">
+          <input type="hidden" name="variant_id" id="selected-variation-id" value="">
         </div>
       @endif
 
@@ -142,13 +172,13 @@
             <form action="{{ route('cart.store', $product) }}" method="POST" id="cart-form">
               @csrf
               <input type="hidden" name="size_id" id="cart-size-id" value="">
-              <input type="hidden" name="variation_id" id="cart-variation-id" value="">
+              <input type="hidden" name="variant_id" id="cart-variation-id" value="">
               <input type="hidden" name="quantity" id="cart-submit-qty" value="1">
             </form>
             <form action="{{ route('buyNow', $product) }}" method="POST" id="buynow-form">
               @csrf
               <input type="hidden" name="size_id" id="buy-size-id" value="">
-              <input type="hidden" name="variation_id" id="buy-variation-id" value="">
+              <input type="hidden" name="variant_id" id="buy-variation-id" value="">
               <input type="hidden" name="quantity" id="buy-quantity" value="1">
             </form>
           </div>
@@ -188,11 +218,11 @@
                   <h6 class="fw-semibold text-slate-800 mb-2">{{ $related->name }}</h6>
                   @if($related->hasActiveDiscount())
                     <p class="price mb-1">
-                      <span class="text-danger">&#8369;{{ number_format($related->effective_price, 2) }}</span>
-                      <small class="text-muted text-decoration-line-through ms-1">&#8369;{{ number_format($related->price, 2) }}</small>
+                      <span class="text-danger">&#8369;{{ number_format(($related->effective_price_minor / 100), 2) }}</span>
+                      <small class="text-muted text-decoration-line-through ms-1">&#8369;{{ number_format(($related->price_minor / 100), 2) }}</small>
                     </p>
                   @else
-                    <p class="price mb-1">&#8369;{{ number_format($related->price, 2) }}</p>
+                    <p class="price mb-1">&#8369;{{ number_format(($related->price_minor / 100), 2) }}</p>
                   @endif
                 </div>
               </div>
@@ -256,172 +286,21 @@
     </div>
   </div>
 </div>
-<script>
-document.getElementById('secondaryImageModal')?.addEventListener('shown.bs.modal', function () {
-  var carouselEl = document.getElementById('lightbox-carousel');
-  if (carouselEl) {
-    var carousel = bootstrap.Carousel.getOrCreateInstance(carouselEl);
-    var items = carouselEl.querySelectorAll('.carousel-item');
-    function updateIndex() {
-      var active = carouselEl.querySelector('.carousel-item.active');
-      if (active) {
-        var idx = Array.from(items).indexOf(active);
-        document.getElementById('current-image-index').textContent = idx + 1;
-      }
-    }
-    carousel.cycle();
-    updateIndex();
-    carouselEl.addEventListener('slide.bs.carousel', updateIndex);
-  }
- });
+@endif
+
+  <script id="product-page-data" type="application/json">
+    @php $productPageData = [
+      'variations' => $variationsJson ?? [],
+      'mainImageUrl' => $productMainImageUrl ?? $product->image_url,
+      'stock' => $product->stock,
+    ]; @endphp @json($productPageData)
   </script>
-  @endif
 
-  <script>
-(function() {
-  var sizeSelect = document.getElementById('size_id');
-  var cartQty = document.getElementById('cart-quantity');
-  var cartBtn = document.getElementById('cart-btn');
-  var buyBtn = document.getElementById('buy-btn');
-  var variations = @json($variationsJson ?? []);
-  var thumbs = document.querySelectorAll('.variation-thumb');
+  @push('scripts')
+    @vite('resources/js/buyer/products.js')
+  @endpush
 
-  var selectedVariationId = null;
+  @endsection
 
-  function hasMultipleVariations() {
-    return variations.length > 1;
-  }
 
-  function updateButtons() {
-    var limit = computeStockLimit();
-    var canPurchase = limit >= 1;
 
-    if (hasMultipleVariations()) {
-      canPurchase = canPurchase && selectedVariationId !== null;
-    }
-
-    if (cartBtn) cartBtn.disabled = !canPurchase;
-    if (buyBtn) buyBtn.disabled = !canPurchase;
-  }
-
-  function computeStockLimit() {
-    var limits = [];
-    if (selectedVariationId !== null) {
-      var v = variations.find(function(variation) { return variation.id == selectedVariationId; });
-      if (v) limits.push(v.stock);
-    }
-    if (sizeSelect && sizeSelect.value) {
-      var opt = sizeSelect.options[sizeSelect.selectedIndex];
-      if (opt && opt.dataset && opt.dataset.stock) {
-        limits.push(parseInt(opt.dataset.stock));
-      }
-    }
-    if (limits.length === 0) {
-      limits.push({{ $product->stock }});
-    }
-    var min = Math.min.apply(null, limits);
-    if (min < 1) min = 1;
-    return min;
-  }
-
-  function updateQuantityLimit() {
-    if (cartQty) {
-      var limit = computeStockLimit();
-      cartQty.max = limit;
-      if (parseInt(cartQty.value) > limit) cartQty.value = 1;
-    }
-    updateButtons();
-  }
-
-  function syncHiddenSize() {
-    var val = sizeSelect ? sizeSelect.value : '';
-    var cartSize = document.getElementById('cart-size-id');
-    if (cartSize) cartSize.value = val;
-    var buySize = document.getElementById('buy-size-id');
-    if (buySize) buySize.value = val;
-    updateQuantityLimit();
-  }
-
-  window.selectVariation = function(id, stock, price) {
-    if (stock <= 0) return;
-
-    thumbs.forEach(function(t) { t.classList.remove('variation-selected'); });
-    var clicked = document.querySelector('[data-variation-id="' + id + '"]');
-    if (clicked) clicked.classList.add('variation-selected');
-
-    selectedVariationId = id;
-
-    var selEl = document.getElementById('selected-variation-id');
-    if (selEl) selEl.value = id;
-    var cartVar = document.getElementById('cart-variation-id');
-    if (cartVar) cartVar.value = id;
-    var buyVar = document.getElementById('buy-variation-id');
-    if (buyVar) buyVar.value = id;
-
-    updateQuantityLimit();
-    if (price) {
-      var dp = document.getElementById('display-price');
-      if (dp) dp.textContent = '₱' + parseFloat(price).toFixed(2);
-    }
-  };
-
-  window.addToCart = function() {
-    if (hasMultipleVariations() && selectedVariationId === null) {
-      alert('Please select an option first.');
-      return;
-    }
-    var qty = document.getElementById('cart-quantity');
-    var qtyVal = qty ? parseInt(qty.value) : 1;
-    var submitQty = document.getElementById('cart-submit-qty');
-    if (submitQty) submitQty.value = qtyVal;
-
-    var qtyLimit = computeStockLimit();
-    if (qtyVal > qtyLimit) {
-      qtyVal = qtyLimit;
-      if (submitQty) submitQty.value = qtyVal;
-    }
-
-    var form = document.getElementById('cart-form');
-    if (form) form.submit();
-  };
-
-  window.placeOrder = function() {
-    if (hasMultipleVariations() && selectedVariationId === null) {
-      alert('Please select an option first.');
-      return;
-    }
-    var qty = document.getElementById('cart-quantity');
-    var qtyVal = qty ? parseInt(qty.value) : 1;
-    var buyQty = document.getElementById('buy-quantity');
-    if (buyQty) buyQty.value = qtyVal;
-
-    var qtyLimit = computeStockLimit();
-    if (qtyVal > qtyLimit) {
-      qtyVal = qtyLimit;
-      if (buyQty) buyQty.value = qtyVal;
-    }
-
-    var form = document.getElementById('buynow-form');
-    if (form) form.submit();
-  };
-
-  if (sizeSelect) {
-    sizeSelect.addEventListener('change', function() {
-      syncHiddenSize();
-    });
-    syncHiddenSize();
-  }
-
-  thumbs.forEach(function(t) {
-    t.addEventListener('click', function() {
-      var id = this.getAttribute('data-variation-id');
-      var stock = parseInt(this.getAttribute('data-variation-stock'));
-      var price = parseFloat(this.getAttribute('data-variation-price'));
-      window.selectVariation(id, stock, price);
-    });
-  });
-
-  updateButtons();
-})();
-</script>
-@endsection

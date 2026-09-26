@@ -24,10 +24,7 @@ class OrderController extends Controller
 
     public function index()
     {
-        $orders = Order::where('user_id', Auth::id())
-            ->latest()
-            ->paginate(10);
-
+        $orders = Order::where('user_id', Auth::id())->latest()->paginate(10);
         return view('orders.index', compact('orders'));
     }
 
@@ -43,32 +40,27 @@ class OrderController extends Controller
             $hasSellerProduct = $order->items()
                 ->whereHas('product', function ($query) use ($user) {
                     $query->where('user_id', $user->id);
-                })
-                ->exists();
+                })->exists();
 
             if (!$hasSellerProduct) {
                 abort(403);
             }
         }
 
-        $order->load('items.product', 'items.size', 'rider', 'shipment');
+        $order->load('items.product', 'items.size', 'items.variation', 'rider', 'sellerOrders.shipment');
 
         return view('orders.show', compact('order'));
     }
 
     public function requestReturn(Request $request, Order $order)
     {
-        if ($order->user_id !== Auth::id()) {
-            abort(403);
-        }
+        if ($order->user_id !== Auth::id()) abort(403);
 
         if ($order->status !== 'reschedule_requested' && $order->status !== 'delivered') {
             return back()->with('error', 'This order is not eligible for return request.');
         }
 
-        $request->validate([
-            'return_reason' => 'required|string|max:1000',
-        ]);
+        $request->validate(['return_reason' => 'required|string|max:1000']);
 
         $order->update([
             'status' => 'return_requested',
@@ -76,12 +68,15 @@ class OrderController extends Controller
             'return_reason' => $request->return_reason,
         ]);
 
-        $shipment = $order->shipment;
-        if ($shipment) {
-            $shipment->update([
-                'status' => 'returned',
-                'notes' => ($shipment->notes ? $shipment->notes . "\n" : '') . "Return requested by buyer. Reason: " . $request->return_reason,
-            ]);
+        foreach ($order->sellerOrders()->with('shipment')->get() as $sellerOrder) {
+            $shipment = $sellerOrder->shipment;
+            if ($shipment) {
+                $shipment->update([
+                    'status' => 'returned',
+                    'notes' => ($shipment->notes ? $shipment->notes . "\n" : '') .
+                        "Return requested by buyer. Reason: " . $request->return_reason,
+                ]);
+            }
         }
 
         $this->createNotification(
@@ -108,17 +103,13 @@ class OrderController extends Controller
 
     public function requestReschedule(Request $request, Order $order)
     {
-        if ($order->user_id !== Auth::id()) {
-            abort(403);
-        }
+        if ($order->user_id !== Auth::id()) abort(403);
 
         if ($order->status !== 'delivery_failed') {
             return back()->with('error', 'This order is not eligible for reschedule.');
         }
 
-        $request->validate([
-            'reschedule_reason' => 'nullable|string|max:1000',
-        ]);
+        $request->validate(['reschedule_reason' => 'nullable|string|max:1000']);
 
         $order->update([
             'status' => 'rescheduled',
@@ -130,9 +121,12 @@ class OrderController extends Controller
             'failure_reason' => null,
         ]);
 
-        $shipment = $order->shipment;
-        if ($shipment) {
+        foreach ($order->sellerOrders()->with('shipment')->get() as $sellerOrder) {
+            $shipment = $sellerOrder->shipment;
+            if (!$shipment) continue;
+
             $bestRider = \App\Services\RiderAssignmentService::findBestRiderForShipment($shipment);
+
             if ($bestRider) {
                 \App\Services\RiderAssignmentService::assignRiderToShipment($shipment, $bestRider);
 
@@ -140,7 +134,10 @@ class OrderController extends Controller
                     'user_id' => $bestRider->id,
                     'title' => 'Rescheduled Delivery Assigned',
                     'type' => 'delivery',
-                    'message' => 'Order ' . $order->order_number . ' has been rescheduled for delivery. Destination: ' . ($shipment->delivery_zone ?: 'N/A') . '. Please proceed with the delivery.',
+                    'message' => 'Order ' . $order->order_number .
+                        ' has been rescheduled for delivery. Destination: ' .
+                        ($shipment->delivery_zone ?: 'N/A') .
+                        '. Please proceed with the delivery.',
                     'link' => route('rider.pickups'),
                 ]);
             }
@@ -170,19 +167,15 @@ class OrderController extends Controller
 
     public function requestCancellation(Request $request, Order $order)
     {
-        if ($order->user_id !== Auth::id()) {
-            abort(403);
-        }
+        if ($order->user_id !== Auth::id()) abort(403);
 
         if (!in_array($order->status, ['placed', 'confirmed', 'preparing'])) {
             return back()->with('error', 'Order cannot be cancelled at this stage.');
         }
 
-        $request->validate([
-            'reason' => 'required|string|max:1000',
-        ]);
+        $request->validate(['reason' => 'required|string|max:1000']);
 
-        $order->load('items.product.sizes', 'items.size');
+        $order->load('items.product.sizes', 'items.size', 'items.variation');
 
         foreach ($order->items as $item) {
             if ($item->size_id && $item->product) {
@@ -194,6 +187,12 @@ class OrderController extends Controller
                 }
             }
 
+            if ($item->variation) {
+                $item->variation->update([
+                    'stock' => $item->variation->stock + $item->quantity,
+                ]);
+            }
+
             if ($item->product) {
                 $item->product->update([
                     'stock' => $item->product->stock + $item->quantity,
@@ -203,7 +202,8 @@ class OrderController extends Controller
 
         $order->update([
             'status' => 'cancelled',
-            'notes' => ($order->notes ? $order->notes . "\n" : '') . "Cancellation reason: " . $request->reason,
+            'notes' => ($order->notes ? $order->notes . "\n" : '') .
+                "Cancellation reason: " . $request->reason,
         ]);
 
         $this->createNotification(
@@ -219,9 +219,7 @@ class OrderController extends Controller
 
     public function confirmReceived(Request $request, Order $order)
     {
-        if ($order->user_id !== Auth::id()) {
-            abort(403);
-        }
+        if ($order->user_id !== Auth::id()) abort(403);
 
         if ($order->status !== 'delivered') {
             return back()->with('error', 'Cannot confirm receipt for this order.');
@@ -253,6 +251,4 @@ class OrderController extends Controller
 
         return back()->with('success', 'Order confirmed. Transaction completed successfully!');
     }
-
-
 }

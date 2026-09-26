@@ -30,7 +30,11 @@ class ReportController extends Controller
             ->with('items.product')
             ->get();
 
-        $totalSales = $orders->where('status', 'delivered')->sum('total');
+        // Integer centavos are the source of truth.
+        $totalSales = $orders->where('status', 'delivered')->sum(function ($order) {
+            return (int) $order->total_minor;
+        }) / 100;
+
         $orderCount = $orders->count();
         $deliveredCount = $orders->where('status', 'delivered')->count();
 
@@ -42,7 +46,7 @@ class ReportController extends Controller
             ->take(10)
             ->get();
 
-        $topSellers = User::where('role', 'seller')
+        $topSellers = User::whereHas('roles', fn ($q) => $q->where('name', 'seller'))
             ->withCount(['orders as delivered_orders_count' => function ($q) {
                 $q->where('status', 'delivered');
             }])
@@ -66,15 +70,25 @@ class ReportController extends Controller
             ->when($to, fn ($q) => $q->whereHas('order', fn ($o) => $o->where('created_at', '<=', $to)))
             ->get();
 
-        $totalCommission = $commissions->sum('amount');
-        $totalPaid = $commissions->where('status', 'paid')->sum('amount');
-        $totalPending = $commissions->where('status', 'pending')->sum('amount');
+        // Sum integer centavos, convert to pesos only for display.
+        $totalCommission = $commissions->sum(fn ($commission) => (int) $commission->amount_minor) / 100;
+
+        $totalPaid = $commissions
+            ->where('status', 'paid')
+            ->sum(fn ($commission) => (int) $commission->amount_minor) / 100;
+
+        $totalPending = $commissions
+            ->where('status', 'pending')
+            ->sum(fn ($commission) => (int) $commission->amount_minor) / 100;
 
         $bySeller = $commissions->groupBy('seller_id')->map(function ($group) {
             $seller = $group->first()->seller;
+
+            $amountMinor = $group->sum(fn ($commission) => (int) $commission->amount_minor);
+
             return [
                 'seller' => $seller,
-                'amount' => $group->sum('amount'),
+                'amount' => $amountMinor / 100,
                 'count' => $group->count(),
             ];
         });
@@ -101,15 +115,19 @@ class ReportController extends Controller
         $callback = function () use ($orders) {
             $file = fopen('php://output', 'w');
             fputcsv($file, ['Order #', 'Customer', 'Status', 'Total', 'Date']);
+
             foreach ($orders as $order) {
+                $totalMinor = (int) $order->total_minor;
+
                 fputcsv($file, [
                     $order->order_number,
                     $order->user->name ?? 'N/A',
                     $order->status,
-                    $order->total,
+                    number_format($totalMinor / 100, 2, '.', ''),
                     $order->created_at,
                 ]);
             }
+
             fclose($file);
         };
 
@@ -134,21 +152,28 @@ class ReportController extends Controller
         $callback = function () use ($commissions) {
             $file = fopen('php://output', 'w');
             fputcsv($file, ['Commission ID', 'Order #', 'Seller', 'Order Total', 'Rate', 'Commission', 'Status', 'Date']);
+
             foreach ($commissions as $c) {
+                $orderTotalMinor = (int) $c->order_total_minor;
+
+                $amountMinor = (int) $c->amount_minor;
+
                 fputcsv($file, [
                     $c->id,
                     $c->order->order_number ?? 'N/A',
                     $c->seller->name ?? 'N/A',
-                    $c->order_total,
+                    number_format($orderTotalMinor / 100, 2, '.', ''),
                     $c->rate,
-                    $c->amount,
+                    number_format($amountMinor / 100, 2, '.', ''),
                     $c->status,
                     $c->created_at,
                 ]);
             }
+
             fclose($file);
         };
 
         return response()->stream($callback, 200, $headers);
     }
 }
+

@@ -1,7 +1,8 @@
 @import 'tailwindcss';
 
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
-@source '../../storage/framework/views/*.php';
+@source '../../resources/views/**/*.blade.php';
+@source '../../resources/js/**/*.js';
 
 @theme {
     --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
@@ -10,8 +11,13 @@
 
 @layer base {
   :root {
-    --color-primary: #0ea5e9;
-    --color-primary-dark: #0284c7;
+    --color-primary: #8b5cf6;
+    --color-primary-dark: #7c3aed;
+    --color-primary-light: #c084fc;
+    --color-deep-purple: #6D35F2;
+    --color-soft-lavender: #EEE9FF;
+    --color-about-bg: #F8F7FC;
+    --color-text-dark: #111827;
     --color-accent: #f1f5f9;
     --color-surface: #ffffff;
     --color-text: #0f172a;
@@ -30,7 +36,7 @@
 
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-xl bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2;
+    @apply inline-flex items-center justify-center rounded-xl bg-violet-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:ring-offset-2;
   }
 
   .btn-secondary {
@@ -38,7 +44,7 @@
   }
 
   .btn-bili-hub {
-    @apply inline-flex items-center justify-center rounded-xl bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2;
+    @apply inline-flex items-center justify-center rounded-xl bg-violet-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:ring-offset-2;
   }
 
   .card {
@@ -46,16 +52,16 @@
   }
 
   .input-field {
-    @apply w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm placeholder:text-slate-400 transition focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20;
+    @apply w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm placeholder:text-slate-400 transition focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/20;
   }
 
   .hero-gradient {
-    @apply bg-gradient-to-br from-slate-50 via-sky-50 to-slate-100;
+    @apply bg-gradient-to-br from-slate-50 via-violet-50 to-slate-100;
     background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
   }
 
   .hero-bg {
-    @apply bg-gradient-to-br from-sky-500 to-sky-600 text-white;
+    @apply bg-gradient-to-br from-violet-500 to-purple-600 text-white;
   }
 
   .product-image {
@@ -80,9 +86,20 @@
 
   .variation-thumb {
     @apply transition-all duration-200;
+    border: 2px solid #e2e8f0;
   }
+
+  .variation-thumb:hover {
+    @apply border-violet-400;
+  }
+
   .variation-thumb.variation-selected {
-    @apply border-sky-500 shadow-sky-200 ring-2 ring-sky-300 scale-105;
+    @apply border-violet-500 shadow-violet-200 ring-2 ring-violet-300 scale-105;
+    background-color: var(--color-soft-lavender);
+  }
+
+  .variation-thumb.variation-sold-out {
+    @apply opacity-50;
   }
 
   .stat-card {
@@ -98,11 +115,11 @@
   }
 
   .notification-badge {
-    @apply text-xs font-bold min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-sky-500 text-white;
+    @apply text-xs font-bold min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-violet-500 text-white;
   }
 
   .cart-badge {
-    @apply bg-sky-500 text-white font-bold;
+    @apply bg-violet-500 text-white font-bold;
   }
 
   .section-title {

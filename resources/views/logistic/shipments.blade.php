@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.logistic', ['title' => 'Shipments', 'logistic' => $logistic])
 
 @section('content')
 <div class="container-fluid px-4">
@@ -94,3 +94,4 @@
 </div>
 </div>
 @endsection
+

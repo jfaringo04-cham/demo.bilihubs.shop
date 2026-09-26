@@ -108,27 +108,30 @@
               <th>Subtotal</th>
             </tr>
           </thead>
-          <tbody>
+            <tbody>
             @php
               $sellerItems = $order->items->filter(function($item) {
                 return $item->product->user_id === Auth::id();
-              });
+              })->load('variation');
             @endphp
             @foreach($sellerItems as $item)
               <tr>
                 <td>
                   {{ $item->product_name }}
+                  @if($item->variation)
+                    <small class="text-muted d-block">{{ $item->variation->display_name ?: $item->variation->name }}</small>
+                  @endif
                   @if($item->product && $item->product->stock < $item->quantity)
                     <span class="badge bg-danger ms-1"><i class="bi bi-exclamation-triangle"></i> Low Stock</span>
                   @endif
                 </td>
-                <td>{{ $item->size->name ?? 'N/A' }}</td>
+                <td>{{ $item->size->name ?? ($item->variation ? ($item->variation->display_name ?: $item->variation->name) : 'N/A') }}</td>
                 <td>{{ $item->quantity }}</td>
-                <td>&#8369;{{ number_format($item->price, 2) }}</td>
-                <td>&#8369;{{ number_format($item->subtotal, 2) }}</td>
+                <td>&#8369;{{ number_format(($item->price_minor / 100), 2) }}</td>
+                <td>&#8369;{{ number_format(($item->subtotal_minor / 100), 2) }}</td>
               </tr>
             @endforeach
-          </tbody>
+            </tbody>
         </table>
       </div>
     </div>
@@ -238,20 +241,20 @@
       <h5 class="mb-3">Order Summary</h5>
       <div class="d-flex justify-content-between mb-2">
         <span>Subtotal</span>
-        <span>&#8369;{{ number_format($order->subtotal, 2) }}</span>
+        <span>&#8369;{{ number_format(($order->subtotal_minor / 100), 2) }}</span>
       </div>
       <div class="d-flex justify-content-between mb-2">
         <span>Tax</span>
-        <span>&#8369;{{ number_format($order->tax, 2) }}</span>
+        <span>&#8369;{{ number_format(($order->tax_minor / 100), 2) }}</span>
       </div>
       <div class="d-flex justify-content-between mb-2">
         <span>Shipping</span>
-        <span>&#8369;{{ number_format($order->shipping, 2) }}</span>
+        <span>&#8369;{{ number_format(($order->shipping_minor / 100), 2) }}</span>
       </div>
       <hr>
       <div class="d-flex justify-content-between fw-bold">
         <span>Total</span>
-        <span>&#8369;{{ number_format($order->total, 2) }}</span>
+        <span>&#8369;{{ number_format(($order->total_minor / 100), 2) }}</span>
       </div>
     </div>
 
@@ -264,3 +267,4 @@
   </div>
 </div>
 @endsection
+

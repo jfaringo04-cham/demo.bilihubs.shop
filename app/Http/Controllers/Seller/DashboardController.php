@@ -7,9 +7,10 @@ use App\Models\Category;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\SellerOrder;
 use App\Models\Product;
 use App\Models\ProductImage;
-use App\Models\ProductVariation;
+use App\Models\ProductVariant;
 use App\Models\Review;
 use App\Models\Size;
 use App\Models\User;
@@ -38,16 +39,38 @@ class DashboardController extends Controller
         $totalOrders = Order::whereHas('items.product', function ($query) use ($seller) {
             $query->where('user_id', $seller->id);
         })->count();
-        $totalRevenue = Order::whereHas('items.product', function ($query) use ($seller) {
-            $query->where('user_id', $seller->id);
-        })->where('status', 'delivered')->sum('total');
+        $shopId = $seller->seller?->id;
+
+        $totalRevenue = $shopId
+            ? SellerOrder::where('seller_id', $shopId)
+                ->whereHas('order', function ($query) {
+                    $query->where('status', 'delivered');
+                })
+                ->sum('total_minor') / 100
+            : 0;
 
         $recentOrders = Order::whereHas('items.product', function ($query) use ($seller) {
             $query->where('user_id', $seller->id);
-        })->with('user')->latest()->take(5)->get();
+        })->with(['user', 'items.product'])->latest()->take(5)->get();
+
+        $totalCustomers = Order::whereHas('items.product', function ($query) use ($seller) {
+            $query->where('user_id', $seller->id);
+        })->where('status', '!=', 'cancelled')->distinct('user_id')->count('user_id');
+
+        $lowStockProducts = $seller->products()
+            ->where('stock', '>', 0)
+            ->whereRaw('stock < COALESCE(low_stock_threshold, 10)')
+            ->orderBy('stock')
+            ->limit(5)
+            ->get();
+
+        $reviewsCount = Review::whereHas('product', function ($query) use ($seller) {
+            $query->where('user_id', $seller->id);
+        })->count();
 
         return view('seller.dashboard', compact(
-            'totalProducts', 'totalOrders', 'totalRevenue', 'recentOrders'
+            'totalProducts', 'totalOrders', 'totalRevenue', 'recentOrders',
+            'totalCustomers', 'lowStockProducts', 'reviewsCount'
         ));
     }
 
@@ -74,42 +97,60 @@ class DashboardController extends Controller
     {
         $seller = Auth::user();
         $allowedCategoryIds = $seller->allowedCategoryIds();
-        $categories = Category::whereIn('id', $allowedCategoryIds)->get();
-        $sizes = \App\Models\Size::all();
-        return view('seller.products.create', compact('categories', 'sizes', 'allowedCategoryIds'));
+        $categories = Category::whereIn('id', $allowedCategoryIds)->whereNull('parent_id')->get();
+        $subcategoryGroups = Category::whereNotNull('parent_id')->get()->groupBy('parent_id');
+        $sizes = Size::all();
+        return view('seller.products.create', compact(
+            'categories', 'sizes', 'allowedCategoryIds', 'subcategoryGroups'
+        ));
     }
 
     public function store(Request $request)
     {
         $seller = Auth::user();
         $allowedCategoryIds = $seller->allowedCategoryIds();
+        $isDraft = $request->input('status') === 'draft';
 
         $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
             'category_id' => ['required', 'exists:categories,id', Rule::in($allowedCategoryIds)],
+            'subcategory_id' => ['nullable', 'exists:categories,id'],
+            'price' => 'required|numeric|min:0|max:999999.99',
+            'stock' => 'required|integer|min:0',
+            'sku' => 'nullable|string|max:255',
+            'low_stock_threshold' => 'nullable|integer|min:0',
+            'attributes' => 'nullable|array',
+            'status' => ['in:draft,published'],
             'images' => 'required|array|min:1',
             'images.*' => 'image|mimes:jpeg,png,jpg,gif|max:2048',
-            'image_variations' => 'required|array|min:1',
-            'image_variations.*.name' => 'required|string|max:255',
-            'image_variations.*.price' => 'required|numeric|min:0|max:999999.99',
-            'image_variations.*.stock' => 'required|integer|min:0',
-            'image_variations.*.sku' => 'nullable|string|max:255',
-            'image_variations.*.size_id' => 'nullable|exists:sizes,id',
             'variations' => 'nullable|array',
-            'variations.*.name' => 'required_with:variations.*.price|string|max:255',
-            'variations.*.price' => 'required_with:variations.*.name|numeric|min:0|max:999999.99',
-            'variations.*.stock' => 'required_with:variations.*.name|integer|min:0',
+            'variations.*.name' => 'nullable|string|max:255',
+            'variations.*.color' => 'nullable|string|max:100',
+            'variations.*.size' => 'nullable|string|max:100',
+            'variations.*.price' => 'nullable|numeric|min:0|max:999999.99',
+            'variations.*.stock' => 'nullable|integer|min:0',
+            'variations.*.sku' => 'nullable|string|max:255',
+            'variations.*.image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
+            'variations.*.attributes' => 'nullable|array',
             'sizes' => 'nullable|array',
             'sizes.*' => 'exists:sizes,id',
             'size_stock' => 'nullable|array',
             'size_stock.*' => 'integer|min:0',
-            'discount_percent' => 'nullable|numeric|min:0|max:95',
+            'discount_percent' => 'nullable|numeric|min:0|max:100',
             'discount_starts_at' => 'nullable|date',
             'discount_ends_at' => 'nullable|date|after_or_equal:discount_starts_at',
             'video' => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/webm|max:10240',
             'secondary_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
+
+        $discountPercent = $request->filled('discount_percent') && $request->discount_percent !== ''
+            ? (float) $request->discount_percent
+            : 0;
+
+        if ($discountPercent > 0 && $request->filled('discount_ends_at') && now()->gt(\Carbon\Carbon::parse($request->discount_ends_at))) {
+            return back()->withInput()->with('error', 'The discount end date must be in the future. An already-expired promotion cannot be set active.');
+        }
 
         $imagePath = null;
         $imagePaths = [];
@@ -131,86 +172,98 @@ class DashboardController extends Controller
             $secondaryImagePath = $request->file('secondary_image')->store('products', 'public');
         }
 
-        $firstVariation = $request->image_variations[0];
-
-        $discountPercent = $request->filled('discount_percent') ? (float) $request->discount_percent : 0;
-        $discountedPrice = $discountPercent > 0
-            ? round($firstVariation['price'] * (1 - $discountPercent / 100), 2)
+        $priceMinor = (int) round((float) $request->price * 100);
+        $discountedPriceMinor = $discountPercent > 0
+            ? (int) round($priceMinor * (1 - $discountPercent / 100))
             : null;
 
         $product = Product::create([
             'name' => $request->name,
             'description' => $request->description,
-            'price' => $firstVariation['price'],
-            'stock' => array_sum(array_column($request->image_variations, 'stock')),
+            'price_minor' => $priceMinor,
+            'stock' => $request->stock,
             'category_id' => $request->category_id,
+            'subcategory_id' => $request->subcategory_id,
             'user_id' => Auth::id(),
+            'seller_id' => $seller->seller?->id,
+            'sku' => $request->sku,
+            'low_stock_threshold' => $request->low_stock_threshold,
+            'attributes' => $request->attributes,
+            'status' => $isDraft ? 'draft' : 'published',
             'image' => $imagePath,
             'alt_text' => $request->name,
             'image_path' => $imagePath,
             'video_path' => $videoPath,
             'secondary_image_path' => $secondaryImagePath,
             'discount_percent' => $discountPercent ?: null,
-            'discounted_price' => $discountedPrice,
+            'discounted_price_minor' => $discountedPriceMinor,
             'discount_starts_at' => $request->filled('discount_starts_at') ? $request->discount_starts_at : null,
             'discount_ends_at' => $request->filled('discount_ends_at') ? $request->discount_ends_at : null,
         ]);
 
-        $savedImages = [];
         foreach ($imagePaths as $idx => $path) {
-            $saved = $product->images()->create([
+            $product->images()->create([
                 'path' => $path,
                 'alt_text' => $request->name,
                 'is_primary' => $idx === 0,
                 'sort_order' => $idx,
             ]);
-            $savedImages[] = $saved;
-        }
-
-        foreach ($request->image_variations as $idx => $variationData) {
-            if (!isset($savedImages[$idx])) {
-                continue;
-            }
-            $varPrice = (float) $variationData['price'];
-            $varDiscounted = $discountPercent > 0
-                ? round($varPrice * (1 - $discountPercent / 100), 2)
-                : null;
-            $variation = $product->variations()->create([
-                'name' => $variationData['name'],
-                'price' => $varPrice,
-                'stock' => $variationData['stock'],
-                'sku' => $variationData['sku'] ?? null,
-                'image' => $savedImages[$idx]->path,
-                'image_id' => $savedImages[$idx]->id,
-                'discount_percent' => $discountPercent ?: null,
-                'discounted_price' => $varDiscounted,
-            ]);
-            if (!empty($variationData['size_id'])) {
-                $variation->sizes()->attach($variationData['size_id']);
-            }
         }
 
         if ($request->filled('variations')) {
+            $sizesMap = null;
             foreach ($request->variations as $variationData) {
-                $product->variations()->create([
-                    'name' => $variationData['name'],
-                    'price' => $variationData['price'],
-                    'stock' => $variationData['stock'],
-                    'sku' => $variationData['sku'] ?? null,
-                    'image' => null,
-                ]);
-            }
-        }
+                $color = trim($variationData['color'] ?? '');
+                $size = trim($variationData['size'] ?? '');
+                $variantName = trim($variationData['name'] ?? '');
 
-        $productSizeStock = [];
-        foreach ($request->image_variations as $variationData) {
-            if (!empty($variationData['size_id'])) {
-                $sizeId = $variationData['size_id'];
-                $variationStock = (int) ($variationData['stock'] ?? 0);
-                if (!isset($productSizeStock[$sizeId])) {
-                    $productSizeStock[$sizeId] = 0;
+                if ($color && $size) {
+                    $name = $color . ' / ' . $size;
+                } elseif ($color) {
+                    $name = $color;
+                } elseif ($size) {
+                    $name = $size;
+                } elseif ($variantName) {
+                    $name = $variantName;
+                } else {
+                    if (empty($variationData['stock']) || $variationData['stock'] === '') {
+                        continue;
+                    }
+                    $name = 'Variant';
                 }
-                $productSizeStock[$sizeId] += $variationStock;
+
+                $varPriceMinor = isset($variationData['price']) && $variationData['price'] !== ''
+                    ? (int) round((float) $variationData['price'] * 100)
+                    : null;
+                $varDiscountedMinor = $discountPercent > 0 && $varPriceMinor !== null
+                    ? (int) round($varPriceMinor * (1 - $discountPercent / 100))
+                    : null;
+
+                $varImage = null;
+                if (isset($variationData['image']) && $variationData['image']) {
+                    $varImage = $variationData['image']->store('products', 'public');
+                }
+
+                $variation = $product->variations()->create([
+                    'name' => $name,
+                    'color' => $color ?: null,
+                    'size' => $size ?: null,
+                    'price_minor' => $varPriceMinor,
+                    'stock' => (int) ($variationData['stock'] ?? 0),
+                    'sku' => $variationData['sku'] ?? null,
+                    'image' => $varImage,
+                    'image_id' => null,
+                    'discount_percent' => $discountPercent ?: null,
+                    'discounted_price_minor' => $varDiscountedMinor,
+                    'attributes' => $variationData['attributes'] ?? null,
+                ]);
+
+                if (!empty($variationData['size_id']) && $variation) {
+                    if ($sizesMap === null) {
+                        $sizesMap = Size::all()->keyBy('id');
+                    }
+                    $variation->sizes()->sync([(int) $variationData['size_id'] => ['stock' => (int) ($variationData['stock'] ?? 0)]]);
+                }
             }
         }
 
@@ -220,18 +273,28 @@ class DashboardController extends Controller
                 $syncData[$sizeId] = ['stock' => $request->size_stock[$sizeId] ?? 0];
             }
             $product->sizes()->sync($syncData);
-        } elseif (!empty($productSizeStock)) {
-            $syncData = [];
-            foreach ($productSizeStock as $sizeId => $stock) {
-                $syncData[$sizeId] = ['stock' => $stock];
-            }
-            $product->sizes()->sync($syncData);
         }
 
-        ComplianceMonitor::recordPriceSnapshot($product);
-        ComplianceMonitor::checkProduct($product);
+        if ($product->variations()->count() > 0) {
+            $minimumPriceMinor = (int) ($product->variations()->min('price_minor') ?? $priceMinor);
+            $minimumDiscountedPriceMinor = $discountPercent > 0
+                ? (int) round($minimumPriceMinor * (1 - $discountPercent / 100))
+                : null;
 
-        return redirect()->route('seller.products')->with('success', 'Product created with ' . count($savedImages) . ' buyable image option(s).');
+            $product->update([
+                'stock' => (int) $product->variations()->sum('stock'),
+                'price_minor' => $minimumPriceMinor,
+                'discounted_price_minor' => $minimumDiscountedPriceMinor,
+            ]);
+        }
+
+        if (!$isDraft) {
+            ComplianceMonitor::recordPriceSnapshot($product);
+            ComplianceMonitor::checkProduct($product);
+        }
+
+        $message = $isDraft ? 'Product saved as draft.' : 'Product published successfully.';
+        return redirect()->route('seller.products')->with('success', $message);
     }
 
     public function edit(Product $product)
@@ -243,8 +306,10 @@ class DashboardController extends Controller
         $categories = Category::whereIn('id', $allowedCategoryIds)
             ->orWhere('id', $product->category_id)
             ->get();
-        $sizes = \App\Models\Size::all();
-        return view('seller.products.edit', compact('product', 'categories', 'sizes', 'allowedCategoryIds'));
+        $subcategoryGroups = Category::whereNotNull('parent_id')->get()->groupBy('parent_id');
+        $sizes = Size::all();
+        $product->load(['images', 'variations', 'sizes', 'subcategory']);
+        return view('seller.products.edit', compact('product', 'categories', 'sizes', 'allowedCategoryIds', 'subcategoryGroups'));
     }
 
     public function update(Request $request, Product $product)
@@ -255,6 +320,7 @@ class DashboardController extends Controller
 
         $allowedCategoryIds = Auth::user()->allowedCategoryIds();
         $allowedCategoryIds[] = $product->category_id;
+        $isDraft = $request->input('status') === 'draft';
 
         $request->validate([
             'name' => 'required|string|max:255',
@@ -262,33 +328,53 @@ class DashboardController extends Controller
             'price' => 'required|numeric|min:0|max:999999.99',
             'stock' => 'required|integer|min:0',
             'category_id' => ['required', 'exists:categories,id', Rule::in($allowedCategoryIds)],
+            'subcategory_id' => ['nullable', 'exists:categories,id'],
+            'sku' => 'nullable|string|max:255',
+            'low_stock_threshold' => 'nullable|integer|min:0',
+            'attributes' => 'nullable|array',
+            'status' => ['in:draft,published'],
             'new_images' => 'nullable|array',
             'new_images.*' => 'image|mimes:jpeg,png,jpg,gif|max:2048',
-            'image_variations' => 'nullable|array',
-            'image_variations.*.name' => 'required|string|max:255',
-            'image_variations.*.price' => 'required|numeric|min:0|max:999999.99',
-            'image_variations.*.stock' => 'required|integer|min:0',
-            'image_variations.*.sku' => 'nullable|string|max:255',
-            'image_variations.*.image_id' => 'required|integer|exists:product_images,id',
-            'new_image_variations' => 'nullable|array',
-            'new_image_variations.*.name' => 'required_with:new_image_variations|string|max:255',
-            'new_image_variations.*.price' => 'required_with:new_image_variations|numeric|min:0|max:999999.99',
-            'new_image_variations.*.stock' => 'required_with:new_image_variations|integer|min:0',
-            'new_image_variations.*.sku' => 'nullable|string|max:255',
             'remove_images' => 'nullable|array',
             'remove_images.*' => 'integer|exists:product_images,id',
+            'primary_image_id' => 'nullable|integer|exists:product_images,id',
+            'variations' => 'nullable|array',
+            'variations.*.id' => 'nullable|integer|exists:product_variants,id',
+            'variations.*.name' => 'nullable|string|max:255',
+            'variations.*.color' => 'nullable|string|max:100',
+            'variations.*.size' => 'nullable|string|max:100',
+            'variations.*.price' => 'nullable|numeric|min:0|max:999999.99',
+            'variations.*.stock' => 'nullable|integer|min:0',
+            'variations.*.sku' => 'nullable|string|max:255',
+            'variations.*.image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
+            'variations.*.attributes' => 'nullable|array',
             'sizes' => 'nullable|array',
             'sizes.*' => 'exists:sizes,id',
             'size_stock' => 'nullable|array',
             'size_stock.*' => 'integer|min:0',
-            'discount_percent' => 'nullable|numeric|min:0|max:95',
+            'discount_percent' => 'nullable|numeric|min:0|max:100',
             'discount_starts_at' => 'nullable|date',
             'discount_ends_at' => 'nullable|date|after_or_equal:discount_starts_at',
+            'remove_video' => 'nullable|in:1,true',
             'video' => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/webm|max:10240',
+            'remove_secondary_image' => 'nullable|in:1,true',
             'secondary_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
-        $data = $request->only(['name', 'description', 'price', 'stock', 'category_id']);
+        $discountPercent = $request->filled('discount_percent') && $request->discount_percent !== ''
+            ? (float) $request->discount_percent
+            : 0;
+
+        if ($discountPercent > 0 && $request->filled('discount_ends_at') && now()->gt(\Carbon\Carbon::parse($request->discount_ends_at))) {
+            return back()->withInput()->with('error', 'The discount end date must be in the future. An already-expired promotion cannot be set active.');
+        }
+
+        $data = $request->only([
+            'name', 'description', 'stock', 'category_id', 'subcategory_id',
+            'sku', 'low_stock_threshold', 'attributes', 'status',
+        ]);
+        $priceMinor = (int) round((float) $request->price * 100);
+        $data['price_minor'] = $priceMinor;
 
         $newImagePaths = [];
         if ($request->hasFile('new_images')) {
@@ -327,14 +413,14 @@ class DashboardController extends Controller
 
         if (!empty($request->remove_images)) {
             $toRemove = $product->images()->whereIn('id', $request->remove_images)->get();
-            $removedPaths = $toRemove->pluck('path')->toArray();
             foreach ($toRemove as $img) {
                 \Storage::disk('public')->delete($img->path);
                 $product->variations()->where('image_id', $img->id)->delete();
                 $img->delete();
             }
+            $removedPaths = $toRemove->pluck('path')->toArray();
             if ($product->image && in_array($product->image, $removedPaths, true)) {
-                $nextImg = $product->images()->orderBy('sort_order')->orderBy('id')->first();
+                $nextImg = $product->fresh()->images()->orderBy('sort_order')->orderBy('id')->first();
                 if ($nextImg) {
                     $nextImg->update(['is_primary' => true]);
                     $data['image'] = $nextImg->path;
@@ -342,12 +428,12 @@ class DashboardController extends Controller
                 }
             }
 
-            if ($product->images()->count() === 0 && empty($newImagePaths)) {
+            if ($product->fresh()->images()->count() === 0 && empty($newImagePaths)) {
                 return back()->withInput()->with('error', 'You cannot remove all images. A product must have at least one image. Please upload a new image before saving.');
             }
         }
 
-        $existingCount = $product->images()->count();
+        $existingCount = $product->fresh()->images()->count();
         $newSavedImages = [];
         if (!empty($newImagePaths)) {
             foreach ($newImagePaths as $idx => $path) {
@@ -360,7 +446,7 @@ class DashboardController extends Controller
                 $newSavedImages[] = $newImg;
             }
             if (!$product->image) {
-                $first = $product->images()->orderBy('sort_order')->orderBy('id')->first();
+                $first = $product->fresh()->images()->orderBy('sort_order')->orderBy('id')->first();
                 if ($first) {
                     $data['image'] = $first->path;
                     $data['image_path'] = $first->path;
@@ -368,50 +454,90 @@ class DashboardController extends Controller
             }
         }
 
-        if ($request->filled('image_variations')) {
-            foreach ($request->image_variations as $imageId => $variationData) {
-                $img = $product->images()->find($imageId);
-                if (!$img) continue;
-                $existingVar = $product->variations()->where('image_id', $imageId)->first();
-                $payload = [
-                    'name' => $variationData['name'],
-                    'price' => $variationData['price'],
-                    'stock' => $variationData['stock'],
-                    'sku' => $variationData['sku'] ?? null,
-                    'image' => $img->path,
-                    'image_id' => $img->id,
-                ];
-                if ($existingVar) {
-                    $existingVar->update($payload);
+        if ($request->filled('primary_image_id') && $request->primary_image_id) {
+            $product->fresh()->images()->update(['is_primary' => false]);
+            $primaryImg = $product->fresh()->images()->find($request->primary_image_id);
+            if ($primaryImg) {
+                $primaryImg->update(['is_primary' => true]);
+                $data['image'] = $primaryImg->path;
+                $data['image_path'] = $primaryImg->path;
+            }
+        }
+
+        $submittedVariationIds = [];
+        if ($request->filled('variations')) {
+            $sizesMap = null;
+            foreach ($request->variations as $variationData) {
+                $color = trim($variationData['color'] ?? '');
+                $size = trim($variationData['size'] ?? '');
+                $variantName = trim($variationData['name'] ?? '');
+
+                if ($color && $size) {
+                    $name = $color . ' / ' . $size;
+                } elseif ($color) {
+                    $name = $color;
+                } elseif ($size) {
+                    $name = $size;
+                } elseif ($variantName) {
+                    $name = $variantName;
                 } else {
-                    $product->variations()->create($payload);
+                    if (empty($variationData['stock']) || $variationData['stock'] === '') {
+                        continue;
+                    }
+                    $name = 'Variant';
+                }
+
+                $varPriceMinor = isset($variationData['price']) && $variationData['price'] !== ''
+                    ? (int) round((float) $variationData['price'] * 100)
+                    : null;
+                $varDiscountedMinor = $discountPercent > 0 && $varPriceMinor !== null
+                    ? (int) round($varPriceMinor * (1 - $discountPercent / 100))
+                    : null;
+
+                $payload = [
+                    'name' => $name,
+                    'color' => $color ?: null,
+                    'size' => $size ?: null,
+                    'price_minor' => $varPriceMinor,
+                    'stock' => (int) ($variationData['stock'] ?? 0),
+                    'sku' => $variationData['sku'] ?? null,
+                    'discount_percent' => $discountPercent ?: null,
+                    'discounted_price_minor' => $varDiscountedMinor,
+                    'attributes' => $variationData['attributes'] ?? null,
+                ];
+
+                if (!empty($variationData['id'])) {
+                    $existingVar = $product->variations()->where('id', $variationData['id'])->first();
+                    if ($existingVar) {
+                        if (isset($variationData['image']) && $variationData['image']) {
+                            if ($existingVar->image) {
+                                \Storage::disk('public')->delete($existingVar->image);
+                            }
+                            $payload['image'] = $variationData['image']->store('products', 'public');
+                        }
+                        $existingVar->update($payload);
+                    }
+                    $submittedVariationIds[] = $variationData['id'];
+                } else {
+                    $varImage = null;
+                    if (isset($variationData['image']) && $variationData['image']) {
+                        $varImage = $variationData['image']->store('products', 'public');
+                    }
+                    $payload['image'] = $varImage;
+                    $payload['image_id'] = null;
+                    $variationModel = $product->variations()->create($payload);
+                    $submittedVariationIds[] = $variationModel->id;
+                }
+                if (!empty($variationData['size_id']) && isset($variationModel)) {
+                    $variationModel->sizes()->sync([(int) $variationData['size_id'] => ['stock' => (int) ($variationData['stock'] ?? 0)]]);
                 }
             }
         }
 
-        if (!empty($newSavedImages) && $request->filled('new_image_variations')) {
-            foreach ($request->new_image_variations as $idx => $variationData) {
-                if (!isset($newSavedImages[$idx])) continue;
-                $newImg = $newSavedImages[$idx];
-                $product->variations()->create([
-                    'name' => $variationData['name'],
-                    'price' => $variationData['price'],
-                    'stock' => $variationData['stock'],
-                    'sku' => $variationData['sku'] ?? null,
-                    'image' => $newImg->path,
-                    'image_id' => $newImg->id,
-                ]);
-            }
-        } elseif (!empty($newSavedImages)) {
-            foreach ($newSavedImages as $idx => $newImg) {
-                $product->variations()->create([
-                    'name' => $request->name . ' - Option ' . ($idx + 1),
-                    'price' => $request->price,
-                    'stock' => 1,
-                    'image' => $newImg->path,
-                    'image_id' => $newImg->id,
-                ]);
-            }
+        if (empty($submittedVariationIds)) {
+            $product->variations()->delete();
+        } else {
+            $product->variations()->whereNotIn('id', $submittedVariationIds)->delete();
         }
 
         $wasFlagged = in_array($product->compliance_status, ['flagged', 'auto_flagged'], true);
@@ -421,48 +547,69 @@ class DashboardController extends Controller
             return back()->withInput()->with('error', 'The 7-day resubmission deadline has passed. Please contact admin support to restore this product.');
         }
 
-        $data['compliance_status'] = $wasFlagged ? 'pending' : $product->compliance_status;
+        $data['compliance_status'] = $isDraft ? $product->compliance_status : ($wasFlagged ? 'pending' : $product->compliance_status);
         if ($wasFlagged) {
             $data['flagged_reason'] = null;
             $data['admin_notes'] = null;
             $data['flagged_at'] = null;
         }
 
-        $discountPercent = $request->filled('discount_percent') ? (float) $request->discount_percent : 0;
-        $cheapestPrice = $product->variations()->min('price') ?? $request->price;
-        $discountedPrice = $discountPercent > 0
-            ? round((float) $cheapestPrice * (1 - $discountPercent / 100), 2)
-            : null;
         $data['discount_percent'] = $discountPercent ?: null;
-        $data['discounted_price'] = $discountedPrice;
+        $basePriceMinor = (int) ($product->variations()->min('price_minor') ?? $priceMinor);
+        $data['discounted_price_minor'] = $discountPercent > 0
+            ? (int) round($basePriceMinor * (1 - $discountPercent / 100))
+            : null;
         $data['discount_starts_at'] = $request->filled('discount_starts_at') ? $request->discount_starts_at : null;
         $data['discount_ends_at'] = $request->filled('discount_ends_at') ? $request->discount_ends_at : null;
 
-        $product->update($data);
-
-        $totalStock = (int) $product->variations()->sum('stock');
-        $cheapestPrice = $product->variations()->min('price');
-        $product->update([
-            'stock' => $totalStock,
-            'price' => $cheapestPrice ?? $request->price,
-        ]);
-
-        if ($request->filled('sizes')) {
-            $syncData = [];
-            foreach ($request->sizes as $sizeId) {
-                $syncData[$sizeId] = ['stock' => $request->size_stock[$sizeId] ?? 0];
+        if ($request->input('sizes') !== null) {
+            if ($request->input('sizes') === '' || $request->input('sizes') === []) {
+                $product->sizes()->detach();
+            } else {
+                $syncData = [];
+                foreach ($request->sizes as $sizeId) {
+                    $syncData[$sizeId] = ['stock' => $request->size_stock[$sizeId] ?? 0];
+                }
+                $product->sizes()->sync($syncData);
             }
-            $product->sizes()->sync($syncData);
-        } else {
-            $product->sizes()->detach();
         }
 
-        ComplianceMonitor::recordPriceSnapshot($product);
-        ComplianceMonitor::checkProduct($product->fresh(), true);
+        $product->update($data);
 
-        if ($wasFlagged) {
+        $variationCount = $product->fresh()->variations()->count();
+        if ($variationCount > 0) {
+            $minimumPriceMinor = (int) ($product->variations()->min('price_minor') ?? $priceMinor);
+            $product->update([
+                'stock' => (int) $product->variations()->sum('stock'),
+                'price_minor' => $minimumPriceMinor,
+            ]);
+        } else {
+            $minimumPriceMinor = $priceMinor;
+            $product->update([
+                'stock' => (int) $request->stock,
+                'price_minor' => $minimumPriceMinor,
+            ]);
+        }
+
+        if ($discountPercent > 0) {
+            $finalDiscountedPriceMinor = (int) round($minimumPriceMinor * (1 - $discountPercent / 100));
+            $product->update([
+                'discounted_price_minor' => $finalDiscountedPriceMinor,
+            ]);
+        } else {
+            $product->update([
+                'discounted_price_minor' => null,
+            ]);
+        }
+
+        if (!$isDraft) {
+            ComplianceMonitor::recordPriceSnapshot($product);
+            ComplianceMonitor::checkProduct($product->fresh(), true);
+        }
+
+        if ($wasFlagged && !$isDraft) {
             $product = $product->fresh();
-            $admins = \App\Models\User::where('role', 'admin')->get();
+            $admins = \App\Models\User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
             foreach ($admins as $admin) {
                 \App\Models\Notification::create([
                     'user_id' => $admin->id,
@@ -474,9 +621,9 @@ class DashboardController extends Controller
             }
         }
 
-        $msg = $wasFlagged
-            ? 'Product updated and resubmitted for admin review.'
-            : 'Product updated successfully.';
+        $msg = $isDraft
+            ? 'Product saved as draft.'
+            : ($wasFlagged ? 'Product updated and resubmitted for admin review.' : 'Product updated successfully.');
 
         return redirect()->route('seller.products')->with('success', $msg);
     }
@@ -502,7 +649,7 @@ class DashboardController extends Controller
             'flagged_at' => null,
         ]);
 
-        $admins = \App\Models\User::where('role', 'admin')->get();
+        $admins = \App\Models\User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
         foreach ($admins as $admin) {
             \App\Models\Notification::create([
                 'user_id' => $admin->id,
@@ -593,7 +740,7 @@ class DashboardController extends Controller
             abort(403);
         }
 
-        $order->load('user', 'items.product', 'items.size', 'shipment.rider');
+        $order->load('user', 'items.product', 'items.variation', 'items.size', 'shipment.rider');
 
         return view('seller.orders.show', compact('order'));
     }
@@ -619,30 +766,34 @@ class DashboardController extends Controller
             'delivered_at' => $request->status === 'delivered' ? now() : $order->delivered_at,
         ]);
 
-        if ($request->status === 'confirmed' && !$order->shipment) {
-            $hub = \App\Services\HubAssignmentService::findBestHubForOrder($order);
+        if ($request->status === 'confirmed') {
+            $sellerOrder = $this->sellerOrderForAuthenticatedSeller($order, $seller);
 
-            if ($hub) {
-                $trackingNumber = 'SPE-' . strtoupper(uniqid());
+            if ($sellerOrder && !$sellerOrder->shipment) {
+                $hub = \App\Services\HubAssignmentService::findBestHubForSellerOrder($sellerOrder);
 
-                \App\Models\Shipment::create([
-                    'logistic_id' => $hub->logistic_id,
-                    'hub_id' => $hub->id,
-                    'order_id' => $order->id,
-                    'tracking_number' => $trackingNumber,
-                    'status' => 'pending',
-                    'pickup_address' => $seller->business_name . ', ' . $seller->street_address . ', ' . $seller->barangay . ', ' . $seller->municipality . ', ' . $seller->province,
-                    'delivery_address' => $order->shipping_address,
-                    'notes' => 'Auto-assigned hub based on order location: ' . $hub->name,
-                ]);
+                if ($hub) {
+                    $trackingNumber = 'SPE-' . strtoupper(uniqid());
 
-                $this->createNotification(
-                    $hub->logistic->owner_user_id,
-                    'New Shipment Assignment',
-                    'Order ' . $order->order_number . ' is being processed and has been auto-assigned to your hub (' . $hub->name . ') based on delivery location.',
-                    'shipment',
-                    route('logistic.shipments')
-                );
+                    \App\Models\Shipment::create([
+                        'seller_order_id' => $sellerOrder->id,
+                        'logistic_id' => $hub->logistic_id,
+                        'hub_id' => $hub->id,
+                        'tracking_number' => $trackingNumber,
+                        'status' => 'pending',
+                        'pickup_address' => $this->sellerPickupAddress($sellerOrder, $seller),
+                        'delivery_address' => $order->shipping_address,
+                        'notes' => 'Auto-assigned hub based on seller pickup location: ' . $hub->name,
+                    ]);
+
+                    $this->createNotification(
+                        $hub->logistic->owner_user_id,
+                        'New Shipment Assignment',
+                        'Order ' . $order->order_number . ' is being processed and has been auto-assigned to your hub (' . $hub->name . ') based on seller pickup location.',
+                        'shipment',
+                        route('logistic.shipments')
+                    );
+                }
             }
         }
 
@@ -805,34 +956,38 @@ class DashboardController extends Controller
             'status' => 'ready_for_pickup',
         ]);
 
-        if (!$order->shipment) {
-            $hub = \App\Services\HubAssignmentService::findBestHubForOrder($order);
+        $sellerOrder = $this->sellerOrderForAuthenticatedSeller($order, $seller);
+
+        if ($sellerOrder && !$sellerOrder->shipment) {
+            $hub = \App\Services\HubAssignmentService::findBestHubForSellerOrder($sellerOrder);
 
             if ($hub) {
                 $trackingNumber = 'SPE-' . strtoupper(uniqid());
 
-                $pickupRider = \App\Models\User::where('role', 'rider')
+                $pickupRider = \App\Models\User::whereHas('roles', function ($query) {
+                    $query->where('name', 'rider');
+                })
                     ->where('logistic_id', $hub->logistic_id)
                     ->where('availability_status', 'available')
                     ->whereColumn('current_load', '<', 'max_capacity')
                     ->first();
 
                 \App\Models\Shipment::create([
+                    'seller_order_id' => $sellerOrder->id,
                     'logistic_id' => $hub->logistic_id,
                     'hub_id' => $hub->id,
                     'rider_id' => $pickupRider ? $pickupRider->id : null,
-                    'order_id' => $order->id,
                     'tracking_number' => $trackingNumber,
                     'status' => $pickupRider ? 'assigned' : 'pending',
-                    'pickup_address' => $seller->business_name . ', ' . $seller->street_address . ', ' . $seller->barangay . ', ' . $seller->municipality . ', ' . $seller->province,
+                    'pickup_address' => $this->sellerPickupAddress($sellerOrder, $seller),
                     'delivery_address' => $order->shipping_address,
-                    'notes' => 'Auto-assigned hub based on order location: ' . $hub->name,
+                    'notes' => 'Auto-assigned hub based on seller pickup location: ' . $hub->name,
                 ]);
 
                 $this->createNotification(
                     $hub->logistic->owner_user_id,
                     'New Shipment Assignment',
-                    'Order ' . $order->order_number . ' is ready for pickup and has been auto-assigned to your hub (' . $hub->name . ') based on delivery location.',
+                    'Order ' . $order->order_number . ' is ready for pickup and has been auto-assigned to your hub (' . $hub->name . ') based on seller pickup location.',
                     'shipment',
                     route('logistic.shipments')
                 );
@@ -841,7 +996,7 @@ class DashboardController extends Controller
                     $this->createNotification(
                         $pickupRider->id,
                         'New Pickup Assignment',
-                        'You have been assigned to pick up order ' . $order->order_number . ' from ' . $seller->business_name . '. Please proceed to the seller and scan the QR code to confirm pickup.',
+                        'You have been assigned to pick up order ' . $order->order_number . ' from ' . ($sellerOrder->seller?->name ?? $seller->business_name ?? $seller->name) . '. Please proceed to the seller and scan the QR code to confirm pickup.',
                         'delivery',
                         route('rider.pickups')
                     );
@@ -849,7 +1004,64 @@ class DashboardController extends Controller
             }
         }
 
-        return back()->with('success', 'Order marked as ready for pickup. ' . ($order->shipment ? 'Shipment assigned to ' . $order->shipment->logistic->company_name . '.' : 'Awaiting logistic company assignment.'));
+        $sellerOrder?->load('shipment.logistic');
+        $shipment = $sellerOrder?->shipment;
+
+        return back()->with(
+            'success',
+            'Order marked as ready for pickup. ' .
+            ($shipment?->logistic
+                ? 'Shipment assigned to ' . $shipment->logistic->company_name . '.'
+                : 'Awaiting logistic company assignment.')
+        );
+    }
+
+    private function sellerOrderForAuthenticatedSeller(Order $order, User $seller): ?SellerOrder
+    {
+        $shopId = $seller->seller?->id;
+
+        if (!$shopId) {
+            return null;
+        }
+
+        return $order->sellerOrders()
+            ->with(['seller.owner', 'seller.pickupAddress', 'shipment.logistic'])
+            ->where('seller_id', $shopId)
+            ->first();
+    }
+
+    private function sellerPickupAddress(SellerOrder $sellerOrder, User $legacySeller): string
+    {
+        $sellerOrder->loadMissing(['seller.owner', 'seller.pickupAddress']);
+
+        $pickupAddress = $sellerOrder->seller?->pickupAddress;
+
+        if ($pickupAddress) {
+            $address = collect([
+                $pickupAddress->address_line1,
+                $pickupAddress->address_line2,
+                $pickupAddress->city,
+                $pickupAddress->province,
+                $pickupAddress->postal_code,
+                $pickupAddress->country,
+            ])->filter()->implode(', ');
+
+            if ($address !== '') {
+                return $address;
+            }
+        }
+
+        $owner = $sellerOrder->seller?->owner ?? $legacySeller;
+
+        $address = collect([
+            $owner?->business_name,
+            $owner?->street_address,
+            $owner?->barangay,
+            $owner?->municipality,
+            $owner?->province,
+        ])->filter()->implode(', ');
+
+        return $address !== '' ? $address : 'Seller address';
     }
 
     public function notifications(Request $request)
@@ -890,7 +1102,20 @@ class DashboardController extends Controller
 
         $orders = $query->with(['user', 'items.product'])->latest()->get();
 
-        $totalSales = $orders->where('status', 'delivered')->sum('total');
+        $shopId = $seller->seller?->id;
+
+        $sellerOrdersQuery = SellerOrder::where('seller_id', $shopId ?? 0)
+            ->whereHas('order', function ($orderQuery) use ($request) {
+                $orderQuery->where('status', 'delivered');
+
+                if ($request->filled('from_date') && $request->filled('to_date')) {
+                    $from = \Carbon\Carbon::parse($request->from_date)->startOfDay();
+                    $to = \Carbon\Carbon::parse($request->to_date)->endOfDay();
+                    $orderQuery->whereBetween('ordered_at', [$from, $to]);
+                }
+            });
+
+        $totalSales = $sellerOrdersQuery->sum('total_minor') / 100;
         $totalOrders = $orders->count();
         $deliveredOrders = $orders->where('status', 'delivered')->count();
         $cancelledOrders = $orders->where('status', 'cancelled')->count();
@@ -898,11 +1123,25 @@ class DashboardController extends Controller
         $processingOrders = $orders->whereIn('status', ['ready_for_pickup', 'picked_up', 'at_sorting_center', 'sorted', 'assigned_to_rider', 'out_for_delivery'])->count();
         $shippedOrders = $orders->where('status', 'delivered')->count();
 
-        $chartData = $orders->groupBy(function ($order) {
-            return $order->ordered_at->format('M d, Y');
-        })->map(function ($group) {
-            return $group->where('status', 'delivered')->sum('total');
-        })->sortKeys();
+        $chartData = SellerOrder::where('seller_id', $shopId ?? 0)
+            ->whereHas('order', function ($orderQuery) use ($request) {
+                $orderQuery->where('status', 'delivered');
+
+                if ($request->filled('from_date') && $request->filled('to_date')) {
+                    $from = \Carbon\Carbon::parse($request->from_date)->startOfDay();
+                    $to = \Carbon\Carbon::parse($request->to_date)->endOfDay();
+                    $orderQuery->whereBetween('ordered_at', [$from, $to]);
+                }
+            })
+            ->with('order:id,ordered_at')
+            ->get()
+            ->groupBy(function ($sellerOrder) {
+                return $sellerOrder->order->ordered_at->format('M d, Y');
+            })
+            ->map(function ($group) {
+                return $group->sum('total_minor') / 100;
+            })
+            ->sortKeys();
 
         return view('seller.reports', compact(
             'orders', 'totalSales', 'totalOrders', 'deliveredOrders',
@@ -912,17 +1151,18 @@ class DashboardController extends Controller
 
     public function storefront(User $seller)
     {
-        if ($seller->role !== 'seller') {
+        if (!$seller->hasRole('seller')) {
             abort(404);
         }
 
         $products = $seller->products()
             ->with(['category', 'sizes', 'reviews'])
             ->where('compliance_status', 'approved')
+            ->where('status', 'published')
             ->latest()
             ->paginate(12);
 
-        $totalProducts = $seller->products()->where('compliance_status', 'approved')->count();
+        $totalProducts = $seller->products()->where('compliance_status', 'approved')->where('status', 'published')->count();
         $averageRating = Review::whereIn('product_id', $seller->products()->pluck('id'))->avg('rating');
         $totalReviews = Review::whereIn('product_id', $seller->products()->pluck('id'))->count();
 
@@ -1009,7 +1249,7 @@ class DashboardController extends Controller
             'appeal_message' => ['required', 'string', 'max:2000'],
         ]);
 
-        $admins = User::where('role', 'admin')->get();
+        $admins = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
         foreach ($admins as $admin) {
             Notification::create([
                 'user_id' => $admin->id,
@@ -1028,3 +1268,4 @@ class DashboardController extends Controller
         return redirect()->route('login')->with('success', 'Your appeal has been submitted. You will be notified once it has been reviewed.');
     }
 }
+

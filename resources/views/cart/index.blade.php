@@ -21,20 +21,38 @@
             @foreach($cartItems as $item)
               <tr>
                   <td>
-                    <div class="d-flex align-items-center">
-                      <img src="{{ $item->product->image ? asset('storage/' . $item->product->image) : 'https://via.placeholder.com/60x60?text=No+Image' }}" class="rounded me-3" style="width: 64px; height: 64px; object-fit: cover;" alt="{{ $item->product->name }}">
-                      <div>
-                        <h6 class="mb-0 fw-semibold">{{ $item->product->name }}</h6>
-                        @if($item->product->stock == 0)
-                          <span class="badge bg-danger rounded-pill">Sold Out</span>
-                        @endif
-                        @if($item->size)
-                          <small class="text-muted">Size: {{ $item->size->name }}</small>
-                        @endif
-                      </div>
-                    </div>
+                   <div class="d-flex align-items-center">
+                     @if($item->variation)
+                       @php
+                         $variantImg = $item->variation->image_url ?: $item->product->image_url;
+                         $variantName = $item->variation->display_name ?: $item->variation->name;
+                       @endphp
+                       <img src="{{ $variantImg }}" class="rounded me-3" style="width: 64px; height: 64px; object-fit: cover;" alt="{{ $variantName }}">
+                       <div>
+                         <h6 class="mb-0 fw-semibold">{{ $item->product->name }}</h6>
+                         <small class="text-muted d-block">{{ $variantName }}</small>
+                         @if($item->product->stock == 0)
+                           <span class="badge bg-danger rounded-pill">Sold Out</span>
+                         @endif
+                         @if($item->size)
+                           <small class="text-muted">Size: {{ $item->size->name }}</small>
+                         @endif
+                       </div>
+                     @else
+                       <img src="{{ $item->product->image ? asset('storage/' . $item->product->image) : 'https://via.placeholder.com/60x60?text=No+Image' }}" class="rounded me-3" style="width: 64px; height: 64px; object-fit: cover;" alt="{{ $item->product->name }}">
+                       <div>
+                         <h6 class="mb-0 fw-semibold">{{ $item->product->name }}</h6>
+                         @if($item->product->stock == 0)
+                           <span class="badge bg-danger rounded-pill">Sold Out</span>
+                         @endif
+                         @if($item->size)
+                           <small class="text-muted">Size: {{ $item->size->name }}</small>
+                         @endif
+                       </div>
+                     @endif
+                   </div>
                   </td>
-                <td class="text-muted">&#8369;{{ number_format($item->variation ? $item->variation->effective_price : ($item->product->effective_price ?? $item->product->price), 2) }}</td>
+                <td class="text-muted">&#8369;{{ number_format(($item->variation ? $item->variation->effective_price_minor : $item->product->effective_price_minor) / 100, 2) }}</td>
                 <td>
                   <form action="{{ route('cart.update', $item) }}" method="POST" class="d-inline">
                     @csrf
@@ -45,7 +63,7 @@
                     </div>
                   </form>
                 </td>
-                <td class="fw-semibold">&#8369;{{ number_format($item->subtotal, 2) }}</td>
+                <td class="fw-semibold">&#8369;{{ number_format(($item->subtotal_minor / 100), 2) }}</td>
                 <td>
                   <form action="{{ route('cart.destroy', $item) }}" method="POST" class="d-inline" onsubmit="return confirm('Remove this item?')">
                     @csrf
@@ -81,3 +99,4 @@
   @endif
 </div>
 @endsection
+

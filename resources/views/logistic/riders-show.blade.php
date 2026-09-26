@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.logistic', ['title' => 'Rider Details', 'logistic' => $logistic])
 
 @section('content')
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
@@ -17,11 +17,6 @@
         </form>
         <button type="button" class="btn btn-danger btn-sm" data-bs-toggle="modal" data-bs-target="#rejectModal">Reject</button>
       </div>
-    @elseif($rider->logistic_status == 'approved')
-      <form method="POST" action="{{ route('logistic.riders.submit', $rider) }}" class="d-inline">
-        @csrf
-        <button type="submit" class="btn btn-warning btn-sm" onclick="return confirm('Submit this rider to admin for final approval?')">Submit to Admin</button>
-      </form>
     @endif
   </div>
   <div class="card-body">
@@ -102,3 +97,5 @@
   </div>
 </div>
 @endsection
+
+

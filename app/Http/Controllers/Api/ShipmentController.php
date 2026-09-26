@@ -12,9 +12,21 @@ class ShipmentController extends Controller
 {
     public function track(Request $request, Shipment $shipment)
     {
-        $order = $shipment->order;
+        $shipment->loadMissing([
+            'sellerOrder.order',
+            'sellerOrder.seller',
+        ]);
 
-        // Check if user owns this order or is the rider
+        $sellerOrder = $shipment->sellerOrder;
+        $order = $sellerOrder?->order;
+
+        if (!$sellerOrder || !$order) {
+            return response()->json([
+                'message' => 'Shipment is not linked to a valid seller order',
+            ], 404);
+        }
+
+        // Buyer who owns the parent order or rider assigned to this parcel.
         if ($order->user_id !== Auth::id() && $shipment->rider_id !== Auth::id()) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
@@ -29,6 +41,7 @@ class ShipmentController extends Controller
             'data' => [
                 'shipment' => [
                     'id' => $shipment->id,
+                    'seller_order_id' => $sellerOrder->id,
                     'tracking_number' => $shipment->tracking_number,
                     'status' => $shipment->status,
                     'courier' => $shipment->courier,
@@ -42,6 +55,15 @@ class ShipmentController extends Controller
                     'rack_number' => $shipment->rack_number,
                     'delivery_zone' => $shipment->delivery_zone,
                     'delivery_type' => $shipment->delivery_type,
+                ],
+                'seller_order' => [
+                    'id' => $sellerOrder->id,
+                    'seller_id' => $sellerOrder->seller_id,
+                    'status' => $sellerOrder->status,
+                    'seller' => $sellerOrder->seller ? [
+                        'id' => $sellerOrder->seller->id,
+                        'name' => $sellerOrder->seller->name,
+                    ] : null,
                 ],
                 'rider' => $shipment->rider ? [
                     'id' => $shipment->rider->id,
@@ -71,7 +93,7 @@ class ShipmentController extends Controller
                     'order_number' => $order->order_number,
                     'status' => $order->status,
                     'delivery_status' => $order->delivery_status,
-                    'total' => $order->total,
+                    'total' => $order->total_minor / 100,
                 ],
             ],
         ]);
@@ -83,12 +105,52 @@ class ShipmentController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $shipment = $order->shipment;
+        $order->loadMissing([
+            'sellerOrders.seller',
+            'sellerOrders.shipment',
+        ]);
 
-        if (!$shipment) {
-            return response()->json(['message' => 'No shipment found for this order'], 404);
+        $sellerOrders = $order->sellerOrders
+            ->filter(fn ($sellerOrder) => $sellerOrder->shipment !== null)
+            ->values();
+
+        if ($sellerOrders->isEmpty()) {
+            return response()->json([
+                'message' => 'No shipments found for this order',
+            ], 404);
         }
 
-        return $this->track($request, $shipment);
+        /*
+         * An Order may contain multiple SellerOrders/parcels.
+         * Return all parcel shipments instead of assuming Order::shipment.
+         */
+        return response()->json([
+            'data' => [
+                'order' => [
+                    'id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'status' => $order->status,
+                    'delivery_status' => $order->delivery_status,
+                    'total' => $order->total_minor / 100,
+                ],
+                'shipments' => $sellerOrders->map(function ($sellerOrder) {
+                    $shipment = $sellerOrder->shipment;
+
+                    return [
+                        'seller_order_id' => $sellerOrder->id,
+                        'seller_id' => $sellerOrder->seller_id,
+                        'seller_name' => $sellerOrder->seller?->name,
+                        'shipment_id' => $shipment->id,
+                        'tracking_number' => $shipment->tracking_number,
+                        'status' => $shipment->status,
+                        'courier' => $shipment->courier,
+                        'pickup_address' => $shipment->pickup_address,
+                        'delivery_address' => $shipment->delivery_address,
+                        'picked_up_at' => $shipment->picked_up_at?->toISOString(),
+                        'delivered_at' => $shipment->delivered_at?->toISOString(),
+                    ];
+                })->values(),
+            ],
+        ]);
     }
 }

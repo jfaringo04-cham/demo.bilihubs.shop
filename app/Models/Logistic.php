@@ -36,14 +36,34 @@ class Logistic extends Model
         return $this->belongsTo(User::class, 'owner_user_id');
     }
 
+    /**
+     * Legacy relationship.
+     * Riders are still represented by User records in the current system.
+     */
     public function riders(): HasMany
     {
         return $this->hasMany(User::class, 'logistic_id');
     }
 
+    /**
+     * New Milestone 4 rider profile relationship.
+     */
+    public function riderProfiles(): HasMany
+    {
+        return $this->hasMany(Rider::class, 'logistic_id');
+    }
+
     public function shipments(): HasMany
     {
         return $this->hasMany(Shipment::class);
+    }
+
+    /**
+     * Seller orders assigned to this logistics provider.
+     */
+    public function sellerOrders(): HasMany
+    {
+        return $this->hasMany(SellerOrder::class, 'logistic_id');
     }
 
     public function hubs(): HasMany

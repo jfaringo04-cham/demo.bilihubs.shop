@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.logistic', ['title' => 'Account Settings', 'logistic' => $logistic])
 
 @section('content')
 <div class="container-fluid px-4">
@@ -66,3 +66,5 @@
 </div>
 </div>
 @endsection
+
+

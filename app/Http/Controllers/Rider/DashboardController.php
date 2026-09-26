@@ -20,6 +20,29 @@ class DashboardController extends Controller
             'link' => $link,
         ]);
     }
+
+    private function riderShipmentForOrder(Order $order, $rider = null)
+    {
+        $rider = $rider ?: Auth::user();
+
+        $query = \App\Models\Shipment::whereHas('sellerOrder', function ($sellerOrderQuery) use ($order) {
+            $sellerOrderQuery->where('order_id', $order->id);
+        });
+
+        if ($rider) {
+            $query->where(function ($shipmentQuery) use ($rider) {
+                $shipmentQuery->where('rider_id', $rider->id)
+                    ->orWhereNull('rider_id');
+            });
+
+            if ($rider->logistic_id) {
+                $query->where('logistic_id', $rider->logistic_id);
+            }
+        }
+
+        return $query->orderByRaw('CASE WHEN rider_id = ? THEN 0 ELSE 1 END', [$rider?->id ?? 0])
+            ->first();
+    }
     public function index()
     {
         $rider = Auth::user();
@@ -105,10 +128,12 @@ class DashboardController extends Controller
             $data['delivery_signature'] = $request->delivery_signature;
             $data['delivered_to'] = $request->delivered_to;
 
-            \App\Models\Shipment::where('order_id', $order->id)->update([
-                'status' => 'delivered',
-                'delivered_at' => now(),
-            ]);
+            if ($shipment = $this->riderShipmentForOrder($order)) {
+                $shipment->update([
+                    'status' => 'delivered',
+                    'delivered_at' => now(),
+                ]);
+            }
 
             Auth::user()->decrement('current_load');
             if (Auth::user()->current_load < Auth::user()->max_capacity) {
@@ -156,9 +181,11 @@ class DashboardController extends Controller
             $data['failure_reason'] = $request->failure_reason;
             $data['status'] = 'delivery_failed';
 
-            \App\Models\Shipment::where('order_id', $order->id)->update([
-                'status' => 'delivery_failed',
-            ]);
+            if ($shipment = $this->riderShipmentForOrder($order)) {
+                $shipment->update([
+                    'status' => 'delivery_failed',
+                ]);
+            }
 
             Auth::user()->decrement('current_load');
             if (Auth::user()->current_load < Auth::user()->max_capacity) {
@@ -185,9 +212,11 @@ class DashboardController extends Controller
                 }
             }
         } elseif ($request->delivery_status === 'out_for_delivery') {
-            \App\Models\Shipment::where('order_id', $order->id)->update([
-                'status' => 'out_for_delivery',
-            ]);
+            if ($shipment = $this->riderShipmentForOrder($order)) {
+                $shipment->update([
+                    'status' => 'out_for_delivery',
+                ]);
+            }
 
             $this->createNotification(
                 $order->user_id,
@@ -226,7 +255,7 @@ class DashboardController extends Controller
 
         $order->update([
             'payment_status' => 'paid',
-            'amount_collected' => $request->amount_collected,
+            'amount_collected_minor' => (int) round((float) $request->amount_collected * 100),
             'collected_at' => now(),
             'collected_by' => Auth::id(),
         ]);
@@ -243,8 +272,11 @@ class DashboardController extends Controller
             ->where('payment_method', 'cod')
             ->where('payment_status', 'paid')
             ->whereDate('collected_at', $today)
-            ->selectRaw('SUM(amount_collected) as total_collected, COUNT(*) as total_orders')
+            ->selectRaw('COALESCE(SUM(amount_collected_minor), 0) as total_collected_minor, COUNT(*) as total_orders')
             ->first();
+
+        // Keep the existing Blade-compatible peso value while using integer centavos as the source.
+        $cashReport->total_collected = ((int) $cashReport->total_collected_minor) / 100;
 
         $recentCollections = Order::where('collected_by', $rider->id)
             ->where('payment_method', 'cod')
@@ -348,29 +380,76 @@ class DashboardController extends Controller
             'assigned_at' => now(),
         ]);
 
-        $shipment = \App\Models\Shipment::where('order_id', $order->id)->first();
-        if ($shipment) {
-            $shipment->update([
-                'rider_id' => Auth::id(),
-                'status' => 'assigned',
-            ]);
-        } else {
-            $seller = $order->items->first()->product->user ?? null;
-            $hub = \App\Services\HubAssignmentService::findBestHubForOrder($order);
+        // During the transition, a buyer Order can contain multiple SellerOrders/parcels.
+        // Accept the parcel that belongs to this rider's logistic company first; otherwise
+        // fall back to the first unassigned seller-order shipment.
+        $sellerOrder = $order->sellerOrders()
+            ->with(['seller.owner', 'seller.pickupAddress', 'shipment'])
+            ->whereHas('shipment', function ($query) {
+                $query->where(function ($shipmentQuery) {
+                    $shipmentQuery->whereNull('rider_id')
+                        ->orWhere('rider_id', Auth::id());
+                });
 
-            if ($hub) {
-                $trackingNumber = 'SPE-' . strtoupper(uniqid());
-                \App\Models\Shipment::create([
-                    'logistic_id' => $hub->logistic_id,
-                    'hub_id' => $hub->id,
+                if (Auth::user()->logistic_id) {
+                    $query->where('logistic_id', Auth::user()->logistic_id);
+                }
+            })
+            ->first();
+
+        if (!$sellerOrder) {
+            $sellerOrder = $order->sellerOrders()
+                ->with(['seller.owner', 'seller.pickupAddress', 'shipment'])
+                ->whereDoesntHave('shipment')
+                ->first();
+        }
+
+        if ($sellerOrder) {
+            $shipment = $sellerOrder->shipment;
+
+            if ($shipment) {
+                $shipment->update([
                     'rider_id' => Auth::id(),
-                    'order_id' => $order->id,
-                    'tracking_number' => $trackingNumber,
                     'status' => 'assigned',
-                    'pickup_address' => $seller ? ($seller->business_name . ', ' . $seller->street_address . ', ' . $seller->barangay . ', ' . $seller->municipality . ', ' . $seller->province) : 'Seller address',
-                    'delivery_address' => $order->shipping_address,
-                    'notes' => 'Rider accepted delivery - auto-assigned hub based on order location',
                 ]);
+            } else {
+                $hub = \App\Services\HubAssignmentService::findBestHubForSellerOrder($sellerOrder);
+
+                if ($hub) {
+                    $trackingNumber = 'SPE-' . strtoupper(uniqid());
+
+                    $pickupAddress = $sellerOrder->seller?->pickupAddress;
+                    $sellerOwner = $sellerOrder->seller?->owner;
+
+                    $pickup = $pickupAddress
+                        ? collect([
+                            $pickupAddress->address_line1,
+                            $pickupAddress->address_line2,
+                            $pickupAddress->city,
+                            $pickupAddress->province,
+                            $pickupAddress->postal_code,
+                            $pickupAddress->country,
+                        ])->filter()->implode(', ')
+                        : collect([
+                            $sellerOwner?->business_name,
+                            $sellerOwner?->street_address,
+                            $sellerOwner?->barangay,
+                            $sellerOwner?->municipality,
+                            $sellerOwner?->province,
+                        ])->filter()->implode(', ');
+
+                    \App\Models\Shipment::create([
+                        'seller_order_id' => $sellerOrder->id,
+                        'logistic_id' => $hub->logistic_id,
+                        'hub_id' => $hub->id,
+                        'rider_id' => Auth::id(),
+                        'tracking_number' => $trackingNumber,
+                        'status' => 'assigned',
+                        'pickup_address' => $pickup !== '' ? $pickup : 'Seller address',
+                        'delivery_address' => $order->shipping_address,
+                        'notes' => 'Rider accepted delivery - auto-assigned hub based on seller pickup location',
+                    ]);
+                }
             }
         }
 
@@ -398,7 +477,7 @@ class DashboardController extends Controller
         $rider = Auth::user();
         $query = Order::where('rider_id', $rider->id)
             ->whereIn('delivery_status', ['assigned_to_rider', 'in_transit'])
-            ->with(['user', 'items.product', 'shipment']);
+            ->with(['user', 'items.product', 'sellerOrders.shipment']);
 
         if ($request->filled('status')) {
             $query->where('delivery_status', $request->status);
@@ -409,9 +488,13 @@ class DashboardController extends Controller
                     $q->where('rider_id', $rider->id)
                       ->whereIn('delivery_status', ['at_sorting_center', 'ready_for_delivery_pickup', 'picked_up_from_sorting_center']);
                 })
-                ->whereHas('shipment', function ($q) {
-                    $q->whereIn('status', ['at_sorting_center', 'staged', 'picked_up']);
-                })->with(['user', 'items.product', 'shipment'])
+                ->whereHas('sellerOrders.shipment', function ($q) use ($rider) {
+                    $q->whereIn('status', ['at_sorting_center', 'staged', 'picked_up'])
+                      ->where(function ($shipmentQuery) use ($rider) {
+                          $shipmentQuery->where('rider_id', $rider->id)
+                              ->orWhereNull('rider_id');
+                      });
+                })->with(['user', 'items.product', 'sellerOrders.shipment'])
                 ->latest()->paginate(20)
             : $query->latest()->paginate(20);
 
@@ -430,10 +513,12 @@ class DashboardController extends Controller
             'picked_up_at' => now(),
         ]);
 
-        \App\Models\Shipment::where('order_id', $order->id)->update([
-            'status' => 'in_transit',
-            'picked_up_at' => now(),
-        ]);
+        if ($shipment = $this->riderShipmentForOrder($order)) {
+            $shipment->update([
+                'status' => 'in_transit',
+                'picked_up_at' => now(),
+            ]);
+        }
 
         $this->createNotification(
             $order->user_id,
@@ -458,12 +543,17 @@ class DashboardController extends Controller
 
         $oldRider = \App\Models\User::find($order->rider_id);
 
-        // Ensure shipment has hub assigned based on seller/pickup location
-        $shipment = $order->shipment;
-        if ($shipment && !$shipment->hub_id) {
-            $hub = \App\Services\HubAssignmentService::findBestHubForOrder($order);
+        // Work only with the parcel currently handled by this rider.
+        $shipment = $this->riderShipmentForOrder($order, $oldRider);
+
+        if ($shipment && !$shipment->hub_id && $shipment->sellerOrder) {
+            $hub = \App\Services\HubAssignmentService::findBestHubForSellerOrder($shipment->sellerOrder);
+
             if ($hub) {
-                $shipment->update(['hub_id' => $hub->id, 'logistic_id' => $hub->logistic_id]);
+                $shipment->update([
+                    'hub_id' => $hub->id,
+                    'logistic_id' => $hub->logistic_id,
+                ]);
             }
         }
 
@@ -473,12 +563,14 @@ class DashboardController extends Controller
             'delivered_at' => now(),
         ]);
 
-        \App\Models\Shipment::where('order_id', $order->id)->update([
-            'status' => 'at_sorting_center',
-            'at_sorting_center_at' => now(),
-            'notes' => ($request->notes ? $request->notes . "\n" : '') . ($order->shipment->notes ?? ''),
-            'received_by_sorting_center' => false,
-        ]);
+        if ($shipment) {
+            $shipment->update([
+                'status' => 'at_sorting_center',
+                'at_sorting_center_at' => now(),
+                'notes' => ($request->notes ? $request->notes . "\n" : '') . ($shipment->notes ?? ''),
+                'received_by_sorting_center' => false,
+            ]);
+        }
 
         if ($oldRider) {
             $oldRider->decrement('current_load');
@@ -490,7 +582,7 @@ class DashboardController extends Controller
         // Notify sorting center / logistic owner that parcel is awaiting confirmation
         $logisticOwner = \App\Models\Logistic::find(Auth::user()->logistic_id)->owner ?? null;
         if ($logisticOwner) {
-            $hubName = $shipment->hub ? $shipment->hub->name : 'Sorting Center';
+            $hubName = $shipment?->hub ? $shipment->hub->name : 'Sorting Center';
             $this->createNotification(
                 $logisticOwner->id,
                 'Parcel Awaiting Sorting Center Confirmation',
@@ -506,7 +598,7 @@ class DashboardController extends Controller
     public function pickupFromSortingCenter(Order $order)
     {
         $rider = Auth::user();
-        $shipment = \App\Models\Shipment::where('order_id', $order->id)->first();
+        $shipment = $this->riderShipmentForOrder($order, $rider);
 
         if (!$shipment || !in_array($shipment->status, ['at_sorting_center', 'staged'])) {
             return back()->with('error', 'This parcel is not available for pickup from the sorting center.');
@@ -575,9 +667,12 @@ class DashboardController extends Controller
         $deliveries = $query->latest()->get();
 
         $totalDelivered = $deliveries->count();
-        $totalEarnings = $deliveries->sum(function ($order) {
-            return $order->amount_collected ?: 0;
+        $totalEarningsMinor = $deliveries->sum(function ($order) {
+            return (int) ($order->amount_collected_minor ?? 0);
         });
+
+        // Keep the existing Blade-compatible peso value while using integer centavos as the source.
+        $totalEarnings = $totalEarningsMinor / 100;
 
         $chartData = $deliveries->groupBy(function ($order) {
             return $order->delivered_at->format('M d, Y');
@@ -672,3 +767,5 @@ class DashboardController extends Controller
         return back()->with('success', 'All notifications marked as read.');
     }
 }
+
+

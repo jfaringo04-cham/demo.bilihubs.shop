@@ -31,6 +31,13 @@
       </div>
 
       @php
+        $shipments = $order->sellerOrders
+            ->map(fn ($sellerOrder) => $sellerOrder->shipment)
+            ->filter()
+            ->values();
+
+        $firstShipment = $shipments->first();
+
         $timeline = [];
         $timeline[] = ['label' => 'Order Placed', 'timestamp' => $order->ordered_at, 'icon' => 'bi-cart-check', 'class' => 'primary'];
         if ($order->ready_for_pickup) {
@@ -42,8 +49,8 @@
         if ($order->picked_up_at) {
           $timeline[] = ['label' => 'Picked Up by Rider', 'timestamp' => $order->picked_up_at, 'icon' => 'bi-bag-check', 'class' => 'warning'];
         }
-        if ($order->shipment && $order->shipment->at_sorting_center_at) {
-          $timeline[] = ['label' => 'At Sorting Center', 'timestamp' => $order->shipment->at_sorting_center_at, 'icon' => 'bi-building', 'class' => 'info'];
+        if ($firstShipment && $firstShipment->at_sorting_center_at) {
+          $timeline[] = ['label' => 'At Sorting Center', 'timestamp' => $firstShipment->at_sorting_center_at, 'icon' => 'bi-building', 'class' => 'info'];
         }
         if ($order->delivered_at) {
           $timeline[] = ['label' => 'Delivered', 'timestamp' => $order->delivered_at, 'icon' => 'bi-truck', 'class' => 'success'];
@@ -82,7 +89,7 @@
                 $currentStepIndex = 5;
                 break;
               }
-              if ($order->status == 'picked_up' || ($order->shipment && $order->shipment->status == 'picked_up')) {
+              if ($order->status == 'picked_up' || $shipments->contains(fn ($shipment) => $shipment->status == 'picked_up')) {
                 $currentStepIndex = 4;
                 break;
               }
@@ -156,17 +163,26 @@
                 <th>Subtotal</th>
               </tr>
             </thead>
-            <tbody>
+              <tbody>
               @foreach($order->items as $item)
                 <tr>
-                  <td>{{ $item->product_name }}</td>
-                  <td>{{ $item->size->name ?? 'N/A' }}</td>
-                  <td>&#8369;{{ number_format($item->price, 2) }}</td>
+                  @php
+                    $variant = $item->variation;
+                    $variantName = $variant ? ($variant->display_name ?: $variant->name) : null;
+                  @endphp
+                  <td>
+                    {{ $item->product_name }}
+                    @if($variantName)
+                      <small class="text-muted d-block">{{ $variantName }}</small>
+                    @endif
+                  </td>
+                  <td>{{ $item->size->name ?? ($variantName ?? 'N/A') }}</td>
+                  <td>&#8369;{{ number_format(($item->price_minor / 100), 2) }}</td>
                   <td>{{ $item->quantity }}</td>
-                  <td>&#8369;{{ number_format($item->subtotal, 2) }}</td>
+                  <td>&#8369;{{ number_format(($item->subtotal_minor / 100), 2) }}</td>
                 </tr>
               @endforeach
-            </tbody>
+              </tbody>
           </table>
         </div>
       </div>
@@ -274,20 +290,20 @@
         <div class="card-body">
           <div class="d-flex justify-content-between mb-2">
             <span>Subtotal</span>
-            <span>&#8369;{{ number_format($order->subtotal, 2) }}</span>
+            <span>&#8369;{{ number_format(($order->subtotal_minor / 100), 2) }}</span>
           </div>
           <div class="d-flex justify-content-between mb-2">
             <span>Tax</span>
-            <span>&#8369;{{ number_format($order->tax, 2) }}</span>
+            <span>&#8369;{{ number_format(($order->tax_minor / 100), 2) }}</span>
           </div>
           <div class="d-flex justify-content-between mb-2">
             <span>Shipping</span>
-            <span>&#8369;{{ number_format($order->shipping, 2) }}</span>
+            <span>&#8369;{{ number_format(($order->shipping_minor / 100), 2) }}</span>
           </div>
           <hr>
           <div class="d-flex justify-content-between fw-bold">
             <span>Total</span>
-            <span>&#8369;{{ number_format($order->total, 2) }}</span>
+            <span>&#8369;{{ number_format(($order->total_minor / 100), 2) }}</span>
           </div>
         </div>
       </div>
@@ -327,5 +343,6 @@
   </div>
 </div>
 @endsection
+
 
 

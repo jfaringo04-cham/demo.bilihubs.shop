@@ -20,8 +20,23 @@ class CategorySeeder extends Seeder
             ['name' => 'Health and Beauty', 'slug' => 'health-and-beauty', 'description' => 'Health, beauty, and personal care products'],
         ];
 
+        $subcategoryMap = config('categories.subcategories', []);
+
         foreach ($categories as $category) {
-            Category::updateOrCreate(['slug' => $category['slug']], $category);
+            $cat = Category::updateOrCreate(['slug' => $category['slug']], array_merge(['parent_id' => null], $category));
+
+            $subs = $subcategoryMap[$category['slug']] ?? [];
+            $existingSubCount = $cat->subcategories()->count();
+            if ($existingSubCount === 0 && $subs) {
+                foreach ($subs as $sub) {
+                    $cat->subcategories()->create([
+                        'name' => $sub['name'],
+                        'slug' => $sub['slug'],
+                        'description' => $sub['name'],
+                        'parent_id' => $cat->id,
+                    ]);
+                }
+            }
         }
     }
 }

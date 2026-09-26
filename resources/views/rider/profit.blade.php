@@ -105,7 +105,7 @@
               @endif
             </td>
             <td>{{ $order->delivered_at ? $order->delivered_at->format('M d, Y H:i') : 'N/A' }}</td>
-            <td>₱{{ number_format($order->amount_collected ?: 0, 2) }}</td>
+            <td>₱{{ number_format((($order->amount_collected_minor ?? 0) / 100), 2) }}</td>
           </tr>
         @empty
           <tr><td colspan="8" class="text-center text-muted py-4">No delivered orders found.</td></tr>
@@ -117,39 +117,15 @@
 @endsection
 
 @push('scripts')
-@if($chartData->count() > 0)
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>
-  document.addEventListener('DOMContentLoaded', function() {
-    var ctx = document.getElementById('profitChart').getContext('2d');
-    var labels = {!! json_encode($chartData->keys()) !!};
-    var data = {!! json_encode($chartData->values()) !!};
-
-    new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: 'Deliveries',
-          data: data,
-          backgroundColor: 'rgba(78, 115, 223, 0.5)',
-          borderColor: 'rgba(78, 115, 223, 1)',
-          borderWidth: 1
-        }]
-      },
-      options: {
-        responsive: true,
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: { stepSize: 1 }
-          }
-        }
-      }
-    });
-  });
-</script>
-@endif
+  @if($chartData->count() > 0)
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    @vite('resources/js/rider/profit.js')
+    <script type="application/json" id="rider-profit-data">@php $riderProfitData = [
+      'labels' => $chartData->keys(),
+      'values' => $chartData->values(),
+    ]; @endphp @json($riderProfitData)</script>
+  @endif
 @endpush
+
 
 

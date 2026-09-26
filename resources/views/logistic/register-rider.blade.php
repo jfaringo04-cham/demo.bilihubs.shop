@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.logistic', ['title' => 'Register Rider', 'logistic' => $logistic])
 
 @section('content')
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
@@ -101,23 +101,8 @@
   </div>
 </div>
 
-<script>
-  document.addEventListener('DOMContentLoaded', function() {
-    const birthdayInput = document.getElementById('birthday');
-    const ageInput = document.getElementById('age');
-
-    if (birthdayInput && ageInput) {
-      birthdayInput.addEventListener('change', function() {
-        const birthday = new Date(this.value);
-        const today = new Date();
-        let age = today.getFullYear() - birthday.getFullYear();
-        const monthDiff = today.getMonth() - birthday.getMonth();
-        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthday.getDate())) {
-          age--;
-        }
-        ageInput.value = age >= 0 ? age : '';
-      });
-    }
-  });
-</script>
+@push('scripts')
+  @vite('resources/js/logistics/riders.js')
+@endpush
 @endsection
+

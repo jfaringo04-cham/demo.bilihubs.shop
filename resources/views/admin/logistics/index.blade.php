@@ -36,7 +36,10 @@
             </td>
             <td class="text-muted">{{ $logistic->owner->name ?? 'N/A' }}</td>
             <td class="text-muted">{{ $logistic->phone ?? 'N/A' }}</td>
-            <td><span class="badge bg-info">{{ $logistic->riders->count() }} riders</span></td>
+            <td><span class="badge bg-info">
+    {{ $logistic->approved_riders_count }}
+    {{ $logistic->approved_riders_count === 1 ? 'rider' : 'riders' }}
+</span></td>
             <td>
               @if($logistic->status == 'active')
                 <span class="badge bg-success">Active</span>

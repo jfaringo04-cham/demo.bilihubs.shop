@@ -39,7 +39,7 @@
               <img src="{{ $product->image_url }}" class="product-image" alt="{{ $product->alt_text ?? $product->name }}">
               <div class="card-body">
                 <h6 class="card-title text-dark">{{ $product->name }}</h6>
-                <p class="price">&#8369;{{ number_format($product->price, 2) }}</p>
+                <p class="price">&#8369;{{ number_format(($product->effective_price_minor / 100), 2) }}</p>
                 @if($product->reviews->count() > 0)
                   <small class="text-muted">
                     <i class="bi bi-star-fill text-warning"></i>
@@ -61,3 +61,4 @@
   @endif
 </div>
 @endsection
+

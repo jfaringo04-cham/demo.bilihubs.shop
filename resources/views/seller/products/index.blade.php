@@ -58,7 +58,7 @@
               </div>
             </td>
             <td>{{ $product->category->name ?? 'Uncategorized' }}</td>
-            <td class="text-danger fw-bold">&#8369;{{ number_format($product->price, 2) }}</td>
+            <td class="text-danger fw-bold">&#8369;{{ number_format(($product->price_minor / 100), 2) }}</td>
             <td>
               {{ $product->stock }}
               @if($product->sizes->count() > 0)
@@ -125,5 +125,6 @@
   </div>
 </div>
 @endsection
+
 
 

@@ -13,12 +13,11 @@ class ProductController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Product::with(['category', 'images', 'variations.size', 'seller'])
+        $query = Product::with(['category', 'images', 'variations', 'seller'])
             ->where('status', 'active')
             ->where('compliance_status', 'approved')
             ->where('is_approved', true);
 
-        // Search
         if ($request->filled('search')) {
             $query->where(function ($q) use ($request) {
                 $q->where('name', 'like', "%{$request->search}%")
@@ -27,32 +26,39 @@ class ProductController extends Controller
             });
         }
 
-        // Category filter
         if ($request->filled('category_id')) {
             $query->where('category_id', $request->category_id);
         }
 
-        // Price range
         if ($request->filled('min_price')) {
-            $query->where('price', '>=', $request->min_price);
-        }
-        if ($request->filled('max_price')) {
-            $query->where('price', '<=', $request->max_price);
+            $query->where(
+                'price_minor',
+                '>=',
+                (int) round((float) $request->min_price * 100)
+            );
         }
 
-        // Size filter
+        if ($request->filled('max_price')) {
+            $query->where(
+                'price_minor',
+                '<=',
+                (int) round((float) $request->max_price * 100)
+            );
+        }
+
         if ($request->filled('size_id')) {
-            $query->whereHas('variations.size', function ($q) use ($request) {
+            $query->whereHas('sizes', function ($q) use ($request) {
                 $q->where('sizes.id', $request->size_id);
             });
         }
 
-        // Sorting
         $sortBy = $request->get('sort_by', 'created_at');
         $sortOrder = $request->get('sort_order', 'desc');
         $allowedSorts = ['price', 'created_at', 'name', 'rating'];
+
         if (in_array($sortBy, $allowedSorts)) {
-            $query->orderBy($sortBy, $sortOrder);
+            $sortColumn = $sortBy === 'price' ? 'price_minor' : $sortBy;
+            $query->orderBy($sortColumn, $sortOrder);
         }
 
         $perPage = min($request->get('per_page', 20), 100);
@@ -71,40 +77,39 @@ class ProductController extends Controller
 
     public function show(Product $product)
     {
-        if ($product->status !== 'active' || $product->compliance_status !== 'approved' || !$product->is_approved) {
-            return response()->json(['message' => 'Product not found'], 404);
+        if (
+            $product->status !== 'active' ||
+            $product->compliance_status !== 'approved' ||
+            !$product->is_approved
+        ) {
+            return response()->json([
+                'message' => 'Product not found',
+            ], 404);
         }
 
         $product->load([
             'category',
             'images',
-            'variations.size',
-            'seller:id,name,business_name,logo,rating',
+            'variations',
+            'seller:id,user_id,name,slug,logo_path,status',
         ]);
 
-        // Get available sizes with stock
         $sizes = $product->sizes()
             ->wherePivot('stock', '>', 0)
             ->select('sizes.id', 'sizes.name', 'sizes.code')
             ->get();
 
-        // Get variations with stock
         $variations = $product->variations()
             ->where('stock', '>', 0)
-            ->with('size')
             ->get()
-            ->map(function ($v) {
+            ->map(function ($variant) {
                 return [
-                    'id' => $v->id,
-                    'name' => $v->name,
-                    'price' => $v->effective_price,
-                    'stock' => $v->stock,
-                    'image_url' => $v->image_url,
-                    'size' => $v->size ? [
-                        'id' => $v->size->id,
-                        'name' => $v->size->name,
-                        'code' => $v->size->code,
-                    ] : null,
+                    'id' => $variant->id,
+                    'name' => $variant->name,
+                    'price' => $variant->effective_price_minor / 100,
+                    'stock' => $variant->stock,
+                    'image_url' => $variant->image_url,
+                    'size' => $variant->size,
                 ];
             });
 
@@ -113,20 +118,19 @@ class ProductController extends Controller
                 'id' => $product->id,
                 'name' => $product->name,
                 'description' => $product->description,
-                'price' => $product->price,
-                'sale_price' => $product->sale_price,
-                'effective_price' => $product->effective_price,
+                'price' => $product->price_minor / 100,
+                'effective_price' => $product->effective_price_minor / 100,
                 'discount_percent' => $product->discount_percent,
                 'sku' => $product->sku,
                 'stock' => $product->stock,
                 'video_url' => $product->video_url,
                 'secondary_image_url' => $product->secondary_image_url,
                 'category' => $product->category,
-                'images' => $product->images->map(function ($img) {
+                'images' => $product->images->map(function ($image) {
                     return [
-                        'id' => $img->id,
-                        'url' => $img->image_url,
-                        'is_primary' => $img->is_primary,
+                        'id' => $image->id,
+                        'url' => $image->image_url,
+                        'is_primary' => $image->is_primary,
                     ];
                 }),
                 'variations' => $variations,
@@ -134,7 +138,7 @@ class ProductController extends Controller
                 'seller' => $product->seller,
                 'rating' => $product->rating ?? 0,
                 'reviews_count' => $product->reviews_count ?? 0,
-                'is_favorite' => false, // Would check user's favorites
+                'is_favorite' => false,
             ],
         ]);
     }

@@ -8,13 +8,21 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Commission extends Model
 {
     protected $fillable = [
-        'order_id', 'seller_id', 'order_total', 'rate', 'amount', 'status', 'paid_at',
+        'order_id',
+        'seller_id',
+        'order_total_minor',
+        'rate',
+        'amount_minor',
+        'status',
+        'paid_at',
     ];
 
     protected $casts = [
-        'order_total' => 'decimal:2',
+        'order_total_minor' => 'integer',
+
         'rate' => 'decimal:2',
-        'amount' => 'decimal:2',
+        'amount_minor' => 'integer',
+
         'paid_at' => 'datetime',
     ];
 
@@ -28,3 +36,4 @@ class Commission extends Model
         return $this->belongsTo(User::class, 'seller_id');
     }
 }
+

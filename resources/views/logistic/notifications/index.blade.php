@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.logistic', ['title' => 'Notifications', 'logistic' => $logistic])
 
 @section('content')
 <div class="container py-4">
@@ -40,3 +40,5 @@
   @endif
 </div>
 @endsection
+
+

@@ -37,13 +37,57 @@ class LogisticController extends Controller
             return redirect()->route('home')->with('error', 'No logistics company found for your account.');
         }
 
-        $totalRiders = $logistic->riders()->count();
-        $pendingRiders = $logistic->riders()->where('logistic_status', 'pending')->count();
-        $activeRiders = $logistic->riders()->where('logistic_status', 'approved')->count();
+        $totalRiders = $logistic->riders()
+    ->whereHas('roles', function ($query) {
+        $query->where('name', 'rider');
+    })
+    ->count();
+
+$pendingRiders = $logistic->riders()
+    ->whereHas('roles', function ($query) {
+        $query->where('name', 'rider');
+    })
+    ->where('logistic_status', 'pending')
+    ->count();
+
+$activeRiders = $logistic->riders()
+    ->whereHas('roles', function ($query) {
+        $query->where('name', 'rider');
+    })
+    ->where('logistic_status', 'approved')
+    ->where('status', \App\Models\User::STATUS_ACTIVE)
+    ->count();
+        $shipments = $logistic->shipments();
+
+        $totalShipments = $shipments->count();
+        $pendingShipments = (clone $shipments)->whereIn('status', ['pending', 'assigned'])->count();
+        $inTransitShipments = (clone $shipments)->whereIn('status', ['picked_up', 'in_transit', 'at_sorting_center', 'sorted', 'staged'])->count();
+        $deliveredShipments = (clone $shipments)->where('status', 'delivered')->count();
+        $delayedShipments = (clone $shipments)->whereIn('status', ['delayed', 'delivery_failed'])->count();
+        $cancelledShipments = (clone $shipments)->where('status', 'cancelled')->count();
+
+        $alertsCount = (clone $shipments)
+            ->whereIn('status', ['cancelled', 'delayed'])
+            ->orWhere(function ($query) {
+                $query->where('status', 'pending')
+                    ->where('created_at', '<', now()->subHours(24));
+            })
+            ->count();
+
+        $totalHubs = $logistic->hubs()->count();
+        $activeHubs = $logistic->hubs()->where('status', 'active')->count();
+
+        $recentShipments = $shipments->with(['sellerOrder.order.user', 'sellerOrder.seller', 'rider'])->latest()->take(10)->get();
 
         $recentRiders = $logistic->riders()->latest()->take(5)->get();
 
-        return view('logistic.dashboard', compact('logistic', 'totalRiders', 'pendingRiders', 'activeRiders', 'recentRiders'));
+        return view('logistic.dashboard', compact(
+            'logistic', 'totalRiders', 'pendingRiders', 'activeRiders',
+            'recentRiders', 'totalShipments', 'pendingShipments',
+            'inTransitShipments', 'deliveredShipments', 'delayedShipments',
+            'cancelledShipments', 'alertsCount', 'totalHubs', 'activeHubs',
+            'recentShipments'
+        ));
     }
 
     public function home()
@@ -54,9 +98,26 @@ class LogisticController extends Controller
             return redirect()->route('home')->with('error', 'No logistics company found for your account.');
         }
 
-        $totalRiders = $logistic->riders()->count();
-        $pendingRiders = $logistic->riders()->where('logistic_status', 'pending')->count();
-        $activeRiders = $logistic->riders()->where('logistic_status', 'approved')->count();
+        $totalRiders = $logistic->riders()
+    ->whereHas('roles', function ($query) {
+        $query->where('name', 'rider');
+    })
+    ->count();
+
+$pendingRiders = $logistic->riders()
+    ->whereHas('roles', function ($query) {
+        $query->where('name', 'rider');
+    })
+    ->where('logistic_status', 'pending')
+    ->count();
+
+$activeRiders = $logistic->riders()
+    ->whereHas('roles', function ($query) {
+        $query->where('name', 'rider');
+    })
+    ->where('logistic_status', 'approved')
+    ->where('status', \App\Models\User::STATUS_ACTIVE)
+    ->count();
 
         $alerts = $logistic->shipments()
             ->whereIn('status', ['cancelled', 'delayed'])
@@ -88,9 +149,11 @@ class LogisticController extends Controller
     {
         $logistic = Auth::user()->ownedLogistic;
 
-        if (!$logistic || $rider->logistic_id !== $logistic->id) {
-            return redirect()->route('logistic.riders')->with('error', 'Rider not found in your company.');
-        }
+        abort_unless(
+            $logistic && $rider->logistic_id && (int) $rider->logistic_id === (int) $logistic->id,
+            403,
+            'This rider does not belong to your logistics company.'
+        );
 
         return view('logistic.riders-show', compact('logistic', 'rider'));
     }
@@ -99,13 +162,18 @@ class LogisticController extends Controller
     {
         $logistic = Auth::user()->ownedLogistic;
 
-        if (!$logistic || $rider->logistic_id !== $logistic->id || $rider->logistic_status !== 'pending') {
-            return redirect()->route('logistic.riders')->with('error', 'Invalid rider application.');
-        }
+        abort_unless(
+            $logistic && $rider->logistic_id && (int) $rider->logistic_id === (int) $logistic->id,
+            403,
+            'This rider does not belong to your logistics company.'
+        );
+
+        abort_unless($rider->logistic_status === 'pending', 422, 'Invalid rider application.');
 
         $rider->update([
             'logistic_status' => 'approved',
             'logistic_approved_at' => now(),
+            'logistic_rejection_reason' => null,
             'status' => User::STATUS_ACTIVE,
         ]);
 
@@ -123,9 +191,13 @@ class LogisticController extends Controller
     {
         $logistic = Auth::user()->ownedLogistic;
 
-        if (!$logistic || $rider->logistic_id !== $logistic->id || $rider->logistic_status !== 'pending') {
-            return redirect()->route('logistic.riders')->with('error', 'Invalid rider application.');
-        }
+        abort_unless(
+            $logistic && $rider->logistic_id && (int) $rider->logistic_id === (int) $logistic->id,
+            403,
+            'This rider does not belong to your logistics company.'
+        );
+
+        abort_unless($rider->logistic_status === 'pending', 422, 'Invalid rider application.');
 
         $request->validate([
             'rejection_reason' => ['required', 'string', 'max:500'],
@@ -134,7 +206,8 @@ class LogisticController extends Controller
         $rider->update([
             'logistic_status' => 'rejected',
             'logistic_rejection_reason' => $request->rejection_reason,
-            'logistic_id' => null,
+            'logistic_approved_at' => null,
+            'status' => User::STATUS_PENDING,
         ]);
 
         $this->createNotification(
@@ -145,38 +218,6 @@ class LogisticController extends Controller
         );
 
         return back()->with('success', 'Rider application rejected.');
-    }
-
-    public function submitRiderToAdmin(User $rider)
-    {
-        $logistic = Auth::user()->ownedLogistic;
-
-        if (!$logistic || $rider->logistic_id !== $logistic->id || $rider->logistic_status !== 'approved') {
-            return redirect()->route('logistic.riders')->with('error', 'Only approved riders can be submitted to admin.');
-        }
-
-        $rider->update([
-            'logistic_status' => 'pending',
-            'logistic_approved_at' => null,
-        ]);
-
-        $this->createNotification(
-            $rider->id,
-            'Rider Submitted for Admin Approval',
-            'The logistics company ' . $logistic->company_name . ' has submitted your profile for admin approval.',
-            'logistic'
-        );
-
-        try {
-            $admins = \App\Models\User::where('role', 'admin')->get();
-            foreach ($admins as $admin) {
-                Mail::to($admin->email)->send(new \App\Mail\NewRegistrationAdmin($rider));
-            }
-        } catch (\Throwable $e) {
-            logger()->error('Failed to send admin notification for rider: ' . $e->getMessage());
-        }
-
-        return back()->with('success', 'Rider submitted to admin for approval.');
     }
 
     public function pendingApplications()
@@ -241,7 +282,6 @@ class LogisticController extends Controller
             'house_number' => '',
             'street_address' => '',
             'password' => Hash::make($validated['password']),
-            'role' => 'rider',
             'phone' => $validated['mobile_number'],
             'status' => User::STATUS_ACTIVE,
             'vehicle_type' => $validated['vehicle_type'],
@@ -250,6 +290,9 @@ class LogisticController extends Controller
             'logistic_status' => 'approved',
             'logistic_approved_at' => now(),
         ]);
+
+        $riderRole = \App\Models\Role::where('name', 'rider')->firstOrFail();
+        $user->roles()->syncWithoutDetaching([$riderRole->id]);
 
         if ($request->hasFile('or_document')) {
             $user->update(['or_document' => $request->file('or_document')->store('rider-documents', 'public')]);
@@ -267,7 +310,7 @@ class LogisticController extends Controller
         );
 
         try {
-            $admins = User::where('role', 'admin')->get();
+            $admins = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
             foreach ($admins as $admin) {
                 Mail::to($admin->email)->send(new \App\Mail\NewRegistrationAdmin($user));
             }
@@ -286,7 +329,7 @@ class LogisticController extends Controller
             return redirect()->route('home')->with('error', 'No logistics company found for your account.');
         }
 
-        $shipments = $logistic->shipments()->with('order.items.product', 'rider')->latest()->paginate(20);
+        $shipments = $logistic->shipments()->with('sellerOrder.order.user', 'sellerOrder.items.product', 'sellerOrder.seller', 'rider')->latest()->paginate(20);
 
         return view('logistic.shipments', compact('logistic', 'shipments'));
     }
@@ -301,19 +344,19 @@ class LogisticController extends Controller
 
         $pendingShipments = $logistic->shipments()
             ->where('sorting_status', 'pending')
-            ->with('order.items.product')
+            ->with('sellerOrder.order.user', 'sellerOrder.items.product', 'sellerOrder.seller')
             ->latest()
             ->paginate(20);
 
         $receivedShipments = $logistic->shipments()
             ->where('sorting_status', 'received')
-            ->with('order.items.product')
+            ->with('sellerOrder.order.user', 'sellerOrder.items.product', 'sellerOrder.seller')
             ->latest()
             ->paginate(20);
 
         $sortedShipments = $logistic->shipments()
             ->whereIn('sorting_status', ['sorted', 'staged'])
-            ->with('order.items.product', 'rider')
+            ->with('sellerOrder.order.user', 'sellerOrder.items.product', 'sellerOrder.seller', 'rider')
             ->latest()
             ->paginate(20);
 
@@ -328,11 +371,15 @@ class LogisticController extends Controller
             return redirect()->route('logistic.sorting-area')->with('error', 'Shipment not found.');
         }
 
-        // Ensure shipment has hub assigned (based on pickup/seller location)
-        if (!$shipment->hub_id) {
-            $hub = \App\Services\HubAssignmentService::findBestHubForOrder($shipment->order);
+        // Ensure this parcel has a hub based on its SellerOrder pickup location.
+        if (!$shipment->hub_id && $shipment->sellerOrder) {
+            $hub = \App\Services\HubAssignmentService::findBestHubForSellerOrder($shipment->sellerOrder);
+
             if ($hub) {
-                $shipment->update(['hub_id' => $hub->id]);
+                $shipment->update([
+                    'hub_id' => $hub->id,
+                    'logistic_id' => $hub->logistic_id,
+                ]);
             }
         }
 
@@ -343,19 +390,21 @@ class LogisticController extends Controller
         ]);
 
         // Increment pickup rider's daily quota if this was a pickup rider delivery
-        $order = $shipment->order;
+        $order = $shipment->sellerOrder?->order;
         if ($order && $order->rider_id) {
             $pickupRider = \App\Models\User::find($order->rider_id);
-            if ($pickupRider && $pickupRider->role === 'rider') {
+            if ($pickupRider && $pickupRider->isRider()) {
                 $pickupRider->increment('daily_pickups_completed');
             }
         }
 
-        // Notify seller that parcel is at sorting center
-        if ($order && $order->seller_id) {
+        // Notify the seller that owns this specific SellerOrder/parcel.
+        $sellerOwnerId = $shipment->sellerOrder?->seller?->user_id;
+
+        if ($order && $sellerOwnerId) {
             $hubName = $shipment->hub ? $shipment->hub->name : 'Sorting Center';
             $this->createNotification(
-                $order->seller_id,
+                $sellerOwnerId,
                 'Parcel Received at Sorting Center',
                 'Your order ' . $order->order_number . ' has been received at ' . $hubName . ' and is being processed for delivery.',
                 'shipment',
@@ -403,11 +452,15 @@ class LogisticController extends Controller
             'delivery_type' => $validated['delivery_type'],
         ]);
 
-        $shipment->order->update([
-            'status' => 'sorted',
-            'delivery_status' => 'at_sorting_center',
-            'delivery_zone' => $validated['delivery_zone'],
-        ]);
+        $order = $shipment->sellerOrder?->order;
+
+        if ($order) {
+            $order->update([
+                'status' => 'sorted',
+                'delivery_status' => 'at_sorting_center',
+                'delivery_zone' => $validated['delivery_zone'],
+            ]);
+        }
 
         $bestRider = \App\Services\RiderAssignmentService::findBestRiderForShipment($shipment);
 
@@ -418,16 +471,16 @@ class LogisticController extends Controller
                 'user_id' => $bestRider->id,
                 'title' => 'New Delivery Assigned from Hub',
                 'type' => 'delivery',
-                'message' => 'Order ' . $shipment->order->order_number . ' has been sorted at the hub. Destination: ' . $validated['delivery_zone'] . '. Please pick it up for final delivery to the customer.',
+                'message' => 'Order ' . ($order?->order_number ?? 'N/A') . ' has been sorted at the hub. Destination: ' . $validated['delivery_zone'] . '. Please pick it up for final delivery to the customer.',
                 'link' => route('rider.pickups', ['status' => 'sorting_center']),
             ]);
 
             \App\Models\Notification::create([
-                'user_id' => $shipment->order->user_id,
+                'user_id' => $order?->user_id,
                 'title' => 'Order Sorted at Hub',
                 'type' => 'delivery',
-                'message' => 'Your order ' . $shipment->order->order_number . ' has been sorted at the hub and assigned to a rider for final delivery.',
-                'link' => route('orders.show', $shipment->order),
+                'message' => 'Your order ' . ($order?->order_number ?? 'N/A') . ' has been sorted at the hub and assigned to a rider for final delivery.',
+                'link' => $order ? route('orders.show', $order) : null,
             ]);
         }
 
@@ -494,7 +547,7 @@ class LogisticController extends Controller
         ]);
 
         $rider = User::where('id', $validated['rider_id'])
-            ->where('role', 'rider')
+            ->whereHas('roles', fn ($q) => $q->where('name', 'rider'))
             ->where('logistic_id', $logistic->id)
             ->where('availability_status', 'available')
             ->first();
@@ -512,8 +565,11 @@ class LogisticController extends Controller
             'status' => $shipment->status === 'at_sorting_center' ? 'staged' : 'assigned',
         ]);
 
-        if ($shipment->order) {
-            $order = $shipment->order;
+        $order = $shipment->sellerOrder?->order;
+
+        if ($order) {
+            // Keep these legacy Order fields synchronized until the rider/order
+            // screens are fully parcel-based.
             $order->update([
                 'rider_id' => $rider->id,
                 'delivery_status' => 'ready_for_delivery_pickup',
@@ -530,7 +586,7 @@ class LogisticController extends Controller
             'New Delivery Assignment',
             'You have been assigned a new delivery. Tracking: ' . $shipment->tracking_number,
             'shipment',
-            route('rider.orders.show', $shipment->order)
+            $order ? route('rider.orders.show', $order) : null
         );
 
         return back()->with('success', 'Rider ' . $rider->name . ' assigned to shipment.');
@@ -570,7 +626,7 @@ class LogisticController extends Controller
             ->where('delivery_zone', $zone)
             ->where('sorting_status', 'sorted')
             ->whereNull('rider_id')
-            ->with('order.items.product')
+            ->with('sellerOrder.order.user', 'sellerOrder.items.product', 'sellerOrder.seller')
             ->get();
 
         // Get the hub from the first shipment (they should all be in the same hub area)
@@ -630,7 +686,7 @@ class LogisticController extends Controller
         $deliveryAddress = strtolower($shipment->delivery_address);
         $zone = 'Zone B - Luzon';
 
-        if (str_contains($deliveryAddress, 'manila') || str_contains($deliveryAddress, 'quezon') || str_contains($deliveryAddress, 'makati') || str_contains($deliveryAddress, 'pasig') || str_contains($deliveryAddress, 'taguig') || str_contains($deliveryAddress, 'mcity') || str_contains($deliveryAddress, 'parañaque') || str_contains($deliveryAddress, 'valenzuela') || str_contains($deliveryAddress, 'malabon') || str_contains($deliveryAddress, 'caloocan') || str_contains($deliveryAddress, 'las piñas') || str_contains($deliveryAddress, 'mandaluyong') || str_contains($deliveryAddress, 'marikina') || str_contains($deliveryAddress, 'mersa') || str_contains($deliveryAddress, 'navotas') || str_contains($deliveryAddress, 'san juan') || str_contains($deliveryAddress, 'tondo') || str_contains($deliveryAddress, 'manila') || str_contains($deliveryAddress, 'ncr')) {
+        if (str_contains($deliveryAddress, 'manila') || str_contains($deliveryAddress, 'quezon') || str_contains($deliveryAddress, 'makati') || str_contains($deliveryAddress, 'pasig') || str_contains($deliveryAddress, 'taguig') || str_contains($deliveryAddress, 'mcity') || str_contains($deliveryAddress, 'paraÃƒÆ’Ã‚Â±aque') || str_contains($deliveryAddress, 'valenzuela') || str_contains($deliveryAddress, 'malabon') || str_contains($deliveryAddress, 'caloocan') || str_contains($deliveryAddress, 'las piÃƒÆ’Ã‚Â±as') || str_contains($deliveryAddress, 'mandaluyong') || str_contains($deliveryAddress, 'marikina') || str_contains($deliveryAddress, 'mersa') || str_contains($deliveryAddress, 'navotas') || str_contains($deliveryAddress, 'san juan') || str_contains($deliveryAddress, 'tondo') || str_contains($deliveryAddress, 'manila') || str_contains($deliveryAddress, 'ncr')) {
             $zone = 'Zone A - Metro Manila';
         } elseif (str_contains($deliveryAddress, 'cebu') || str_contains($deliveryAddress, 'iloilo') || str_contains($deliveryAddress, 'bacolod') || str_contains($deliveryAddress, 'cagayan de oro') || str_contains($deliveryAddress, 'davao') || str_contains($deliveryAddress, 'cavite') || str_contains($deliveryAddress, 'laguna') || str_contains($deliveryAddress, 'batangas') || str_contains($deliveryAddress, 'pampanga') || str_contains($deliveryAddress, 'bulacan') || str_contains($deliveryAddress, 'rizal') || str_contains($deliveryAddress, 'quezon') || str_contains($deliveryAddress, 'laguna') || str_contains($deliveryAddress, 'pagsanjan') || str_contains($deliveryAddress, 'los ba') || str_contains($deliveryAddress, 'santa cruz')) {
             $zone = 'Zone A - Metro Manila';
@@ -672,9 +728,29 @@ class LogisticController extends Controller
             return redirect()->route('home')->with('error', 'No logistics company found for your account.');
         }
 
-        $riders = $logistic->riders()->where('logistic_status', 'approved')->get();
+        $riders = $logistic->riders()
+            ->where('logistic_status', 'approved')
+            ->get();
 
-        return view('logistic.shipments-create', compact('logistic', 'riders'));
+        // Only show SellerOrders/parcels that do not have a shipment yet
+        // and are either unassigned or already assigned to this logistics company.
+        $sellerOrders = \App\Models\SellerOrder::with([
+                'order.user',
+                'seller',
+            ])
+            ->whereDoesntHave('shipment')
+            ->where(function ($query) use ($logistic) {
+                $query->whereNull('logistic_id')
+                    ->orWhere('logistic_id', $logistic->id);
+            })
+            ->latest()
+            ->get();
+
+        return view('logistic.shipments-create', compact(
+            'logistic',
+            'riders',
+            'sellerOrders'
+        ));
     }
 
     public function storeShipment(Request $request)
@@ -686,6 +762,7 @@ class LogisticController extends Controller
         }
 
         $validated = $request->validate([
+            'seller_order_id' => ['required', 'exists:seller_orders,id'],
             'rider_id' => ['nullable', 'exists:users,id'],
             'courier' => ['nullable', 'string', 'max:255'],
             'pickup_address' => ['required', 'string', 'max:1000'],
@@ -695,9 +772,26 @@ class LogisticController extends Controller
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
+        $sellerOrder = \App\Models\SellerOrder::with('order')
+            ->whereKey($validated['seller_order_id'])
+            ->where(function ($query) use ($logistic) {
+                $query->whereNull('logistic_id')
+                    ->orWhere('logistic_id', $logistic->id);
+            })
+            ->first();
+
+        if (!$sellerOrder) {
+            return back()->with('error', 'Seller order is not available for this logistics company.');
+        }
+
+        if ($sellerOrder->shipment()->exists()) {
+            return back()->with('error', 'This seller order already has a shipment.');
+        }
+
         $trackingNumber = 'SPE-' . strtoupper(uniqid());
 
         $shipment = Shipment::create([
+            'seller_order_id' => $sellerOrder->id,
             'logistic_id' => $logistic->id,
             'rider_id' => $validated['rider_id'],
             'tracking_number' => $trackingNumber,
@@ -709,6 +803,10 @@ class LogisticController extends Controller
             'longitude' => $validated['longitude'] ?? null,
             'notes' => $validated['notes'],
         ]);
+
+        if (!$sellerOrder->logistic_id) {
+            $sellerOrder->update(['logistic_id' => $logistic->id]);
+        }
 
         if ($validated['rider_id']) {
             $this->createNotification(
@@ -761,7 +859,7 @@ class LogisticController extends Controller
                 'alert'
             );
 
-            $admins = User::where('role', 'admin')->get();
+            $admins = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
             foreach ($admins as $admin) {
                 $this->createNotification(
                     $admin->id,
@@ -780,7 +878,7 @@ class LogisticController extends Controller
                 'alert'
             );
 
-            $admins = User::where('role', 'admin')->get();
+            $admins = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
             foreach ($admins as $admin) {
                 $this->createNotification(
                     $admin->id,
@@ -956,6 +1054,22 @@ class LogisticController extends Controller
         }
 
         return view('logistic.account', compact('logistic'));
+    }
+
+    public function about()
+    {
+        $logistic = Auth::user()->ownedLogistic;
+
+        if (!$logistic) {
+            return redirect()->route('home')->with('error', 'No logistics company found for your account.');
+        }
+
+        $totalShipments = $logistic->shipments()->count();
+        $deliveredShipments = $logistic->shipments()->where('status', 'delivered')->count();
+        $totalRiders = $logistic->riders()->where('logistic_status', 'approved')->count();
+        $totalHubs = $logistic->hubs()->count();
+
+        return view('logistic.about', compact('logistic', 'totalShipments', 'deliveredShipments', 'totalRiders', 'totalHubs'));
     }
 
     public function updateAccount(Request $request)

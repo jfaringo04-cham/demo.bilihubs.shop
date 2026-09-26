@@ -6,18 +6,102 @@ use App\Http\Controllers\Controller;
 use App\Mail\NewRegistrationAdmin;
 use App\Mail\RegistrationNotification;
 use App\Models\Category;
-use App\Models\User;
 use App\Models\Logistic;
+use App\Models\Role;
+use App\Models\User;
 use Illuminate\Auth\Events\Registered;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rules;
 
 class RegisteredUserController extends Controller
 {
+    /**
+     * Normalize an e-mail address so that "Test@Email.com" and
+     * "test@email.com " can never behave inconsistently between
+     * validation, existence checks and storage.
+     */
+    private function normalizeEmail(?string $email): string
+    {
+        return Str::lower(trim((string) $email));
+    }
+
+    /**
+     * Merge the normalized e-mail back into the request so the "unique"
+     * rule and every later read of $request->email use the same value.
+     */
+    private function normalizeEmailInput(Request $request): void
+    {
+        if ($request->has('email')) {
+            $request->merge(['email' => $this->normalizeEmail($request->input('email'))]);
+        }
+    }
+
+    /**
+     * A registration POST is only ever a duplicate of itself when the very
+     * same browser session already registered that exact address a moment
+     * ago (double click / double submit). Those must not surface as
+     * "The email has already been taken." for the applicant who just
+     * succeeded, so the success response is replayed instead.
+     *
+     * Any other existing address is left to the unique validation rule.
+     */
+    private function isRepeatSubmissionFromThisSession(Request $request, string $email, string $sessionKey): bool
+    {
+        return $email !== ''
+            && $request->session()->get($sessionKey) === $email
+            && User::where('email', $email)->exists();
+    }
+
+    /**
+     * True only for a genuine duplicate-key violation on the users e-mail
+     * column. Any other database failure is left to bubble up as a real error
+     * instead of pretending the e-mail is a duplicate.
+     */
+    private function isDuplicateEmailViolation(\Throwable $e): bool
+    {
+        if (!$e instanceof QueryException) {
+            return false;
+        }
+
+        $sqlState = (string) ($e->errorInfo[0] ?? '');
+
+        // PostgreSQL unique_violation, MySQL/SQLite integrity constraint.
+        $duplicateStates = ['23505', '23000', '19'];
+
+        if (!in_array($sqlState, $duplicateStates, true)) {
+            return false;
+        }
+
+        // Only the database error text and the constraint identifier count;
+        // the SQL statement itself must not be used to guess the column.
+        $databaseError = $e->getPrevious() instanceof \Throwable
+            ? $e->getPrevious()->getMessage()
+            : $e->getMessage();
+
+        $identifier = (string) ($e->errorInfo[2] ?? '');
+        $target = Str::lower($databaseError . ' ' . $identifier);
+
+        $isUsersEmailConstraint = Str::contains($target, 'users_email_unique')
+            || Str::contains($target, 'users.email')
+            || (Str::contains($target, 'users') && Str::contains($target, 'email'));
+
+        return $isUsersEmailConstraint;
+    }
+
+    private function backWithDuplicateEmail(Request $request)
+    {
+        return back()
+            ->withInput($request->except(['password', 'password_confirmation', 'id_verification', 'business_permit']))
+            ->withErrors(['email' => 'The email has already been taken.']);
+    }
+
     public function create()
     {
         $categories = Category::all();
@@ -32,6 +116,14 @@ class RegisteredUserController extends Controller
 
     public function storeRiderApplication(Request $request)
     {
+        $this->normalizeEmailInput($request);
+
+        $email = $this->normalizeEmail($request->input('email'));
+
+        if ($this->isRepeatSubmissionFromThisSession($request, $email, 'rider_registration_email')) {
+            return redirect(route('login'))->with('success', 'Your rider application has already been submitted and is pending approval.');
+        }
+
         $validated = $request->validate([
             'first_name' => ['required', 'string', 'max:255'],
             'middle_name' => ['nullable', 'string', 'max:1'],
@@ -59,23 +151,28 @@ class RegisteredUserController extends Controller
             ->where('status', 'active')
             ->firstOrFail();
 
+        $middleName = $validated['middle_name'] ?? null;
+        $houseNumber = $validated['house_number'] ?? '';
+        $streetAddress = $validated['street_address'] ?? '';
+        $municipality = $validated['municipality'] ?? '';
+
         $userData = [
             'first_name' => $validated['first_name'],
-            'middle_name' => $validated['middle_name'],
+            'middle_name' => $middleName,
             'last_name' => $validated['last_name'],
-            'name' => $validated['last_name'] . ', ' . $validated['first_name'] . ' ' . $validated['middle_name'],
+            'name' => $validated['last_name'] . ', ' . $validated['first_name'] . ' ' . $middleName,
             'sex' => $validated['sex'],
             'email' => $validated['email'],
             'mobile_number' => $validated['mobile_number'],
             'birthday' => $validated['birthday'],
             'age' => $validated['age'],
+            'region' => $validated['region'],
             'province' => $validated['province'],
-            'municipality' => $validated['municipality'],
+            'municipality' => $municipality,
             'barangay' => $validated['barangay'],
-            'house_number' => $validated['house_number'] ?? '',
-            'street_address' => $validated['street_address'] ?? '',
+            'house_number' => $houseNumber,
+            'street_address' => $streetAddress,
             'password' => Hash::make($validated['password']),
-            'role' => 'rider',
             'phone' => $validated['mobile_number'],
             'status' => User::STATUS_PENDING,
             'vehicle_type' => $validated['vehicle_type'],
@@ -96,7 +193,22 @@ class RegisteredUserController extends Controller
             $userData['cr_document'] = $request->file('cr_document')->store('rider-documents', 'public');
         }
 
-        $user = User::create($userData);
+        try {
+            $user = DB::transaction(function () use ($userData) {
+                $user = User::create($userData);
+
+                $riderRole = Role::where('name', 'rider')->firstOrFail();
+                $user->roles()->syncWithoutDetaching([$riderRole->id]);
+
+                return $user;
+            });
+        } catch (QueryException $e) {
+            if ($this->isDuplicateEmailViolation($e)) {
+                return $this->backWithDuplicateEmail($request);
+            }
+
+            throw $e;
+        }
 
         $logistic = \App\Models\Logistic::find($validated['logistic_id']);
         if ($logistic) {
@@ -111,6 +223,8 @@ class RegisteredUserController extends Controller
                 ]);
             }
         }
+
+        $request->session()->put('rider_registration_email', $user->email);
 
         return redirect(route('login'))->with('success', 'Your rider application has been submitted to ' . $logistic->company_name . '. Please wait for approval.');
     }
@@ -143,6 +257,14 @@ class RegisteredUserController extends Controller
 
     public function store(Request $request)
     {
+        $this->normalizeEmailInput($request);
+
+        $email = $this->normalizeEmail($request->input('email'));
+
+        if ($this->isRepeatSubmissionFromThisSession($request, $email, 'registration_email')) {
+            return redirect(route('login'))->with('success', 'Your registration has already been submitted and is pending administrator approval.');
+        }
+
         $validated = $request->validate([
             'first_name' => ['required', 'string', 'max:255'],
             'middle_name' => ['nullable', 'string', 'max:1'],
@@ -162,16 +284,22 @@ class RegisteredUserController extends Controller
             'password' => ['required', 'confirmed', Rules\Password::defaults()],
             'id_verification' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
             'business_name' => ['nullable', 'string', 'max:255'],
+            'contact_person' => ['nullable', 'string', 'max:255'],
             'selling_categories' => ['nullable', 'array'],
             'business_permit' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
             'company_name' => ['nullable', 'string', 'max:255'],
             'company_email' => ['nullable', 'string', 'email', 'max:255'],
-            'company_phone' => ['nullable', 'string', 'max:255'],
+            'company_phone' => ['nullable', 'string', 'max:500'],
             'company_address' => ['nullable', 'string', 'max:500'],
             'api_address' => ['nullable', 'string', 'max:500'],
         ]);
 
-        $role = $request->role === 'buyer' ? 'customer' : $request->role;
+        $role = match ($request->role) {
+            'buyer' => 'customer',
+            'logistic' => 'logistic_owner',
+            'seller' => 'seller',
+            default => 'customer',
+        };
 
         if ($role === 'seller') {
             $validated['business_name'] = $request->validate([
@@ -187,7 +315,7 @@ class RegisteredUserController extends Controller
             ])['business_permit'];
         }
 
-        if ($role === 'logistic') {
+        if ($role === 'logistic_owner') {
             $validated['company_name'] = $request->validate([
                 'company_name' => ['required', 'string', 'max:255'],
             ])['company_name'];
@@ -199,13 +327,17 @@ class RegisteredUserController extends Controller
             $validated['company_email'] = $request->validate([
                 'company_email' => ['required', 'string', 'email', 'max:255'],
             ])['company_email'];
+
+            $validated['contact_person'] = $request->validate([
+                'contact_person' => ['required', 'string', 'max:255'],
+            ])['contact_person'];
         }
 
         $userData = [
             'first_name' => $validated['first_name'],
-            'middle_name' => $validated['middle_name'],
+            'middle_name' => $validated['middle_name'] ?? null,
             'last_name' => $validated['last_name'],
-            'name' => $validated['last_name'] . ', ' . $validated['first_name'] . ' ' . $validated['middle_name'],
+            'name' => $validated['last_name'] . ', ' . $validated['first_name'] . ' ' . ($validated['middle_name'] ?? ''),
             'sex' => $validated['sex'],
             'email' => $validated['email'],
             'mobile_number' => $validated['mobile_number'],
@@ -215,14 +347,13 @@ class RegisteredUserController extends Controller
             'region_name' => $request->region_name,
             'province' => $validated['province'],
             'province_name' => $request->province_name,
-            'municipality' => $validated['municipality'],
+            'municipality' => $validated['municipality'] ?? '',
             'municipality_name' => $request->municipality_name,
             'barangay' => $validated['barangay'],
             'barangay_name' => $request->barangay_name,
-            'house_number' => $validated['house_number'],
-            'street_address' => $validated['street_address'],
+            'house_number' => $validated['house_number'] ?? '',
+            'street_address' => $validated['street_address'] ?? '',
             'password' => Hash::make($validated['password']),
-            'role' => $role,
             'phone' => $validated['mobile_number'],
             'status' => User::STATUS_PENDING,
         ];
@@ -240,24 +371,54 @@ class RegisteredUserController extends Controller
             $userData['business_permit'] = $request->file('business_permit')->store('seller-documents', 'public');
         }
 
-        $user = User::create($userData);
+        $pivotRole = match ($request->role) {
+            'buyer' => 'buyer',
+            'seller' => 'seller',
+            'logistic' => 'logistics',
+            default => null,
+        };
 
-        if ($role === 'logistic') {
-            $geocoded = $this->geocodeAddress($validated['api_address'] ?? $validated['company_address']);
+        $geocoded = $role === 'logistic_owner'
+            ? $this->geocodeAddress($validated['api_address'] ?? $validated['company_address'])
+            : null;
 
-            Logistic::create([
-                'owner_user_id' => $user->id,
-                'company_name' => $validated['company_name'],
-                'contact_person' => $validated['contact_person'],
-                'email' => $validated['company_email'],
-                'phone' => $validated['company_phone'],
-                'address' => $validated['company_address'],
-                'api_address' => $validated['api_address'] ?? null,
-                'latitude' => $geocoded['lat'] ?? null,
-                'longitude' => $geocoded['lng'] ?? null,
-                'status' => 'pending',
-                'business_permit' => $request->hasFile('business_permit') ? $request->file('business_permit')->store('logistic-documents', 'public') : null,
-            ]);
+        $logisticPermit = $role === 'logistic_owner' && $request->hasFile('business_permit')
+            ? $request->file('business_permit')->store('logistic-documents', 'public')
+            : null;
+
+        try {
+            $user = DB::transaction(function () use ($userData, $pivotRole, $role, $validated, $geocoded, $logisticPermit) {
+                $user = User::create($userData);
+
+                if ($pivotRole) {
+                    $roleModel = Role::where('name', $pivotRole)->firstOrFail();
+                    $user->roles()->syncWithoutDetaching([$roleModel->id]);
+                }
+
+                if ($role === 'logistic_owner') {
+                    Logistic::create([
+                        'owner_user_id' => $user->id,
+                        'company_name' => $validated['company_name'],
+                        'contact_person' => $validated['contact_person'],
+                        'email' => $validated['company_email'],
+                        'phone' => $validated['company_phone'],
+                        'address' => $validated['company_address'],
+                        'api_address' => $validated['api_address'] ?? null,
+                        'latitude' => $geocoded['lat'] ?? null,
+                        'longitude' => $geocoded['lng'] ?? null,
+                        'status' => 'pending',
+                        'business_permit' => $logisticPermit,
+                    ]);
+                }
+
+                return $user;
+            });
+        } catch (QueryException $e) {
+            if ($this->isDuplicateEmailViolation($e)) {
+                return $this->backWithDuplicateEmail($request);
+            }
+
+            throw $e;
         }
 
         try {
@@ -267,13 +428,15 @@ class RegisteredUserController extends Controller
         }
 
         try {
-            $admins = User::where('role', 'admin')->get();
+            $admins = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
             foreach ($admins as $admin) {
                 Mail::to($admin->email)->send(new NewRegistrationAdmin($user));
             }
         } catch (\Throwable $e) {
             logger()->error('Failed to send admin notification: ' . $e->getMessage());
         }
+
+        $request->session()->put('registration_email', $user->email);
 
         return redirect(route('login'))->with('success', 'Your registration has been submitted. Please wait for the administrator\'s approval, which will be sent to your email.');
     }

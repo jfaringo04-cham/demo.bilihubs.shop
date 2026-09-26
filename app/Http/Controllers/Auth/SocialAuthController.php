@@ -38,9 +38,6 @@ class SocialAuthController extends Controller
                 if ($user->isSeller()) {
                     return redirect()->intended(route('seller.dashboard'));
                 }
-                if ($user->isAdmin()) {
-                    return redirect()->intended(route('admin.dashboard'));
-                }
                 return redirect()->intended(route('home'));
             }
 
@@ -82,9 +79,6 @@ class SocialAuthController extends Controller
                 }
                 if ($user->isSeller()) {
                     return redirect()->intended(route('seller.dashboard'));
-                }
-                if ($user->isAdmin()) {
-                    return redirect()->intended(route('admin.dashboard'));
                 }
                 return redirect()->intended(route('home'));
             }
@@ -202,7 +196,7 @@ class SocialAuthController extends Controller
         }
 
         try {
-            $admins = \App\Models\User::where('role', 'admin')->get();
+            $admins = \App\Models\User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
             foreach ($admins as $admin) {
                 Mail::to($admin->email)->send(new \App\Mail\NewRegistrationAdmin($user));
             }

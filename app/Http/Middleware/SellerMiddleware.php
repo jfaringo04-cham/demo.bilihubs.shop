@@ -14,6 +14,10 @@ class SellerMiddleware
             abort(403, 'Only sellers can access this page.');
         }
 
+        if (!Auth::user()->isActive()) {
+            abort(403, 'Your seller account is not approved yet.');
+        }
+
         return $next($request);
     }
 }

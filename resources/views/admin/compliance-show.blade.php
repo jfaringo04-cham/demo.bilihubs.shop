@@ -20,7 +20,7 @@
         <tr><th class="w-40">Name</th><td>{{ $product->name }}</td></tr>
         <tr><th>Category</th><td>{{ $product->category->name ?? 'N/A' }}</td></tr>
         <tr><th>Seller</th><td>{{ $product->seller->name ?? 'N/A' }}</td></tr>
-        <tr><th>Price</th><td>&#8369;{{ number_format($product->price, 2) }}</td></tr>
+        <tr><th>Price</th><td>&#8369;{{ number_format(($product->price_minor / 100), 2) }}</td></tr>
         <tr><th>Stock</th><td>{{ $product->stock }}</td></tr>
         <tr><th>Description</th><td>{{ $product->description ?? 'N/A' }}</td></tr>
         <tr>
@@ -116,7 +116,7 @@
         </div>
         <form method="POST" action="{{ route('admin.compliance.approve', $product) }}" class="mb-2">
           @csrf
-          <button type="submit" class="btn btn-success w-100" onclick="return confirm('Approve this product? It will be published live in the seller\\'s shop.')">
+          <button type="submit" class="btn btn-success w-100" onclick="return confirm(&quot;Approve this product? It will be published live in the seller's shop.&quot;)">
             <i class="bi bi-check-circle"></i> Approve & Publish to Shop
           </button>
         </form>
@@ -158,7 +158,7 @@
       </div>
     @endif
 
-    @if($product->seller)
+    @if($product->sellerUser)
       <div class="table-container mb-4">
         <h5 class="mb-3">Seller Violations</h5>
         <form method="POST" action="{{ route('admin.compliance.warn', $product) }}" class="mb-2" onsubmit="return confirm('Issue warning to seller?');">

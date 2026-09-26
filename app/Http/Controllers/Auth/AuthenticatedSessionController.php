@@ -35,10 +35,14 @@ class AuthenticatedSessionController extends Controller
             $request->session()->regenerateToken();
 
             $message = match ($user->status) {
-                'pending' => 'Your account is still pending admin approval. You will be notified by email once approved.',
+                'pending' => $user->isRider()
+                    ? 'Your rider application is still pending approval from the logistics company you applied to.'
+                    : 'Your account is still pending admin approval. You will be notified by email once approved.',
                 'suspended' => 'Your account has been suspended. Please contact support.',
                 'deactivated' => 'Your account has been deactivated.',
-                'rejected' => 'Your registration application was rejected.',
+                'rejected' => $user->isRider() && $user->logistic_rejection_reason
+                    ? 'Your rider application was rejected. Reason: ' . $user->logistic_rejection_reason
+                    : 'Your registration application was rejected.',
                 default => 'Your account is not active.',
             };
 
@@ -61,10 +65,6 @@ class AuthenticatedSessionController extends Controller
 
         if ($user->isRider()) {
             return redirect()->intended(route('rider.dashboard'));
-        }
-
-        if ($user->isAdmin()) {
-            return redirect()->intended(route('admin.dashboard'));
         }
 
         return redirect()->intended(route('home'));

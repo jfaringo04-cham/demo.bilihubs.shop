@@ -1,6 +1,9 @@
 @extends('admin.layout')
 
 @section('content')
+@php
+  $roleName = $user->roles()->value('name');
+@endphp
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
   <h1 class="h2">Review Application</h1>
   <a href="{{ route('admin.registrations.index') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Back</a>
@@ -14,7 +17,7 @@
         <tr><th class="w-40">Name</th><td>{{ $user->name }}</td></tr>
         <tr><th>Email</th><td>{{ $user->email }}</td></tr>
         <tr><th>Mobile</th><td>{{ $user->mobile_number ?? 'N/A' }}</td></tr>
-        <tr><th>Role</th><td><span class="badge bg-info text-capitalize">{{ $user->role }}</span></td></tr>
+        <tr><th>Role</th><td><span class="badge bg-info text-capitalize">{{ $roleName ?? 'N/A' }}</span></td></tr>
         <tr><th>Sex</th><td>{{ $user->sex ?? 'N/A' }}</td></tr>
         <tr><th>Birthday</th><td>{{ $user->birthday ?? 'N/A' }}</td></tr>
         <tr><th>Address</th><td>
@@ -24,7 +27,7 @@
       </table>
     </div>
 
-     @if($user->role === 'seller')
+     @if($roleName === 'seller')
       <div class="table-container mb-4">
         <h5 class="mb-3">Seller Details</h5>
         <table class="table table-borderless">
@@ -45,7 +48,7 @@
       </div>
     @endif
 
-    @if($user->role === 'logistic')
+     @if($roleName === 'logistics')
       <div class="table-container mb-4">
         <h5 class="mb-3">Logistics Company Details</h5>
         @php
@@ -74,7 +77,7 @@
       </div>
     @endif
 
-    @if($user->role === 'rider')
+     @if($roleName === 'rider')
       <div class="table-container mb-4">
         <h5 class="mb-3">Rider Details</h5>
         <table class="table table-borderless">

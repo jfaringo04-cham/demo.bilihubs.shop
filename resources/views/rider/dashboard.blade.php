@@ -158,44 +158,14 @@
 @endsection
 
 @push('scripts')
-<script>
-  document.addEventListener('DOMContentLoaded', function() {
-    @if(config('services.googlemaps.key') && $assignedOrders->count() > 0)
-      var map = new google.maps.Map(document.getElementById('map'), {
-        zoom: 12,
-        center: { lat: 14.5995, lng: 120.9842 }
-      });
-
-      var geocoder = new google.maps.Geocoder();
-
-      @foreach($assignedOrders as $order)
-        @if($order->shipping_address)
-          geocoder.geocode({ address: '{{ $order->shipping_address }}' }, function(results, status) {
-            if (status == 'OK') {
-              new google.maps.Marker({
-                map: map,
-                position: results[0].geometry.location,
-                title: '{{ $order->user->name ?? 'Customer' }}'
-              });
-            }
-          });
-        @endif
-      @endforeach
-    @elseif($assignedOrders->count() > 0)
-      var map = L.map('map').setView([14.5995, 120.9842], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-      }).addTo(map);
-
-      @foreach($assignedOrders as $order)
-        @if($order->shipping_address)
-          L.marker([14.5995, 120.9842]).addTo(map)
-            .bindPopup('{{ $order->user->name ?? 'Customer' }}<br>{{ $order->shipping_address }}');
-        @endif
-      @endforeach
-    @endif
-  });
-</script>
+  @vite('resources/js/rider/dashboard.js')
 @endpush
+
+<script type="application/json" id="rider-dashboard-data">@json($assignedOrders
+  ->map(fn($order) => [
+    'address' => $order->shipping_address,
+    'customerName' => $order->user->name ?? 'Customer',
+  ])
+  ->values())</script>
 
 

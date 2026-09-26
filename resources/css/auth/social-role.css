@@ -1,0 +1,27 @@
+.role-option {
+  padding: 15px;
+  border: 2px solid #dee2e6;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.role-option:hover {
+  border-color: #ee4d2d;
+  background-color: #fff5f5;
+}
+
+.role-option .form-check-input {
+  margin-top: 12px;
+}
+
+.role-option .form-check-input:checked {
+  background-color: #ee4d2d;
+  border-color: #ee4d2d;
+}
+
+.role-option:has(.form-check-input:checked) {
+  border-color: #ee4d2d;
+  background-color: #fff5f5;
+}

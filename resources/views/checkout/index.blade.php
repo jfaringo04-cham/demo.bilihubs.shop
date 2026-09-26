@@ -80,21 +80,21 @@
             <h5 class="mb-0 fw-semibold">Order Summary</h5>
           </div>
           <div class="card-body">
-             @foreach($cartItems as $item)
-               <div class="d-flex justify-content-between mb-2">
-                 <span class="text-break me-2">
-                   {{ $item->product->name }}
-                   @if($item->variation)
-                     <small class="text-muted">({{ $item->variation->name }})</small>
-                   @endif
-                   @if($item->size)
-                     <small class="text-muted">{{ $item->size->name }}</small>
-                   @endif
-                   x{{ $item->quantity }}
-                 </span>
-                 <span class="fw-medium">&#8369;{{ number_format($item->subtotal, 2) }}</span>
-               </div>
-             @endforeach
+              @foreach($cartItems as $item)
+                <div class="d-flex justify-content-between mb-2">
+                  <span class="text-break me-2">
+                    {{ $item->product->name }}
+                    @if($item->variation)
+                      <small class="text-muted">({{ $item->variation->display_name ?: $item->variation->name }})</small>
+                    @endif
+                    @if($item->size)
+                      <small class="text-muted">{{ $item->size->name }}</small>
+                    @endif
+                    x{{ $item->quantity }}
+                  </span>
+                  <span class="fw-medium">&#8369;{{ number_format(($item->subtotal_minor / 100), 2) }}</span>
+                </div>
+              @endforeach
             <hr>
             <div class="d-flex justify-content-between mb-2">
               <span class="text-muted">Subtotal</span>
@@ -117,22 +117,18 @@
           </div>
         </div>
       </div>
-    </div>
+</div>
   </form>
 </div>
 
-<script>
-  document.getElementById('use-saved-btn')?.addEventListener('click', function() {
-    const address = @json($defaultAddress);
-    const textarea = document.getElementById('shipping_address');
-    if (textarea && address) {
-      textarea.value = address;
-    }
-  });
-  document.getElementById('edit-address-btn')?.addEventListener('click', function() {
-    document.getElementById('shipping-address-wrap').style.display = 'block';
-    document.getElementById('saved-address-box').style.display = 'none';
-    document.getElementById('shipping_address').focus();
-  });
-</script>
+  <script id="checkout-page-data" type="application/json">
+    @php $checkoutPageData = [
+      'defaultAddress' => $defaultAddress,
+    ]; @endphp @json($checkoutPageData)
+  </script>
+
+  @push('scripts')
+    @vite('resources/js/buyer/checkout.js')
+  @endpush
 @endsection
+

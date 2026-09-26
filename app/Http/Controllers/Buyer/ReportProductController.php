@@ -37,7 +37,7 @@ class ReportProductController extends Controller
             'status' => 'open',
         ]);
 
-        $admins = User::where('role', 'admin')->get();
+        $admins = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
         foreach ($admins as $admin) {
             Notification::create([
                 'user_id' => $admin->id,

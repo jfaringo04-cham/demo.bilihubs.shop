@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Logistic;
 use App\Mail\RegistrationDecision;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 use App\Models\Notification;
@@ -35,10 +37,11 @@ class RegistrationController extends Controller
     public function index(Request $request)
     {
         $query = User::where('status', User::STATUS_PENDING)
-            ->whereIn('role', ['customer', 'seller', 'logistic_owner']);
+            ->whereHas('roles', fn ($q) => $q->whereIn('name', ['buyer', 'seller', 'logistics']));
 
         if ($request->filled('role')) {
-            $query->where('role', $request->role);
+            $requestedRole = match ($request->role) { 'customer' => 'buyer', 'logistic_owner', 'logistic' => 'logistics', default => $request->role };
+            $query->whereHas('roles', fn ($q) => $q->where('name', $requestedRole));
         }
 
         $applications = $query->latest()->paginate(15);
@@ -48,6 +51,11 @@ class RegistrationController extends Controller
 
     public function show(User $user)
     {
+        if ($user->isRider()) {
+            return redirect()->route('admin.registrations.index')
+                ->with('error', 'Rider applications are reviewed by the logistics company.');
+        }
+
         if (!$user->isPending()) {
             return redirect()->route('admin.registrations.index')
                 ->with('error', 'This application is no longer pending.');
@@ -58,7 +66,7 @@ class RegistrationController extends Controller
 
     public function approve(Request $request, User $user)
     {
-        if ($user->role === 'rider') {
+        if ($user->isRider()) {
             return redirect()->route('admin.registrations.index')
                 ->with('error', 'Rider applications must be approved by the logistics company.');
         }
@@ -67,16 +75,33 @@ class RegistrationController extends Controller
             return back()->with('error', 'This application has already been processed.');
         }
 
-        $user->update([
-            'status' => User::STATUS_ACTIVE,
-            'approved_at' => now(),
-            'rejection_reason' => null,
-        ]);
+        $roleName = $user->roles()->value('name');
+
+        if (!in_array($roleName, ['buyer', 'seller', 'logistics'], true)) {
+            return back()->with('error', 'This role cannot be approved from the registrations page.');
+        }
+
+        DB::transaction(function () use ($user, $roleName) {
+            $user->update([
+                'status' => User::STATUS_ACTIVE,
+                'approved_at' => now(),
+                'rejection_reason' => null,
+            ]);
+
+            if ($roleName === 'logistics') {
+                Logistic::where('owner_user_id', $user->id)
+                    ->update([
+                        'status' => 'active',
+                        'approved_at' => now(),
+                        'rejection_reason' => null,
+                    ]);
+            }
+        });
 
         $this->createNotification(
             $user->id,
             'Registration Approved',
-            'Your ' . ucfirst($user->role) . ' account application has been approved. You can now log in.',
+            'Your ' . ucfirst($roleName ?? 'user') . ' account application has been approved. You can now log in.',
             'account',
             route('login')
         );
@@ -84,12 +109,12 @@ class RegistrationController extends Controller
         $this->notifyByEmail($user, 'approved');
 
         return redirect()->route('admin.registrations.index')
-            ->with('success', ucfirst($user->role) . ' application approved and notified via email.');
+            ->with('success', ucfirst($roleName ?? 'user') . ' application approved and notified via email.');
     }
 
     public function reject(Request $request, User $user)
     {
-        if ($user->role === 'rider') {
+        if ($user->isRider()) {
             return redirect()->route('admin.registrations.index')
                 ->with('error', 'Rider applications must be rejected by the logistics company.');
         }
@@ -102,21 +127,39 @@ class RegistrationController extends Controller
             'rejection_reason' => ['required', 'string', 'max:1000'],
         ]);
 
-        $user->update([
-            'status' => User::STATUS_REJECTED,
-            'rejection_reason' => $request->rejection_reason,
-        ]);
+        $roleName = $user->roles()->value('name');
+
+        if (!in_array($roleName, ['buyer', 'seller', 'logistics'], true)) {
+            return back()->with('error', 'This role cannot be rejected from the registrations page.');
+        }
+
+        DB::transaction(function () use ($user, $roleName, $request) {
+            $user->update([
+                'status' => User::STATUS_REJECTED,
+                'rejection_reason' => $request->rejection_reason,
+                'approved_at' => null,
+            ]);
+
+            if ($roleName === 'logistics') {
+                Logistic::where('owner_user_id', $user->id)
+                    ->update([
+                        'status' => 'rejected',
+                        'rejection_reason' => $request->rejection_reason,
+                        'approved_at' => null,
+                    ]);
+            }
+        });
 
         $this->createNotification(
             $user->id,
             'Registration Declined',
-            'Your ' . ucfirst($user->role) . ' account application was declined. Reason: ' . $request->rejection_reason,
+            'Your ' . ucfirst($roleName ?? 'user') . ' account application was declined. Reason: ' . $request->rejection_reason,
             'account'
         );
 
         $this->notifyByEmail($user, 'rejected', $request->rejection_reason);
 
         return redirect()->route('admin.registrations.index')
-            ->with('success', ucfirst($user->role) . ' application rejected and notified via email.');
+            ->with('success', ucfirst($roleName ?? 'user') . ' application rejected and notified via email.');
     }
 }

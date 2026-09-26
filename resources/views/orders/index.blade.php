@@ -38,7 +38,7 @@
                   <div class="progress-bar" role="progressbar" style="width: {{ $progress }}%; background: #0ea5e9; border-radius: 3px;"></div>
                 </div>
               </td>
-              <td>&#8369;{{ number_format($order->total, 2) }}</td>
+              <td>&#8369;{{ number_format(($order->total_minor / 100), 2) }}</td>
               <td><a href="{{ route('orders.show', $order) }}" class="btn btn-sm btn-outline-primary">View</a></td>
             </tr>
           @endforeach
@@ -57,5 +57,6 @@
   @endif
 </div>
 @endsection
+
 
 

@@ -62,7 +62,9 @@
         <div class="col-md-4">
           <div class="card border-0 shadow-sm text-center">
             <div class="card-body">
-              <h3 class="text-primary">{{ $logistic->riders->count() }}</h3>
+              <h3 class="text-primary">
+    {{ $pendingRiders->count() + $approvedRiders->count() + $rejectedRiders->count() }}
+</h3>
               <small class="text-muted">Total Riders</small>
             </div>
           </div>
@@ -88,6 +90,12 @@
   </div>
 </div>
 
+@php
+    $allRiders = $pendingRiders
+        ->concat($approvedRiders)
+        ->concat($rejectedRiders);
+@endphp
+
 <div class="table-container">
   <h5 class="mb-3">Riders</h5>
   <div class="table-responsive">
@@ -104,7 +112,7 @@
         </tr>
       </thead>
       <tbody>
-        @forelse($logistic->riders as $rider)
+        @forelse($allRiders as $rider)
           <tr>
             <td>{{ $rider->name }}</td>
             <td>{{ $rider->email }}</td>
@@ -121,13 +129,7 @@
               @endif
             </td>
             <td>
-              @if($rider->logistic_status == 'pending')
-                <form method="POST" action="{{ route('admin.logistics.riders.approve', $rider) }}" class="d-inline">
-                  @csrf
-                  <button type="submit" class="btn btn-sm btn-bili-hub">Approve</button>
-                </form>
-                <button type="button" class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#rejectRiderModal{{ $rider->id }}">Reject</button>
-              @endif
+              <span class="text-muted small">Rider approval is handled by the logistics company.</span>
             </td>
           </tr>
         @empty
@@ -165,29 +167,11 @@
 
 @foreach($logistic->riders as $rider)
   @if($rider->logistic_status == 'pending')
-    <div class="modal fade" id="rejectRiderModal{{ $rider->id }}" tabindex="-1">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <form method="POST" action="{{ route('admin.logistics.riders.reject', $rider) }}">
-            @csrf
-            <div class="modal-header">
-              <h5 class="modal-title">Reject Rider</h5>
-              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-              <div class="mb-3">
-                <label class="form-label">Rejection Reason</label>
-                <textarea name="rejection_reason" class="form-control" rows="3" required></textarea>
-              </div>
-            </div>
-            <div class="modal-footer">
-              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-              <button type="submit" class="btn btn-danger">Reject</button>
-            </div>
-          </form>
-        </div>
-      </div>
+    <div class="alert alert-info mt-3">
+      <i class="bi bi-info-circle"></i>
+      Pending riders for <strong>{{ $logistic->company_name }}</strong> must be approved or rejected by the logistics company.
     </div>
+    @break
   @endif
 @endforeach
 @endsection

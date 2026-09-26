@@ -61,7 +61,7 @@
           <tr>
             <td>{{ $order->order_number }}</td>
             <td>{{ $order->user->name ?? 'N/A' }}</td>
-            <td class="text-success fw-bold">&#8369;{{ number_format($order->amount_collected, 2) }}</td>
+            <td class="text-success fw-bold">&#8369;{{ number_format(($order->amount_collected_minor / 100), 2) }}</td>
             <td>{{ $order->collected_at->format('M d, Y H:i') }}</td>
           </tr>
         @empty
@@ -72,5 +72,6 @@
   </div>
 </div>
 @endsection
+
 
 

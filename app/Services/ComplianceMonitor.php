@@ -52,14 +52,12 @@ class ComplianceMonitor
         'blood', 'gore', 'wound', 'corpse', 'dead body', 'murder', 'kill',
         'assault', 'rape', 'torture', 'beheading', 'fight', 'war',
         'soldier', 'terrorist', 'terror', 'isis', 'al-qaeda',
-        'baril', 'sable', 'pistola', 'sandata', 'armadong',
     ];
 
     public const DRUGS_KEYWORDS = [
         'drug', 'cocaine', 'heroin', 'meth', 'methamphetamine', 'fentanyl',
         'ecstasy', 'mdma', 'lsd', 'ketamine', 'marijuana', 'weed', 'cannabis',
         'thc', 'cbd', 'pill', 'substance', 'narcotic', 'dealer',
-        'shabu', 'bato', 'tiktok',
     ];
 
     public const BRAND_COUNTERFEIT_KEYWORDS = [
@@ -269,13 +267,13 @@ class ComplianceMonitor
                 $ratio = $width / $height;
                 if ($ratio > 5 || $ratio < 0.2) {
                     $findings[] = [
-                        'reason' => "image has unusual aspect ratio ({$width}x{$height}) — may be cropped banned content",
+                        'reason' => "image has unusual aspect ratio ({$width}x{$height}) â€” may be cropped banned content",
                         'severity' => 'medium',
                     ];
                 }
                 if ($width < 50 || $height < 50) {
                     $findings[] = [
-                        'reason' => "image is too small ({$width}x{$height}) — likely a placeholder or icon, not a real product photo",
+                        'reason' => "image is too small ({$width}x{$height}) â€” likely a placeholder or icon, not a real product photo",
                         'severity' => 'low',
                     ];
                 }
@@ -294,7 +292,7 @@ class ComplianceMonitor
         }
         if ($size > 8 * 1024 * 1024) {
             $findings[] = [
-                'reason' => 'image file is unusually large (>8MB) — possible hidden data or non-image payload',
+                'reason' => 'image file is unusually large (>8MB) â€” possible hidden data or non-image payload',
                 'severity' => 'medium',
             ];
         }
@@ -362,14 +360,14 @@ class ComplianceMonitor
 
             if ($redPct > 0.30) {
                 $findings[] = [
-                    'reason' => sprintf('image has high red-dominance (%.0f%%) — possible blood/violence content', $redPct * 100),
+                    'reason' => sprintf('image has high red-dominance (%.0f%%) â€” possible blood/violence content', $redPct * 100),
                     'severity' => 'high',
                 ];
             }
 
             if ($darkPct > 0.70) {
                 $findings[] = [
-                    'reason' => sprintf('image is very dark (%.0f%% near-black pixels) — possible hidden content', $darkPct * 100),
+                    'reason' => sprintf('image is very dark (%.0f%% near-black pixels) â€” possible hidden content', $darkPct * 100),
                     'severity' => 'medium',
                 ];
             }
@@ -552,84 +550,11 @@ class ComplianceMonitor
             $triggers[] = $imageTrigger;
         }
 
-        $textTrigger = self::checkProductText($product);
-        if ($textTrigger) {
-            $triggers[] = $textTrigger;
-        }
-
-        $categoryTrigger = self::checkRestrictedCategory($product);
-        if ($categoryTrigger) {
-            $triggers[] = $categoryTrigger;
-        }
-
         if (!empty($triggers)) {
             self::notifyAdmins($product, $triggers);
         }
 
         return $triggers;
-    }
-
-    public static function checkProductText(Product $product): ?array
-    {
-        $text = strtolower($product->name . ' ' . ($product->description ?? ''));
-        $matched = [];
-        $matchedSet = [];
-
-        $keywordGroups = [
-            'violence/weapons' => self::VIOLENCE_KEYWORDS,
-            'drugs/illegal substances' => self::DRUGS_KEYWORDS,
-            'banned items' => self::BANNED_KEYWORDS,
-            'nudity/sexual content' => self::NUDITY_KEYWORDS,
-        ];
-
-        foreach ($keywordGroups as $label => $keywords) {
-            foreach ($keywords as $keyword) {
-                if (preg_match('/\b' . preg_quote($keyword, '/') . '\b/i', $text)) {
-                    if (!in_array($keyword, $matchedSet, true)) {
-                        $matchedSet[] = $keyword;
-                        $matched[] = "{$label} ('{$keyword}')";
-                    }
-                }
-            }
-        }
-
-        if (!empty($matched)) {
-            return [
-                'bucket' => 'automated_bot',
-                'trigger' => 'restricted_product_text',
-                'message' => 'Product name/description contains restricted keywords (' . implode(', ', array_slice($matched, 0, 5)) . ').',
-                'severity' => 'critical',
-                'auto_flag' => true,
-                'auto_suspend' => true,
-                'reasons' => array_values(array_unique($matched)),
-            ];
-        }
-
-        return null;
-    }
-
-    public static function checkRestrictedCategory(Product $product): ?array
-    {
-        $category = $product->category;
-        if (!$category) {
-            return null;
-        }
-
-        $categoryName = strtolower($category->name);
-
-        if (in_array($categoryName, self::BANNED_CATEGORIES, true)) {
-            return [
-                'bucket' => 'automated_bot',
-                'trigger' => 'banned_category',
-                'message' => "Product is in a banned category ('{$category->name}') and cannot be listed on the platform.",
-                'severity' => 'critical',
-                'auto_flag' => true,
-                'auto_suspend' => true,
-                'reasons' => ["product is in banned category '{$category->name}'"],
-            ];
-        }
-
-        return null;
     }
 
     public static function checkUserReports(Product $product): ?array
@@ -794,20 +719,25 @@ class ComplianceMonitor
             return null;
         }
 
-        $oldPrice = (float) $previous->price;
-        $newPrice = (float) $product->price;
+        // Integer centavos are the only source of truth for price comparison.
+        $oldPriceMinor = (int) $previous->price_minor;
+        $newPriceMinor = (int) $product->price_minor;
 
-        if ($oldPrice <= 0 || $newPrice <= 0) {
+        if ($oldPriceMinor <= 0 || $newPriceMinor <= 0) {
             return null;
         }
 
-        $dropPercent = (($oldPrice - $newPrice) / $oldPrice) * 100;
+        $dropPercent = (($oldPriceMinor - $newPriceMinor) / $oldPriceMinor) * 100;
 
-        if ($dropPercent >= self::PRICE_DROP_PERCENT_THRESHOLD && $newPrice < 100) {
+        // â‚±100.00 = 10,000 centavos.
+        if ($dropPercent >= self::PRICE_DROP_PERCENT_THRESHOLD && $newPriceMinor < 10000) {
+            $oldPrice = $oldPriceMinor / 100;
+            $newPrice = $newPriceMinor / 100;
+
             return [
                 'bucket' => 'automated_bot',
                 'trigger' => 'price_spam',
-                'message' => "Possible price spam: price dropped from ₱" . number_format($oldPrice, 2) . " to ₱" . number_format($newPrice, 2) . " (" . round($dropPercent, 1) . "% decrease).",
+                'message' => "Possible price spam: price dropped from â‚±" . number_format($oldPrice, 2) . " to â‚±" . number_format($newPrice, 2) . " (" . round($dropPercent, 1) . "% decrease).",
                 'severity' => 'high',
                 'auto_flag' => true,
             ];
@@ -860,10 +790,10 @@ class ComplianceMonitor
         $criticalImage = collect($triggers)->firstWhere('trigger', 'image_content_violation')
             && collect($triggers)->firstWhere('trigger', 'image_content_violation')['severity'] === 'critical';
 
-        $admins = User::where('role', 'admin')->get();
+        $admins = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
 
         $summary = collect($triggers)->map(function ($t) {
-            return '• [' . strtoupper($t['severity']) . '] ' . $t['message'];
+            return 'â€¢ [' . strtoupper($t['severity']) . '] ' . $t['message'];
         })->implode("\n");
 
         $title = 'Automated Compliance Alert: ' . $product->name;
@@ -873,7 +803,7 @@ class ComplianceMonitor
             $flagReason = 'Automated compliance scan flagged this product. Triggers: ' . collect($triggers)->pluck('trigger')->implode(', ');
             $adminNotes = $summary;
             if ($imageTrigger && !empty($imageTrigger['reasons'])) {
-                $adminNotes .= "\n\nImage scan findings:\n• " . implode("\n• ", $imageTrigger['reasons']);
+                $adminNotes .= "\n\nImage scan findings:\nâ€¢ " . implode("\nâ€¢ ", $imageTrigger['reasons']);
             }
 
             $product->update([
@@ -883,10 +813,16 @@ class ComplianceMonitor
                 'flagged_at' => now(),
             ]);
 
-            if ($autoSuspend && $product->seller) {
-                $product->seller->update(['status' => User::STATUS_SUSPENDED]);
+            $sellerUser = $product->sellerUser;
+
+            if ($autoSuspend && $sellerUser) {
+                $sellerUser->update([
+                    'status' => User::STATUS_SUSPENDED,
+                    'suspended_at' => now(),
+                ]);
+
                 Notification::create([
-                    'user_id' => $product->seller->id,
+                    'user_id' => $sellerUser->id,
                     'title' => 'CRITICAL: Account Auto-Suspended',
                     'message' => "Your seller account has been automatically suspended and the product \"{$product->name}\" has been hidden from buyers because the image scan detected critical violations (nudity, violence, drugs, CSAM, or other illegal content). Please contact admin support immediately.",
                     'type' => 'account',
@@ -898,9 +834,9 @@ class ComplianceMonitor
             $imageTrigger = collect($triggers)->firstWhere('trigger', 'image_content_violation');
             $msg = "Product \"{$product->name}\" triggered " . count($triggers) . " compliance check(s):\n\n" . $summary;
             if ($imageTrigger && !empty($imageTrigger['reasons'])) {
-                $msg .= "\n\nImage scan findings:\n• " . implode("\n• ", $imageTrigger['reasons']);
+                $msg .= "\n\nImage scan findings:\nâ€¢ " . implode("\nâ€¢ ", $imageTrigger['reasons']);
             }
-            $msg .= "\n\n" . ($autoSuspend ? '🚨 SELLER AUTO-SUSPENDED (critical image violation).' : ($autoFlag ? '⚠ Product has been auto-flagged for review.' : ''));
+            $msg .= "\n\n" . ($autoSuspend ? 'ðŸš¨ SELLER AUTO-SUSPENDED (critical image violation).' : ($autoFlag ? 'âš  Product has been auto-flagged for review.' : ''));
 
             Notification::create([
                 'user_id' => $admin->id,
@@ -921,10 +857,17 @@ class ComplianceMonitor
             ->orderBy('changed_at', 'desc')
             ->first();
 
-        if (!$last || (float) $last->price !== (float) $product->price) {
+        $currentPriceMinor = (int) $product->price_minor;
+
+        $lastPriceMinor = $last
+            ? (int) $last->price_minor
+            : null;
+
+        if (!$last || $lastPriceMinor !== $currentPriceMinor) {
             DB::table('product_price_history')->insert([
                 'product_id' => $product->id,
-                'price' => $product->price,
+                'price_minor' => $currentPriceMinor,
+
                 'changed_at' => now(),
                 'created_at' => now(),
                 'updated_at' => now(),

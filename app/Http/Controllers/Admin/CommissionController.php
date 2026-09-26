@@ -23,20 +23,37 @@ class CommissionController extends Controller
                 if (!$item->product) {
                     continue;
                 }
+
                 $sellerId = $item->product->user_id;
+
                 if (!$sellerId) {
                     continue;
                 }
-                $bySeller[$sellerId] = ($bySeller[$sellerId] ?? 0) + (float) $item->subtotal;
+
+                // Integer centavos are the source of truth.
+                $itemSubtotalMinor = (int) $item->subtotal_minor;
+
+                $bySeller[$sellerId] = ($bySeller[$sellerId] ?? 0) + $itemSubtotalMinor;
             }
 
-            foreach ($bySeller as $sellerId => $sellerTotal) {
+            foreach ($bySeller as $sellerId => $sellerTotalMinor) {
+                $commissionAmountMinor = (int) round(
+                    $sellerTotalMinor * ($this->defaultRate / 100)
+                );
+
                 Commission::firstOrCreate(
-                    ['order_id' => $order->id, 'seller_id' => $sellerId],
                     [
-                        'order_total' => $sellerTotal,
+                        'order_id' => $order->id,
+                        'seller_id' => $sellerId,
+                    ],
+                    [
+                        // Legacy peso fields kept temporarily for UI compatibility.
+                        'order_total_minor' => $sellerTotalMinor,
+
+                        // Percentage, not money.
                         'rate' => $this->defaultRate,
-                        'amount' => $sellerTotal * ($this->defaultRate / 100),
+                        'amount_minor' => $commissionAmountMinor,
+
                         'status' => 'pending',
                     ]
                 );
@@ -60,14 +77,19 @@ class CommissionController extends Controller
 
         $commissions = $query->latest()->paginate(20);
 
-        $totalEarned = Commission::sum('amount');
-        $totalPending = Commission::where('status', 'pending')->sum('amount');
-        $totalPaid = Commission::where('status', 'paid')->sum('amount');
+        // Sum integer centavos, then convert to pesos only for display.
+        $totalEarned = Commission::sum('amount_minor') / 100;
+        $totalPending = Commission::where('status', 'pending')->sum('amount_minor') / 100;
+        $totalPaid = Commission::where('status', 'paid')->sum('amount_minor') / 100;
 
-        $sellers = User::where('role', 'seller')->get();
+        $sellers = User::whereHas('roles', fn ($q) => $q->where('name', 'seller'))->get();
 
         return view('admin.commissions', compact(
-            'commissions', 'sellers', 'totalEarned', 'totalPending', 'totalPaid'
+            'commissions',
+            'sellers',
+            'totalEarned',
+            'totalPending',
+            'totalPaid'
         ));
     }
 
@@ -81,3 +103,5 @@ class CommissionController extends Controller
         return back()->with('success', 'Commission marked as paid.');
     }
 }
+
+

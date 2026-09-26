@@ -13,7 +13,9 @@
         <img src="{{ $product->image ? asset('storage/' . $product->image) : 'https://via.placeholder.com/80x80?text=No+Image' }}" class="rounded me-3" style="width: 80px; height: 80px; object-fit: cover;" alt="{{ $product->name }}">
         <div>
           <h5 class="mb-1">{{ $product->name }}</h5>
-          <small class="text-muted">Sold by: {{ $product->seller->business_name ?? $product->seller->name ?? 'Unknown' }}</small>
+          <small class="text-muted">
+            Sold by: {{ $product->seller->name ?? $product->sellerUser->business_name ?? $product->sellerUser->name ?? 'Unknown' }}
+          </small>
         </div>
       </div>
 

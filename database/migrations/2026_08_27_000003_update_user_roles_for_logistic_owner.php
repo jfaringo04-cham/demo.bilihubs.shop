@@ -21,7 +21,7 @@ return new class extends Migration
         DB::statement("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;");
 
         // Add CHECK constraint with all valid roles including logistic_owner
-        DB::statement("ALTER TABLE users ADD CONSTRAINT role_check 
+        DB::statement("ALTER TABLE users ADD CONSTRAINT role_check
             CHECK (role IN ('customer','seller','admin','rider','logistic_owner','guest'));");
     }
 

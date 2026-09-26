@@ -84,9 +84,9 @@
           <tr>
             <td>{{ $c->order->order_number ?? 'N/A' }}</td>
             <td>{{ $c->seller->name ?? 'N/A' }}</td>
-            <td>&#8369;{{ number_format($c->order_total, 2) }}</td>
+            <td>&#8369;{{ number_format($c->order_total_minor / 100, 2) }}</td>
             <td>{{ $c->rate }}%</td>
-            <td class="fw-bold text-danger">&#8369;{{ number_format($c->amount, 2) }}</td>
+            <td class="fw-bold text-danger">&#8369;{{ number_format($c->amount_minor / 100, 2) }}</td>
             <td><span class="badge bg-{{ $c->status == 'paid' ? 'success' : 'warning' }} text-capitalize">{{ $c->status }}</span></td>
           </tr>
         @empty

@@ -145,18 +145,7 @@
 @endsection
 
 @push('scripts')
-<script>
-function openScanModal(orderId, expectedToken, orderNumber) {
-  const form = document.getElementById('scanForm');
-  form.action = '/rider/shipments/' + orderId + '/scan';
-  document.getElementById('scanOrderNumber').value = orderNumber;
-  document.getElementById('expectedToken').textContent = expectedToken;
-  document.getElementById('qr_token').value = '';
-  const modal = new bootstrap.Modal(document.getElementById('scanModal'));
-  modal.show();
-  setTimeout(() => document.getElementById('qr_token').focus(), 500);
-}
-</script>
+  @vite('resources/js/rider/pickups.js')
 @endpush
 
 
