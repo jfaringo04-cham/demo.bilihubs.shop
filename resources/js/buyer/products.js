@@ -118,16 +118,50 @@ const initProducts = () => {
             }, 150);
         }
 
+        
         const displayPrice = document.getElementById('display-price');
-        if (displayPrice) {
-            const currentPrice = parseFloat(price);
-            const previousPrice = parseFloat(originalPrice);
-            if (previousPrice && currentPrice < previousPrice) {
-                displayPrice.innerHTML = `<span class="text-danger fw-bold">&#8369;${currentPrice.toFixed(2)}</span> <small class="text-muted text-decoration-line-through">&#8369;${previousPrice.toFixed(2)}</small> <span class="badge bg-danger rounded-pill small">${Math.round((1 - currentPrice / previousPrice) * 100)}%</span>`;
-            } else {
-                displayPrice.innerHTML = `<span class="text-danger fw-bold">&#8369;${currentPrice.toFixed(2)}</span>`;
-            }
+const originalPriceElement = document.getElementById('original-price');
+const discountBadge = document.getElementById('discount-badge');
+
+const currentPrice = parseFloat(price);
+const previousPrice = parseFloat(originalPrice);
+
+if (displayPrice && Number.isFinite(currentPrice)) {
+    displayPrice.textContent = `₱${currentPrice.toFixed(2)}`;
+
+    const hasDiscount =
+        Number.isFinite(previousPrice) &&
+        previousPrice > 0 &&
+        currentPrice < previousPrice;
+
+    if (hasDiscount) {
+        displayPrice.classList.add('text-danger');
+
+        if (originalPriceElement) {
+            originalPriceElement.textContent = `₱${previousPrice.toFixed(2)}`;
+            originalPriceElement.style.display = '';
         }
+
+        if (discountBadge) {
+            const discountPercent = Math.round(
+                (1 - currentPrice / previousPrice) * 100
+            );
+
+            discountBadge.textContent = `-${discountPercent}%`;
+            discountBadge.style.display = '';
+        }
+    } else {
+        displayPrice.classList.remove('text-danger');
+
+        if (originalPriceElement) {
+            originalPriceElement.style.display = 'none';
+        }
+
+        if (discountBadge) {
+            discountBadge.style.display = 'none';
+        }
+    }
+}
 
         updateStockDisplay(stock);
         const info = document.getElementById('selected-variant-info');

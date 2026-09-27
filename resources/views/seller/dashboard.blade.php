@@ -62,71 +62,185 @@
 </div>
 
   <!-- Analytics Row -->
-  @if($totalRevenue > 0 || $totalOrders > 0)
-  <div class="analytics-grid w-100 mb-4">
+ <!-- Analytics Row -->
+@if($totalRevenue > 0 || $totalOrders > 0)
+
+<div class="analytics-grid w-100 mb-4">
+
+    <!-- Revenue Overview -->
     <div class="analytics-card h-100">
-      <div class="analytics-header d-flex justify-content-between align-items-center">
-        <h5 class="mb-0 fw-semibold" style="color: var(--color-text-dark);">Revenue Overview</h5>
-        <select class="form-select form-select-sm" id="revenuePeriod" style="width: auto;">
-          <option>Last 7 Days</option>
-          <option>Last 30 Days</option>
-          <option>This Month</option>
-          <option>This Year</option>
-        </select>
-      </div>
-      <div class="analytics-body">
-        <canvas id="revenueChart"></canvas>
-      </div>
-    </div>
-    <div class="analytics-card h-100">
-      <div class="analytics-header">
-        <h5 class="mb-0 fw-semibold" style="color: var(--color-text-dark);">Order Status</h5>
-      </div>
-      <div class="analytics-body">
-        <div class="d-flex align-items-center justify-content-center h-100">
-          <div class="text-center">
-            <canvas id="statusChart"></canvas>
-            <div class="mt-3">
-              <p class="fw-bold mb-2">{{ $totalOrders }} Orders</p>
-              <div class="d-flex flex-column gap-2 small">
-                @php
-                  $statusLabels = [
-                    'delivered' => 'Delivered',
-                    'processing' => 'Processing',
-                    'pending' => 'Pending',
-                    'shipped' => 'Shipped',
-                    'cancelled' => 'Cancelled',
-                  ];
-                  $statusCounts = $recentOrders->groupBy('status')->map->count();
-                @endphp
-                @foreach($statusLabels as $key => $label)
-                  @if(isset($statusCounts[$key]) && $statusCounts[$key] > 0)
-                    <div class="d-flex justify-content-between">
-                      <span>{{ $label }}</span>
-                      <span class="fw-semibold">{{ $statusCounts[$key] }}</span>
-                    </div>
-                  @endif
-                @endforeach
-              </div>
-            </div>
-          </div>
+        <div class="analytics-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0 fw-semibold" style="color: var(--color-text-dark);">
+                Revenue Overview
+            </h5>
+
+            <select
+                class="form-select form-select-sm"
+                id="revenuePeriod"
+                style="width: auto;"
+            >
+                <option>Last 7 Days</option>
+                <option>Last 30 Days</option>
+                <option>This Month</option>
+                <option>This Year</option>
+            </select>
         </div>
-      </div>
+
+        <div class="analytics-body">
+            <canvas id="revenueChart"></canvas>
+        </div>
     </div>
-  </div>
-  @else
-  <!-- Empty State for Analytics -->
-  <div class="card border-0 rounded-16 mb-4 w-100">
+
+    <!-- Order Status -->
+    <div class="analytics-card h-100">
+
+        <div class="analytics-header">
+            <h5 class="mb-0 fw-semibold" style="color: var(--color-text-dark);">
+                Order Status
+            </h5>
+        </div>
+
+        <div class="analytics-body">
+
+            <div class="d-flex align-items-center justify-content-center h-100">
+
+                <div class="text-center w-100">
+
+                    <canvas id="statusChart"></canvas>
+
+                    <div class="mt-2 px-4">
+
+                        <p class="fw-bold mb-2">{{ $totalOrders }} Orders</p>
+
+                        @php
+                            $statusLabels = [
+                                'placed' => [
+                                    'label' => 'Placed',
+                                    'color' => '#64748b',
+                                ],
+
+                                'confirmed' => [
+                                    'label' => 'Confirmed',
+                                    'color' => '#3b82f6',
+                                ],
+
+                                'preparing' => [
+                                    'label' => 'Preparing',
+                                    'color' => '#8b5cf6',
+                                ],
+
+                                'ready_for_pickup' => [
+                                    'label' => 'Ready for Pickup',
+                                    'color' => '#f59e0b',
+                                ],
+
+                                'delivered' => [
+                                    'label' => 'Delivered',
+                                    'color' => '#22c55e',
+                                ],
+
+                                'cancelled' => [
+                                    'label' => 'Cancelled',
+                                    'color' => '#ef4444',
+                                ],
+                            ];
+
+                            $statusCounts = $recentOrders
+                                ->groupBy('status')
+                                ->map
+                                ->count();
+                        @endphp
+
+                        <div class="d-flex flex-column gap-2 small">
+
+                            @foreach($statusLabels as $key => $status)
+
+                                @php
+                                    $count = $statusCounts->get($key, 0);
+                                @endphp
+
+                                @if($count > 0)
+
+                                    <div
+                                        class="d-flex align-items-center justify-content-between gap-4"
+                                    >
+
+                                        <div class="d-flex align-items-center gap-2">
+
+                                            <span
+                                                style="
+                                                    width: 10px;
+                                                    height: 10px;
+                                                    border-radius: 50%;
+                                                    background-color: {{ $status['color'] }};
+                                                    display: inline-block;
+                                                    flex-shrink: 0;
+                                                "
+                                            ></span>
+
+                                            <span>
+                                                {{ $status['label'] }}
+                                            </span>
+
+                                        </div>
+
+                                        <span class="fw-semibold">
+                                            {{ $count }}
+                                        </span>
+
+                                    </div>
+
+                                @endif
+
+                            @endforeach
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+@else
+
+<!-- Empty State for Analytics -->
+<div class="card border-0 rounded-16 mb-4 w-100">
+
     <div class="card-body text-center py-5">
-      <i class="bi bi-clipboard-data display-5 text-muted mb-3"></i>
-      <h4 class="fw-semibold mb-2" style="color: var(--color-text-dark);">No sales data yet</h4>
-      <p class="text-muted mb-3">Your revenue analytics will appear here once customers start placing orders.</p>
-      <a href="{{ route('seller.products.create') }}" class="btn btn-primary rounded-xl">
-        <i class="bi bi-plus-lg me-1"></i> Add Your First Product
-      </a>
+
+        <i class="bi bi-clipboard-data display-5 text-muted mb-3"></i>
+
+        <h4
+            class="fw-semibold mb-2"
+            style="color: var(--color-text-dark);"
+        >
+            No sales data yet
+        </h4>
+
+        <p class="text-muted mb-3">
+            Your revenue analytics will appear here once customers start placing orders.
+        </p>
+
+        <a
+            href="{{ route('seller.products.create') }}"
+            class="btn btn-primary rounded-xl"
+        >
+            <i class="bi bi-plus-lg me-1"></i>
+            Add Your First Product
+        </a>
+
     </div>
-  </div>
-  @endif
+
+</div>
+
+@endif
 
   <!-- Quick Actions & Inventory Alerts -->
   <div class="dashboard-grid w-100 mb-4">
@@ -219,7 +333,7 @@
                   </td>
                   <td>
                     <span class="badge bg-{{ $order->statusBadgeClass() }} small">
-                      {{ ucfirst(str_replace('_', ' ', $order->status)) }}
+                     {{ ucfirst(str_replace('_', ' ', $order->status)) }}
                     </span>
                   </td>
                   <td>₱{{ number_format(($order->total_minor / 100), 2) }}</td>
@@ -242,15 +356,14 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script type="application/json" id="seller-dashboard-data">@php $sellerDashboardData = [
   'statusCounts' => [
+    'placed' => $recentOrders->where('status', 'placed')->count(),
+    'confirmed' => $recentOrders->where('status', 'confirmed')->count(),
+    'preparing' => $recentOrders->where('status', 'preparing')->count(),
+    'ready_for_pickup' => $recentOrders->where('status', 'ready_for_pickup')->count(),
     'delivered' => $recentOrders->where('status', 'delivered')->count(),
-    'processing' => $recentOrders->where('status', 'processing')->count(),
-    'pending' => $recentOrders->where('status', 'pending')->count(),
-    'shipped' => $recentOrders->where('status', 'shipped')->count(),
     'cancelled' => $recentOrders->where('status', 'cancelled')->count(),
-  ],
-  'revenueData' => $recentOrders->groupBy(function ($order) {
-    return $order->ordered_at->format('M d');
-  })->map->sum('total')->sortKeys(),
+],
+'revenueData' => $revenueData,
 ]; @endphp @json($sellerDashboardData)</script>
 @vite('resources/js/seller/dashboard.js')
 @endpush

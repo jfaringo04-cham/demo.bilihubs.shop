@@ -30,6 +30,7 @@ class Order extends Model
         'ordered_at' => 'datetime',
         'shipped_at' => 'datetime',
         'delivered_at' => 'datetime',
+        'assigned_at' => 'datetime',
         'collected_at' => 'datetime',
         'picked_up_at' => 'datetime',
         'failed_at' => 'datetime',

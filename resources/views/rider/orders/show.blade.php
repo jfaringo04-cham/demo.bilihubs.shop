@@ -103,19 +103,21 @@
             <label for="delivery_status" class="form-label">Status</label>
             <select name="delivery_status" id="delivery_status" class="form-select" required>
               <option value="{{ $order->delivery_status }}" selected>{{ ucfirst(str_replace('_', ' ', $order->delivery_status)) }}</option>
-              @if($order->delivery_status == 'picked_up_from_sorting_center')
-                <option value="on_the_way">On the Way</option>
-                <option value="delivered">Delivered</option>
-                <option value="failed">Failed Attempt</option>
-              @elseif($order->delivery_status == 'on_the_way')
-                <option value="delivered">Delivered</option>
-                <option value="failed">Failed Attempt</option>
-              @elseif($order->delivery_status == 'assigned')
-                <option value="on_the_way">On the Way</option>
-                <option value="failed">Failed Attempt</option>
-              @elseif($order->delivery_status == 'failed')
-                <option value="on_the_way">Retry Delivery</option>
-              @endif
+              @if(in_array($order->delivery_status, [
+    'assigned_to_rider',
+    'ready_for_delivery_pickup',
+    'picked_up_from_sorting_center'
+]))
+    <option value="out_for_delivery">On the Way</option>
+    <option value="delivery_failed">Failed Attempt</option>
+
+@elseif($order->delivery_status == 'out_for_delivery')
+    <option value="delivered">Delivered</option>
+    <option value="delivery_failed">Failed Attempt</option>
+
+@elseif($order->delivery_status == 'delivery_failed')
+    <option value="out_for_delivery">Retry Delivery</option>
+@endif
             </select>
           </div>
           <div class="col-md-6 mb-3">

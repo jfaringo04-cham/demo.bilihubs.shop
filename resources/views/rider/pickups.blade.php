@@ -73,7 +73,7 @@
               </span>
             </td>
             <td>
-              @if($order->delivery_status == 'picked_up_from_sorting_center')
+              @if(in_array($order->delivery_status, ['at_sorting_center', 'ready_for_delivery_pickup']))
                 <form method="POST" action="{{ route('rider.pickups.pickup-from-sorting-center', $order) }}" class="d-inline">
                   @csrf
                   <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Confirm pickup from sorting center?')">
@@ -88,7 +88,7 @@
                     <button type="submit" class="btn btn-sm btn-warning mt-1">Deliver to Sorting Center</button>
                   </form>
                 @else
-                  <button type="button" class="btn btn-sm btn-primary" onclick="openScanModal({{ $order->id }}, '{{ $order->shipment->qr_token ?? '' }}', '{{ $order->order_number }}')">
+                  <button type="button" class="btn btn-sm btn-primary" onclick="openScanModal({{ $order->id }}, '{{ $order->sellerOrders->first()?->shipment?->qr_token ?? '' }}', '{{ $order->order_number }}')">
                     <i class="bi bi-qr-code-scan"></i> Scan QR
                   </button>
 

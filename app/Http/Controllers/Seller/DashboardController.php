@@ -33,47 +33,101 @@ class DashboardController extends Controller
         ]);
     }
     public function index()
-    {
-        $seller = Auth::user();
-        $totalProducts = $seller->products()->count();
-        $totalOrders = Order::whereHas('items.product', function ($query) use ($seller) {
-            $query->where('user_id', $seller->id);
-        })->count();
-        $shopId = $seller->seller?->id;
+{
+    $seller = Auth::user();
 
-        $totalRevenue = $shopId
-            ? SellerOrder::where('seller_id', $shopId)
-                ->whereHas('order', function ($query) {
-                    $query->where('status', 'delivered');
-                })
-                ->sum('total_minor') / 100
-            : 0;
+    $totalProducts = $seller->products()->count();
 
-        $recentOrders = Order::whereHas('items.product', function ($query) use ($seller) {
-            $query->where('user_id', $seller->id);
-        })->with(['user', 'items.product'])->latest()->take(5)->get();
+    $totalOrders = Order::whereHas('items.product', function ($query) use ($seller) {
+        $query->where('user_id', $seller->id);
+    })->count();
 
-        $totalCustomers = Order::whereHas('items.product', function ($query) use ($seller) {
-            $query->where('user_id', $seller->id);
-        })->where('status', '!=', 'cancelled')->distinct('user_id')->count('user_id');
+    $shopId = $seller->seller?->id;
 
-        $lowStockProducts = $seller->products()
-            ->where('stock', '>', 0)
-            ->whereRaw('stock < COALESCE(low_stock_threshold, 10)')
-            ->orderBy('stock')
-            ->limit(5)
-            ->get();
+    // Total revenue: delivered seller orders only
+    $totalRevenue = $shopId
+        ? SellerOrder::where('seller_id', $shopId)
+            ->whereHas('order', function ($query) {
+                $query->where('status', 'delivered');
+            })
+            ->sum('total_minor') / 100
+        : 0;
 
-        $reviewsCount = Review::whereHas('product', function ($query) use ($seller) {
-            $query->where('user_id', $seller->id);
-        })->count();
+    // Revenue graph: use the same source as Total Revenue
+   // Revenue graph: always show the last 7 calendar days
+$revenueData = collect();
 
-        return view('seller.dashboard', compact(
-            'totalProducts', 'totalOrders', 'totalRevenue', 'recentOrders',
-            'totalCustomers', 'lowStockProducts', 'reviewsCount'
-        ));
+for ($i = 6; $i >= 0; $i--) {
+    $date = now()->subDays($i);
+    $revenueData->put($date->format('M d'), 0);
+}
+
+if ($shopId) {
+    $deliveredSellerOrders = SellerOrder::where('seller_id', $shopId)
+        ->whereHas('order', function ($query) {
+            $query->where('status', 'delivered')
+                ->whereDate('ordered_at', '>=', now()->subDays(6)->startOfDay());
+        })
+        ->with('order')
+        ->get();
+
+    foreach ($deliveredSellerOrders as $sellerOrder) {
+        $date = $sellerOrder->order?->ordered_at
+            ?? $sellerOrder->order?->created_at;
+
+        if (!$date) {
+            continue;
+        }
+
+        $label = $date->format('M d');
+
+        if ($revenueData->has($label)) {
+            $revenueData[$label] += $sellerOrder->total_minor / 100;
+        }
     }
+}
 
+$revenueData = $revenueData->map(
+    fn ($amount) => round($amount, 2)
+);
+
+    $recentOrders = Order::whereHas('items.product', function ($query) use ($seller) {
+        $query->where('user_id', $seller->id);
+    })
+        ->with(['user', 'items.product'])
+        ->latest()
+        ->take(5)
+        ->get();
+
+    $totalCustomers = Order::whereHas('items.product', function ($query) use ($seller) {
+        $query->where('user_id', $seller->id);
+    })
+        ->where('status', '!=', 'cancelled')
+        ->distinct('user_id')
+        ->count('user_id');
+
+    $lowStockProducts = $seller->products()
+        ->where('stock', '>', 0)
+        ->whereRaw('stock < COALESCE(low_stock_threshold, 10)')
+        ->orderBy('stock')
+        ->limit(5)
+        ->get();
+
+    $reviewsCount = Review::whereHas('product', function ($query) use ($seller) {
+        $query->where('user_id', $seller->id);
+    })->count();
+
+    return view('seller.dashboard', compact(
+        'totalProducts',
+        'totalOrders',
+        'totalRevenue',
+        'revenueData',
+        'recentOrders',
+        'totalCustomers',
+        'lowStockProducts',
+        'reviewsCount'
+    ));
+}
     public function products(Request $request)
     {
         $seller = Auth::user();
@@ -122,8 +176,8 @@ class DashboardController extends Controller
             'low_stock_threshold' => 'nullable|integer|min:0',
             'attributes' => 'nullable|array',
             'status' => ['in:draft,published'],
-            'images' => 'required|array|min:1',
-            'images.*' => 'image|mimes:jpeg,png,jpg,gif|max:2048',
+            'images' => 'required|array|min:1|max:5',
+            'images.*' => 'image|mimes:jpeg,png,jpg,gif,webp|max:2048',
             'variations' => 'nullable|array',
             'variations.*.name' => 'nullable|string|max:255',
             'variations.*.color' => 'nullable|string|max:100',
@@ -729,21 +783,34 @@ class DashboardController extends Controller
     }
 
     public function showOrder(Order $order)
-    {
-        $seller = Auth::user();
+{
+    $seller = Auth::user();
 
-        $hasSellerProduct = $order->items()->whereHas('product', function ($query) use ($seller) {
+    // Security: siguraduhin na may product ang logged-in seller sa order na ito.
+    $hasSellerProduct = $order->items()
+        ->whereHas('product', function ($query) use ($seller) {
             $query->where('user_id', $seller->id);
-        })->exists();
+        })
+        ->exists();
 
-        if (!$hasSellerProduct) {
-            abort(403);
-        }
-
-        $order->load('user', 'items.product', 'items.variation', 'items.size', 'shipment.rider');
-
-        return view('seller.orders.show', compact('order'));
+    if (!$hasSellerProduct) {
+        abort(403);
     }
+
+    // Load order information.
+    // Shipment belongs to SellerOrder, not directly to Order.
+    $order->load([
+        'user',
+        'items.product',
+        'items.variation',
+        'items.size',
+        'sellerOrders.seller',
+        'sellerOrders.logistic',
+        'sellerOrders.shipment.rider',
+    ]);
+
+    return view('seller.orders.show', compact('order'));
+}
 
     public function updateOrderStatus(Request $request, Order $order)
     {
@@ -780,6 +847,7 @@ class DashboardController extends Controller
                         'logistic_id' => $hub->logistic_id,
                         'hub_id' => $hub->id,
                         'tracking_number' => $trackingNumber,
+                        'tracking_code' => $trackingNumber,
                         'status' => 'pending',
                         'pickup_address' => $this->sellerPickupAddress($sellerOrder, $seller),
                         'delivery_address' => $order->shipping_address,
@@ -938,18 +1006,60 @@ class DashboardController extends Controller
         })->exists();
 
         if (!$hasSellerProduct) {
-            abort(403);
-        }
+    abort(403);
+}
 
-        $order->items()->whereHas('product', function ($query) use ($seller) {
+if ($order->ready_for_pickup) {
+    $sellerOrder = $this->sellerOrderForAuthenticatedSeller($order, $seller);
+
+    if ($sellerOrder?->shipment) {
+        return back()->with(
+            'success',
+            'This order is already ready for pickup and already has a shipment.'
+        );
+    }
+}
+       if (!$order->ready_for_pickup) {
+    $order->items()
+        ->whereHas('product', function ($query) use ($seller) {
             $query->where('user_id', $seller->id);
-        })->with('product')->each(function ($item) {
-            if ($item->product) {
-                $item->product->update([
-                    'stock' => max(0, $item->product->stock - $item->quantity),
-                ]);
+        })
+        ->with(['product', 'variant'])
+        ->each(function ($item) {
+
+            if (!$item->product) {
+                return;
             }
+
+            // If the order item has a variant, deduct from that exact variant.
+            if ($item->variant) {
+                $item->variant->update([
+                    'stock' => max(
+                        0,
+                        $item->variant->stock - $item->quantity
+                    ),
+                ]);
+
+                // Product stock = total remaining stock of all variants.
+                $item->product->update([
+                    'stock' => (int) $item->product
+                        ->variations()
+                        ->sum('stock'),
+                ]);
+
+                return;
+            }
+
+            // Products without variants use the main product stock.
+            $item->product->update([
+                'stock' => max(
+                    0,
+                    $item->product->stock - $item->quantity
+                ),
+            ]);
         });
+}
+
 
         $order->update([
             'ready_for_pickup' => true,
@@ -978,6 +1088,7 @@ class DashboardController extends Controller
                     'hub_id' => $hub->id,
                     'rider_id' => $pickupRider ? $pickupRider->id : null,
                     'tracking_number' => $trackingNumber,
+                    'tracking_code' => $trackingNumber,
                     'status' => $pickupRider ? 'assigned' : 'pending',
                     'pickup_address' => $this->sellerPickupAddress($sellerOrder, $seller),
                     'delivery_address' => $order->shipping_address,

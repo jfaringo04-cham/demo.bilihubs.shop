@@ -15,6 +15,7 @@ class Shipment extends Model
         'rider_profile_id',
         'seller_order_id',
         'tracking_number',
+        'tracking_code',
         'qr_token',
         'status',
         'courier',

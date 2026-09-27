@@ -45,18 +45,39 @@
     <div class="col-lg-6">
       <h1 class="fw-bold text-slate-900">{{ $product->name }}</h1>
       
-      @if($product->hasActiveDiscount())
-        <div class="d-flex align-items-center gap-3 mt-3">
-          <span class="price text-danger fs-3 fw-bold" id="display-price">&#8369;{{ number_format(($product->effective_price_minor / 100), 2) }}</span>
-          <small class="text-muted text-decoration-line-through fs-5">&#8369;{{ number_format(($product->price_minor / 100), 2) }}</small>
-          <span class="badge bg-danger rounded-pill">-{{ rtrim(rtrim(number_format($product->discount_percent, 2), '0'), '.') }}%</span>
-        </div>
-        @if($product->discount_ends_at)
-          <small class="text-muted mt-2 d-block"><i class="bi bi-clock me-1"></i>Sale ends {{ $product->discount_ends_at->format('M d, Y g:i A') }}</small>
-        @endif
-      @else
-      <p class="price fs-3 mt-3" id="display-price">&#8369;{{ number_format(($product->price_minor / 100), 2) }}</p>
-      @endif
+      <div class="d-flex align-items-center flex-wrap gap-3 mt-3" id="product-price-wrapper">
+
+    <span
+        class="price fs-3 fw-bold {{ $product->hasActiveDiscount() ? 'text-danger' : '' }}"
+        id="display-price"
+    >
+        &#8369;{{ number_format(($product->effective_price_minor / 100), 2) }}
+    </span>
+
+    <small
+        class="text-muted text-decoration-line-through fs-5"
+        id="original-price"
+        style="{{ $product->hasActiveDiscount() ? '' : 'display: none;' }}"
+    >
+        &#8369;{{ number_format(($product->price_minor / 100), 2) }}
+    </small>
+
+    <span
+        class="badge bg-danger rounded-pill"
+        id="discount-badge"
+        style="{{ $product->hasActiveDiscount() ? '' : 'display: none;' }}"
+    >
+        -{{ rtrim(rtrim(number_format($product->discount_percent ?? 0, 2), '0'), '.') }}%
+    </span>
+
+</div>
+
+@if($product->hasActiveDiscount() && $product->discount_ends_at)
+    <small class="text-muted mt-2 d-block">
+        <i class="bi bi-clock me-1"></i>
+        Sale ends {{ $product->discount_ends_at->format('M d, Y g:i A') }}
+    </small>
+@endif
 
       <div class="mt-4">
         <span class="text-muted d-block mb-1">Category: <span class="text-slate-800">{{ $product->category->name ?? 'Uncategorized' }}</span></span>

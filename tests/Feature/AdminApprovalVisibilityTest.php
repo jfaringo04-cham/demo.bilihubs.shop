@@ -34,7 +34,7 @@ class AdminApprovalVisibilityTest extends TestCase
     {
         Schema::disableForeignKeyConstraints();
 
-        foreach (['notifications', 'products', 'orders', 'role_user', 'roles', 'logistics', 'users'] as $table) {
+        foreach (['notifications', 'products', 'orders', 'sellers', 'role_user', 'roles', 'logistics', 'users'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -117,6 +117,21 @@ class AdminApprovalVisibilityTest extends TestCase
             $table->string('status')->default('pending');
             $table->text('rejection_reason')->nullable();
             $table->timestamp('approved_at')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('sellers', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->string('name');
+            $table->string('slug')->unique();
+            $table->text('description')->nullable();
+            $table->string('logo_path')->nullable();
+            $table->string('banner_path')->nullable();
+            $table->string('status')->default('pending');
+            $table->text('rejection_reason')->nullable();
+            $table->unsignedInteger('commission_bps')->default(0);
+            $table->unsignedBigInteger('pickup_address_id')->nullable();
             $table->timestamps();
         });
 

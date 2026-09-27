@@ -15,15 +15,44 @@
         </div>
         <div class="card-body">
           <p><strong>Order Date:</strong> {{ $order->ordered_at->format('M d, Y H:i') }}</p>
-          <p><strong>Shipping Address:</strong> {{ $order->shipping_address }}</p>
+          @php
+    $shippingAddress = is_string($order->shipping_address)
+        ? json_decode($order->shipping_address, true)
+        : $order->shipping_address;
+@endphp
+
+@if(is_array($shippingAddress))
+    <p class="mb-1">
+        <strong>Recipient:</strong>
+        {{ $shippingAddress['recipient'] ?? 'N/A' }}
+    </p>
+
+    <p class="mb-1">
+        <strong>Phone:</strong>
+        {{ $shippingAddress['phone'] ?? 'N/A' }}
+    </p>
+
+    <p>
+        <strong>Shipping Address:</strong>
+        {{ $shippingAddress['address'] ?? 'N/A' }}
+    </p>
+@else
+    <p>
+        <strong>Shipping Address:</strong>
+        {{ $order->shipping_address ?: 'N/A' }}
+    </p>
+@endif
           <p><strong>Payment Method:</strong> <span class="badge bg-{{ $order->payment_method == 'cod' ? 'warning' : 'success' }}">{{ strtoupper($order->payment_method) }}</span></p>
           <p><strong>Payment Status:</strong> <span class="badge bg-{{ $order->payment_status == 'paid' ? 'success' : 'secondary' }}">{{ ucfirst($order->payment_status) }}</span></p>
           @if($order->delivery_status)
             <p><strong>Delivery Status:</strong> <span class="badge bg-info">{{ ucfirst(str_replace('_', ' ', $order->delivery_status)) }}</span></p>
           @endif
-          @if($order->ready_for_pickup)
-            <p><strong>Pickup Status:</strong> <span class="badge bg-success">Ready for Pickup</span></p>
-          @endif
+          @if($order->ready_for_pickup && !in_array($order->delivery_status, ['delivered', 'delivery_failed']))
+    <p>
+        <strong>Pickup Status:</strong>
+        <span class="badge bg-success">Ready for Pickup</span>
+    </p>
+@endif
           @if($order->notes)
             <p><strong>Notes:</strong> {{ $order->notes }}</p>
           @endif

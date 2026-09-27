@@ -19,12 +19,17 @@
     </li>
     <li class="nav-item" role="presentation">
       <button class="nav-link" id="sorted-tab" data-bs-toggle="tab" data-bs-target="#sorted" type="button" role="tab">
-        <i class="bi bi-sort-down"></i> Sort & Stage <span class="badge bg-primary">{{ $receivedShipments->count() }}</span>
-      </button>
+    <i class="bi bi-sort-down"></i> Sort & Stage
+    <span class="badge bg-primary">
+        {{ $sortedShipments->whereIn('sorting_status', ['scanned', 'sorted'])->count() }}
+    </span>
+</button>
     </li>
     <li class="nav-item" role="presentation">
       <button class="nav-link" id="staged-tab" data-bs-toggle="tab" data-bs-target="#staged" type="button" role="tab">
-        <i class="bi bi-collection"></i> Staged <span class="badge bg-success">{{ $sortedShipments->total() }}</span>
+        <i class="bi bi-collection"></i> Staged <span class="badge bg-success">
+    {{ $sortedShipments->where('sorting_status', 'staged')->count() }}
+</span>
       </button>
     </li>
     <li class="nav-item" role="presentation">
@@ -270,7 +275,26 @@
                           </div>
                         </div>
                       </div>
-                    @elseif($shipment->sorting_status == 'sorted')
+                   @elseif($shipment->sorting_status == 'sorted')
+
+    <form action="{{ route('logistic.shipments.stage', $shipment) }}"
+          method="POST"
+          class="d-inline">
+        @csrf
+
+        <button type="submit"
+                class="btn btn-sm btn-success"
+                onclick="return confirm('Stage this package for delivery rider pickup?')">
+            <i class="bi bi-box-arrow-up"></i> Stage
+        </button>
+    </form>
+
+@elseif($shipment->sorting_status == 'staged')
+
+    <span class="badge bg-success">
+        <i class="bi bi-check-circle"></i> Ready for Pickup
+    </span>
+
                       @if(!$shipment->rider)
                         <button type="button" class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#assignModal{{ $shipment->id }}">
                           <i class="bi bi-person-plus"></i> Assign Rider
@@ -306,17 +330,9 @@
                             </div>
                           </div>
                         </div>
-                      @else
-                        <form action="{{ route('logistic.shipments.stage', $shipment) }}" method="POST">
-                          @csrf
-                          <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Stage this package for rider pickup?')">
-                            <i class="bi bi-box-arrow-up"></i> Stage
-                          </button>
-                        </form>
-                      @endif
-                    @elseif($shipment->sorting_status == 'staged')
-                      <span class="badge bg-success"><i class="bi bi-check-circle"></i> Ready for Pickup</span>
-                    @endif
+                     @endif
+
+                     @endif
                   </td>
                 </tr>
               @empty
@@ -329,6 +345,195 @@
       </div>
     </div>
   </div>
+
+    <!-- Staged Packages -->
+  <div class="tab-pane fade" id="staged" role="tabpanel">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white">
+        <h5 class="mb-0">
+          <i class="bi bi-collection"></i> Staged Packages
+        </h5>
+        <small class="text-muted">
+          Packages ready for rider pickup
+        </small>
+      </div>
+
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Tracking #</th>
+                <th>Order #</th>
+                <th>Zone</th>
+                <th>Sorting Area</th>
+                <th>Rack</th>
+                <th>Rider</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              @php
+                $stagedPackages = $sortedShipments->where('sorting_status', 'staged');
+              @endphp
+
+              @forelse($stagedPackages as $shipment)
+                <tr>
+                  <td>
+                    <code>{{ $shipment->tracking_number }}</code>
+                  </td>
+
+                  <td>
+                    {{ $shipment->sellerOrder?->order?->order_number ?? 'N/A' }}
+                  </td>
+
+                  <td>
+                    <span class="badge bg-info">
+                      {{ $shipment->delivery_zone ?? 'Not Set' }}
+                    </span>
+                  </td>
+
+                  <td>
+                    {{ $shipment->sorting_area ?? 'N/A' }}
+                  </td>
+
+                  <td>
+                    {{ $shipment->rack_number ?? 'N/A' }}
+                  </td>
+
+                  <td>
+                    @if($shipment->rider)
+                      {{ $shipment->rider->name }}
+                    @else
+                      <span class="text-muted">Unassigned</span>
+                    @endif
+                  </td>
+
+                  <td>
+                    <span class="badge bg-success">
+                      <i class="bi bi-check-circle"></i>
+                      Ready for Pickup
+                    </span>
+                  </td>
+                  <td>
+    @if(!$shipment->rider)
+        <button type="button"
+                class="btn btn-sm btn-outline-success"
+                data-bs-toggle="modal"
+                data-bs-target="#stagedAssignModal{{ $shipment->id }}">
+            <i class="bi bi-person-plus"></i>
+            Assign Rider
+        </button>
+
+        <div class="modal fade"
+             id="stagedAssignModal{{ $shipment->id }}"
+             tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+
+                    <form action="{{ route('logistic.shipments.assign-rider', $shipment) }}"
+                          method="POST">
+                        @csrf
+
+                        <div class="modal-header">
+                            <h5 class="modal-title">
+                                Assign Delivery Rider
+                            </h5>
+
+                            <button type="button"
+                                    class="btn-close"
+                                    data-bs-dismiss="modal">
+                            </button>
+                        </div>
+
+                        <div class="modal-body">
+                            <p>
+                                <strong>Tracking:</strong>
+                                {{ $shipment->tracking_number }}
+                            </p>
+
+                            <p>
+                                <strong>Zone:</strong>
+                                {{ $shipment->delivery_zone ?? 'N/A' }}
+                            </p>
+
+                            <p>
+                                <strong>Rack:</strong>
+                                {{ $shipment->rack_number ?? 'N/A' }}
+                            </p>
+
+                            <div class="mb-3">
+                                <label class="form-label">
+                                    Select Delivery Rider
+                                    <span class="text-danger">*</span>
+                                </label>
+
+                                <select name="rider_id"
+                                        class="form-select"
+                                        required>
+                                    <option value="">
+                                        Select Available Rider
+                                    </option>
+
+                                    @foreach(
+                                        $logistic->riders()
+                                            ->where('availability_status', 'available')
+                                            ->whereColumn('current_load', '<', 'max_capacity')
+                                            ->get() as $rider
+                                    )
+                                        <option value="{{ $rider->id }}">
+                                            {{ $rider->name }}
+                                            ({{ $rider->current_load }}/{{ $rider->max_capacity }} packages)
+                                        </option>
+                                    @endforeach
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="modal-footer">
+                            <button type="button"
+                                    class="btn btn-secondary"
+                                    data-bs-dismiss="modal">
+                                Cancel
+                            </button>
+
+                            <button type="submit"
+                                    class="btn btn-success">
+                                <i class="bi bi-check-lg"></i>
+                                Assign Delivery Rider
+                            </button>
+                        </div>
+                    </form>
+
+                </div>
+            </div>
+        </div>
+    @else
+        <span class="text-success">
+            <i class="bi bi-check-circle"></i>
+            Assigned
+        </span>
+    @endif
+</td>
+                </tr>
+              @empty
+                <tr>
+                  <td colspan="8" class="text-center text-muted py-4">
+                    No staged packages.
+                  </td>
+                </tr>
+              @endforelse
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- By Zone -->
+  <div class="tab-pane fade" id="zones" role="tabpanel"></div>
 
   <!-- By Zone -->
   <div class="tab-pane fade" id="zones" role="tabpanel">

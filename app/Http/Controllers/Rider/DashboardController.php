@@ -47,9 +47,15 @@ class DashboardController extends Controller
     {
         $rider = Auth::user();
         $assignedOrders = Order::where('rider_id', $rider->id)
-            ->whereIn('delivery_status', ['assigned_to_rider', 'out_for_delivery'])
-            ->with(['user', 'items.product'])
-            ->latest()->paginate(20);
+    ->whereIn('delivery_status', [
+        'assigned_to_rider',
+        'ready_for_delivery_pickup',
+        'picked_up_from_sorting_center',
+        'out_for_delivery',
+    ])
+    ->with(['user', 'items.product'])
+    ->latest()
+    ->paginate(20);
 
         $completedToday = Order::where('rider_id', $rider->id)
             ->where('delivery_status', 'delivered')
@@ -101,7 +107,12 @@ class DashboardController extends Controller
             'delivery_status' => 'required|in:out_for_delivery,delivered,delivery_failed',
             'delivery_notes' => 'nullable|string|max:1000',
             'failure_reason' => 'nullable|string|max:1000',
-            'proof_of_delivery' => 'required_if:delivery_status,delivered|nullable|image|mimes:jpg,jpeg,png|max:5120',
+            'proof_of_delivery' => [
+    'required_if:delivery_status,delivered',
+    'image',
+    'mimes:jpg,jpeg,png',
+    'max:5120',
+],
             'delivery_signature' => 'nullable|string|max:1000',
             'delivered_to' => 'nullable|string|max:255',
         ]);
@@ -129,16 +140,29 @@ class DashboardController extends Controller
             $data['delivered_to'] = $request->delivered_to;
 
             if ($shipment = $this->riderShipmentForOrder($order)) {
-                $shipment->update([
-                    'status' => 'delivered',
-                    'delivered_at' => now(),
-                ]);
-            }
+    $shipment->update([
+        'status' => 'delivered',
+        'delivered_at' => now(),
+    ]);
 
-            Auth::user()->decrement('current_load');
+    // Sync SellerOrder with the completed delivery
+    if ($shipment->sellerOrder) {
+        $shipment->sellerOrder->update([
+            'status' => 'delivered',
+        ]);
+    }
+}
+
+            
+            if (Auth::user()->current_load > 0) {
+    Auth::user()->decrement('current_load');
+}
+
             if (Auth::user()->current_load < Auth::user()->max_capacity) {
-                Auth::user()->update(['availability_status' => 'available']);
-            }
+    Auth::user()->update([
+        'availability_status' => 'available'
+    ]);
+}
 
             // Increment delivery rider's daily quota
             Auth::user()->increment('daily_deliveries_completed');

@@ -150,7 +150,14 @@ Route::middleware('auth')->group(function () {
             Route::post('/{notification}/read', [AdminNotificationController::class, 'markRead'])->name('read');
             Route::post('/read-all', [AdminNotificationController::class, 'markAllRead'])->name('readAll');
         });
+
+        Route::get('/orders', [DashboardController::class, 'orders'])
+            ->name('orders');
+
+        Route::get('/orders/{order}', [DashboardController::class, 'showOrder'])
+            ->name('orders.show');
     });
+
 
     Route::prefix('seller')->name('seller.')->middleware('seller')->group(function () {
         Route::get('/dashboard', [SellerDashboardController::class, 'index'])->name('dashboard');

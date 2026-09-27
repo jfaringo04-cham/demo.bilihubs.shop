@@ -86,15 +86,19 @@
             </a>
             <a class="nav-link {{ request()->routeIs('admin.users.*') ? 'active' : '' }}" href="{{ route('admin.users.index') }}">
               <i class="bi bi-people"></i> Users
+            </a>
+
             <a class="nav-link {{ request()->routeIs('admin.buyers') ? 'active' : '' }}" href="{{ route('admin.buyers') }}">
-  <i class="bi bi-person-check"></i> Buyers
-</a>
+              <i class="bi bi-person-check"></i> Buyers
             </a>
             <a class="nav-link {{ request()->routeIs('admin.sellers') ? 'active' : '' }}" href="{{ route('admin.sellers') }}">
               <i class="bi bi-shop"></i> Sellers
             </a>
             <a class="nav-link {{ request()->routeIs('admin.products') ? 'active' : '' }}" href="{{ route('admin.products') }}">
               <i class="bi bi-box"></i> Products
+            </a>
+            <a class="nav-link {{ request()->routeIs('admin.orders*') ? 'active' : '' }}" href="{{ route('admin.orders') }}">
+              <i class="bi bi-receipt"></i> Orders
             </a>
             <a class="nav-link {{ request()->routeIs('admin.riders') ? 'active' : '' }}" href="{{ route('admin.riders') }}">
               <i class="bi bi-bicycle"></i> Riders

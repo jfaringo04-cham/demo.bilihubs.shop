@@ -30,28 +30,34 @@
       </div>
       <div class="mb-3">
         <strong>Order Status:</strong> 
-        <span class="badge bg-{{ $order->statusBadgeClass() }}">
-          {{ ucfirst(str_replace('_', ' ', $order->status)) }}
-        </span>
-      </div>
-      @if($order->ready_for_pickup && $order->shipment)
+      <span class="badge bg-{{ $order->statusBadgeClass() }}">
+    {{ ucfirst(str_replace('_', ' ', $order->status)) }}
+</span>
+</div>
+
+@php
+    $sellerOrder = $order->sellerOrders->first();
+    $shipment = $sellerOrder?->shipment;
+@endphp
+
+      @if($order->ready_for_pickup && $shipment)
         <div class="mb-3">
           <strong>Ready for Pickup:</strong> 
           <span class="badge bg-success">
-            Shipment #{{ $order->shipment->tracking_number }}
+            Shipment #{{ $shipment->tracking_number }}
           </span>
         </div>
         <div class="mb-3">
           <strong>Shipment Status:</strong>
-          <span class="badge bg-{{ $order->shipment->statusBadgeClass() }}">
-            {{ ucfirst(str_replace('_', ' ', $order->shipment->status)) }}
+          <span class="badge bg-{{ $shipment->statusBadgeClass() }}">
+            {{ ucfirst(str_replace('_', ' ', $shipment->status)) }}
           </span>
         </div>
-        @if($order->shipment->rider_id)
+        @if($shipment->rider_id)
           <div class="mb-3">
-            <strong>Rider Assigned:</strong> {{ $order->shipment->rider->name ?? 'N/A' }}
-            @if($order->shipment->rider->phone)
-              <span class="text-muted">| {{ $order->shipment->rider->phone }}</span>
+            <strong>Rider Assigned:</strong> {{ $shipment->rider->name ?? 'N/A' }}
+            @if($shipment->rider->phone)
+              <span class="text-muted">| {{ $shipment->rider->phone }}</span>
             @endif
           </div>
         @else
@@ -59,29 +65,29 @@
             <strong>Rider Assignment:</strong> <span class="text-muted">Waiting for rider assignment...</span>
           </div>
         @endif
-        @if($order->shipment->delivered_at)
+        @if($shipment->delivered_at)
           <div class="mb-3">
-            <strong>Delivered At:</strong> {{ \Carbon\Carbon::parse($order->shipment->delivered_at)->format('M d, Y g:i A') }}
+            <strong>Delivered At:</strong> {{ \Carbon\Carbon::parse($shipment->delivered_at)->format('M d, Y g:i A') }}
           </div>
         @endif
-        @if($order->shipment->scanned_at_seller)
+        @if($shipment->scanned_at_seller)
           <div class="mb-3">
             <strong>QR Scanned:</strong>
-            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Rider scanned QR on {{ \Carbon\Carbon::parse($order->shipment->scanned_at_seller)->format('M d, Y g:i A') }}</span>
+            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Rider scanned QR on {{ \Carbon\Carbon::parse($shipment->scanned_at_seller)->format('M d, Y g:i A') }}</span>
           </div>
         @endif
       @endif
 
-      @if($order->ready_for_pickup && $order->shipment)
+      @if($order->ready_for_pickup && $shipment)
         <div class="mb-3">
           <strong>Shipment Progress</strong>
           <div class="progress" style="height: 20px;">
-            @foreach($order->shipment->timelineSteps() as $step)
+            @foreach($shipment->timelineSteps() as $step)
               @php
                 $isActive = $step['timestamp'] !== null;
                 $bgClass = $isActive ? $step['class'] : 'secondary';
               @endphp
-              <div class="progress-bar bg-{{ $bgClass }}" role="progressbar" style="width: {{ 100 / count($order->shipment->timelineSteps()) }}%" title="{{ $step['label'] }}">
+              <div class="progress-bar bg-{{ $bgClass }}" role="progressbar" style="width: {{ 100 / count($shipment->timelineSteps()) }}%" title="{{ $step['label'] }}">
                 {{ $step['label'] }}
               </div>
             @endforeach
@@ -159,11 +165,11 @@
         @endif
       @endif
 
-      @if($order->ready_for_pickup && $order->shipment)
-        <a href="{{ route('logistic.shipments.show', $order->shipment) }}" target="_blank" class="btn btn-sm btn-outline-info">
+      @if($order->ready_for_pickup && $shipment)
+        <a href="{{ route('logistic.shipments.show', $shipment) }}" target="_blank" class="btn btn-sm btn-outline-info">
           <i class="bi bi-printer"></i> Print Shipping Label
         </a>
-        <a href="{{ route('shipments.qr.label', $order->shipment) }}" target="_blank" class="btn btn-sm btn-bili-hub">
+        <a href="{{ route('shipments.qr.label', $shipment) }}" target="_blank" class="btn btn-sm btn-bili-hub">
           <i class="bi bi-qr-code"></i> Print QR / Barcode Label
         </a>
         <div class="mt-2 small text-muted">

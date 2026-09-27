@@ -179,21 +179,11 @@ class CheckoutController extends Controller
         $shipping = $shippingMinor / 100;
         $total = $totalMinor / 100;
 
-        $fullAddress = $request->shipping_address;
-        $contactLines = [];
-
-        if ($request->filled('contact_name')) {
-            $contactLines[] = 'Recipient: ' . $request->contact_name;
-        }
-
-        if ($request->filled('contact_phone')) {
-            $contactLines[] = 'Phone: ' . $request->contact_phone;
-        }
-
-        if (!empty($contactLines)) {
-            $fullAddress = implode("\n", $contactLines) . "\n" . $fullAddress;
-        }
-
+        $shippingAddress = [
+    'recipient' => $request->contact_name ?: Auth::user()->name,
+    'phone' => $request->contact_phone ?: Auth::user()->phone,
+    'address' => $request->shipping_address,
+];
         $geocoded = $this->geocodeAddress($request->shipping_address);
         $customerLat = $geocoded['lat'] ?? null;
         $customerLng = $geocoded['lng'] ?? null;
@@ -210,29 +200,31 @@ class CheckoutController extends Controller
             $taxMinor,
             $shippingMinor,
             $totalMinor,
-            $fullAddress,
+            $shippingAddress,
             $customerLat,
             $customerLng,
             $deliveryZone
         ) {
-            $order = Order::create([
-                'user_id' => Auth::id(),
-                'order_number' => 'ORD-' . strtoupper(Str::random(10)),
-                'status' => 'placed',
-                'subtotal_minor' => $subtotalMinor,
-                'tax_minor' => $taxMinor,
-                'shipping_minor' => $shippingMinor,
-                'total_minor' => $totalMinor,
-                'shipping_address' => $fullAddress,
-                'notes' => $request->notes,
-                'ordered_at' => now(),
-                'payment_method' => $request->payment_method,
-                'payment_status' => $request->payment_method === 'cod' ? 'unpaid' : 'paid',
-                'customer_latitude' => $customerLat,
-                'customer_longitude' => $customerLng,
-                'delivery_zone' => $deliveryZone,
-            ]);
+            $orderReference = 'ORD-' . strtoupper(Str::random(10));
 
+$order = Order::forceCreate([
+    'user_id' => Auth::id(),
+    'order_number' => $orderReference,
+    'reference' => $orderReference,
+    'status' => 'placed',
+    'subtotal_minor' => $subtotalMinor,
+    'tax_minor' => $taxMinor,
+    'shipping_minor' => $shippingMinor,
+    'total_minor' => $totalMinor,
+    'shipping_address' => json_encode($shippingAddress),
+    'notes' => $request->notes,
+    'ordered_at' => now(),
+    'payment_method' => $request->payment_method,
+    'payment_status' => $request->payment_method === 'cod' ? 'unpaid' : 'paid',
+    'customer_latitude' => $customerLat,
+    'customer_longitude' => $customerLng,
+    'delivery_zone' => $deliveryZone,
+]);
             // Split this buyer checkout into one SellerOrder per shop.
             $itemsBySeller = $cartItems->groupBy(function ($item) {
                 return $item->product->seller_id;

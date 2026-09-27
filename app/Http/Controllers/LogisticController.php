@@ -355,7 +355,7 @@ $activeRiders = $logistic->riders()
             ->paginate(20);
 
         $sortedShipments = $logistic->shipments()
-            ->whereIn('sorting_status', ['sorted', 'staged'])
+            ->whereIn('sorting_status', ['scanned', 'sorted', 'staged'])
             ->with('sellerOrder.order.user', 'sellerOrder.items.product', 'sellerOrder.seller', 'rider')
             ->latest()
             ->paginate(20);
@@ -363,9 +363,18 @@ $activeRiders = $logistic->riders()
         return view('logistic.sorting-area', compact('logistic', 'pendingShipments', 'receivedShipments', 'sortedShipments'));
     }
 
-    public function receiveShipment(Shipment $shipment)
-    {
-        $logistic = Auth::user()->ownedLogistic;
+  public function receiveShipment(Shipment $shipment)
+{
+    $logistic = Auth::user()->ownedLogistic;
+
+    // Resolve the parent order through Shipment -> SellerOrder -> Order.
+    $shipment->loadMissing([
+        'sellerOrder.order',
+        'sellerOrder.seller',
+        'hub',
+    ]);
+
+    $order = $shipment->sellerOrder?->order;
 
         if (!$logistic || $shipment->logistic_id !== $logistic->id) {
             return redirect()->route('logistic.sorting-area')->with('error', 'Shipment not found.');
@@ -390,13 +399,25 @@ $activeRiders = $logistic->riders()
         ]);
 
         // Increment pickup rider's daily quota if this was a pickup rider delivery
-        $order = $shipment->sellerOrder?->order;
         if ($order && $order->rider_id) {
-            $pickupRider = \App\Models\User::find($order->rider_id);
-            if ($pickupRider && $pickupRider->isRider()) {
-                $pickupRider->increment('daily_pickups_completed');
-            }
+    $pickupRider = \App\Models\User::find($order->rider_id);
+
+    if ($pickupRider && $pickupRider->isRider()) {
+        $pickupRider->increment('daily_pickups_completed');
+       
         }
+    }
+    // Pickup leg is complete.
+    // Final-delivery rider will be assigned separately by Logistics.
+    $order->update([
+        'rider_id' => null,
+        'delivery_status' => 'at_sorting_center',
+    ]);
+
+    $shipment->update([
+        'rider_id' => null,
+    ]);
+
 
         // Notify the seller that owns this specific SellerOrder/parcel.
         $sellerOwnerId = $shipment->sellerOrder?->seller?->user_id;
@@ -435,6 +456,8 @@ $activeRiders = $logistic->riders()
             return redirect()->route('logistic.sorting-area')->with('error', 'Shipment not found.');
         }
 
+        
+
         if (!$shipment->received_by_sorting_center) {
             return back()->with('error', 'Cannot scan shipment: not yet confirmed as received by sorting center. Please receive the shipment first.');
         }
@@ -462,29 +485,13 @@ $activeRiders = $logistic->riders()
             ]);
         }
 
-        $bestRider = \App\Services\RiderAssignmentService::findBestRiderForShipment($shipment);
+       
 
-        if ($bestRider) {
-            \App\Services\RiderAssignmentService::assignRiderToShipment($shipment, $bestRider);
-
-            \App\Models\Notification::create([
-                'user_id' => $bestRider->id,
-                'title' => 'New Delivery Assigned from Hub',
-                'type' => 'delivery',
-                'message' => 'Order ' . ($order?->order_number ?? 'N/A') . ' has been sorted at the hub. Destination: ' . $validated['delivery_zone'] . '. Please pick it up for final delivery to the customer.',
-                'link' => route('rider.pickups', ['status' => 'sorting_center']),
-            ]);
-
-            \App\Models\Notification::create([
-                'user_id' => $order?->user_id,
-                'title' => 'Order Sorted at Hub',
-                'type' => 'delivery',
-                'message' => 'Your order ' . ($order?->order_number ?? 'N/A') . ' has been sorted at the hub and assigned to a rider for final delivery.',
-                'link' => $order ? route('orders.show', $order) : null,
-            ]);
-        }
-
-        return back()->with('success', 'Shipment scanned and sorted. Zone: ' . $validated['delivery_zone'] . ($bestRider ? '. Assigned to rider ' . $bestRider->name . ' for delivery.' : '. Awaiting rider assignment.'));
+       return back()->with(
+    'success',
+    'Shipment scanned successfully. Zone: ' . $validated['delivery_zone'] .
+    '. Continue sorting and staging before assigning a delivery rider.'
+);
     }
 
     public function sortShipment(Request $request, Shipment $shipment)
@@ -506,7 +513,6 @@ $activeRiders = $logistic->riders()
 
         $shipment->update([
             'sorting_status' => 'sorted',
-            'sorted_at' => now(),
             'sorting_area' => $validated['sorting_area'],
             'rack_number' => $validated['rack_number'],
         ]);
@@ -541,6 +547,20 @@ $activeRiders = $logistic->riders()
         if (!$logistic || $shipment->logistic_id !== $logistic->id) {
             return redirect()->route('logistic.sorting-area')->with('error', 'Shipment not found.');
         }
+
+        if ($shipment->sorting_status !== 'staged') {
+    return back()->with(
+        'error',
+        'This shipment must be sorted and staged before assigning a delivery rider.'
+    );
+}
+
+if ($shipment->rider_id) {
+    return back()->with(
+        'error',
+        'This shipment already has a delivery rider assigned.'
+    );
+}
 
         $validated = $request->validate([
             'rider_id' => ['required', 'exists:users,id'],
@@ -715,7 +735,13 @@ $activeRiders = $logistic->riders()
             return redirect()->route('logistic.shipments')->with('error', 'Shipment not found in your company.');
         }
 
-        $riders = $logistic->riders()->where('logistic_status', 'approved')->get();
+        $riders = $logistic->riders()
+    ->whereHas('roles', function ($query) {
+        $query->where('name', 'rider');
+    })
+    ->where('logistic_status', 'approved')
+    ->where('status', \App\Models\User::STATUS_ACTIVE)
+    ->get();
 
         return view('logistic.shipments-show', compact('logistic', 'shipment', 'riders'));
     }
