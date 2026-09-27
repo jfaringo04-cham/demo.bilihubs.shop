@@ -57,7 +57,8 @@ COPY --from=frontend /app/public/build ./public/build
 # Laravel setup
 RUN php artisan config:clear && \
     php artisan route:clear && \
-    php artisan view:clear
+    php artisan view:clear && \
+    php artisan storage:link
 
 # Configure Apache document root for Laravel
 RUN sed -i 's|/var/www/html|/var/www/html/public|g' \
@@ -67,6 +68,8 @@ RUN sed -i 's|/var/www/html|/var/www/html/public|g' \
 RUN mkdir -p storage/framework/cache \
     storage/framework/sessions \
     storage/framework/views \
+    storage/app/public \
+    storage/app/public/products \
     storage/logs \
     bootstrap/cache && \
     chown -R www-data:www-data storage bootstrap/cache && \
