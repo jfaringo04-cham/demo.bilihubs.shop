@@ -40,7 +40,9 @@
                        </div>
                      @else
                        <img src="{{ $item->product->image_url }}"
-                            alt="{{ $item->product->name }}">
+     class="rounded me-3 flex-shrink-0"
+     style="width: 64px; height: 64px; object-fit: cover;"
+     alt="{{ $item->product->name }}">
                        <div>
                          <h6 class="mb-0 fw-semibold">{{ $item->product->name }}</h6>
                          @if($item->product->stock == 0)
