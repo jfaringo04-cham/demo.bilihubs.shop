@@ -120,11 +120,11 @@
           <input type="file" name="logo" id="logo" class="form-control" accept="image/*">
           <small class="text-muted">Recommended: 200x200px, max 2MB</small>
           @error('logo') <div class="text-danger">{{ $message }}</div> @enderror
-          @if($user->logo)
-            <div class="mt-2">
-              <img src="{{ asset('storage/' . $user->logo) }}" alt="Logo" style="width:80px;height:80px;object-fit:cover;border-radius:8px;">
-              <small class="d-block text-muted">Current logo</small>
-            </div>
+          @if($user->logo_url)
+              <div class="mt-2">
+                <img src="{{ $user->logo_url }}" alt="Logo" style="width:80px;height:80px;object-fit:cover;border-radius:8px;">
+                <small class="d-block text-muted">Current logo</small>
+              </div>
           @endif
         </div>
         <div class="col-md-12">

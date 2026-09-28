@@ -5,8 +5,8 @@
   <div class="card mb-4">
     <div class="card-body">
       <div class="d-flex align-items-center gap-4">
-        @if($seller->logo)
-          <img src="{{ asset('storage/' . $seller->logo) }}" alt="{{ $seller->business_name }}" style="width:80px;height:80px;object-fit:cover;border-radius:8px;">
+        @if($seller->logo_url)
+          <img src="{{ $seller->logo_url }}" alt="{{ $seller->business_name }}" style="width:80px;height:80px;object-fit:cover;border-radius:8px;">
         @else
           <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" style="width:80px;height:80px;font-size:2rem;">
             {{ substr($seller->name, 0, 1) }}

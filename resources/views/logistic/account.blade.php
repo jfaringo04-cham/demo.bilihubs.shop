@@ -49,10 +49,10 @@
             <div class="col-12">
               <label for="logo" class="form-label fw-medium">Company Logo</label>
               <input type="file" name="logo" id="logo" class="form-control rounded-xl" accept="image/*">
-              @if($logistic->logo)
-                <div class="mt-2">
-                  <img src="{{ asset('storage/' . $logistic->logo) }}" alt="Company Logo" class="img-thumbnail rounded" style="max-height: 80px;">
-                </div>
+              @if($logistic->logo_url)
+                  <div class="mt-2">
+                      <img src="{{ $logistic->logo_url }}" alt="Company Logo" class="img-thumbnail rounded" style="max-height: 80px;">
+                  </div>
               @endif
             </div>
           </div>

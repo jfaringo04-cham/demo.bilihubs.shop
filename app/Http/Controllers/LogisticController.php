@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rules;
 
 class LogisticController extends Controller
@@ -1127,8 +1128,22 @@ if ($shipment->rider_id) {
         }
 
         if ($request->hasFile('logo')) {
-            $validated['logo'] = $request->file('logo')->store('logistic-logos', 'public');
+    // Delete previous logo from S3 or old local public storage.
+    if ($logistic->logo) {
+        try {
+            if (Storage::disk('s3')->exists($logistic->logo)) {
+                Storage::disk('s3')->delete($logistic->logo);
+            } elseif (Storage::disk('public')->exists($logistic->logo)) {
+                Storage::disk('public')->delete($logistic->logo);
+            }
+        } catch (\Throwable $e) {
+            report($e);
         }
+    }
+
+    // Store new logistics logo persistently in Supabase Storage.
+    $validated['logo'] = $request->file('logo')->store('logistic-logos', 's3');
+}
 
         $logistic->update($validated);
 

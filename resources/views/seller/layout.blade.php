@@ -30,10 +30,10 @@
       </a>
       <div class="dropdown ms-auto">
         <a class="d-flex align-items-center text-decoration-none dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-          @if(Auth::user()->logo)
-            <img src="{{ asset('storage/' . Auth::user()->logo) }}" alt="Logo" class="rounded-circle" style="width: 32px; height: 32px; object-fit: cover;">
+          @if(Auth::user()->logo_url)
+              <img src="{{ Auth::user()->logo_url }}" alt="Logo" class="rounded-circle" style="width: 32px; height: 32px; object-fit: cover;">
           @else
-            <i class="bi bi-person-circle fs-4"></i>
+              <i class="bi bi-person-circle fs-4"></i>
           @endif
         </a>
         <ul class="dropdown-menu dropdown-menu-end">
@@ -156,8 +156,11 @@
 
             <div class="dropdown">
               <a class="d-flex align-items-center text-decoration-none dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                @if(Auth::user()->logo)
-                  <img src="{{ asset('storage/' . Auth::user()->logo) }}" alt="Logo" class="rounded-circle" style="width: 32px; height: 32px; object-fit: cover;">
+                @if(Auth::user()->logo_url)
+                      <img src="{{ Auth::user()->logo_url }}"
+                         alt="Shop Logo"
+                         class="rounded-circle"
+                         style="width: 32px; height: 32px; object-fit: cover; flex-shrink: 0;">
                 @else
                   <i class="bi bi-person-circle fs-4" style="color: #6b7280;"></i>
                 @endif

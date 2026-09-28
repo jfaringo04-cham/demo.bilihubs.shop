@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Storage;
 
 class Logistic extends Model
 {
@@ -69,5 +70,26 @@ class Logistic extends Model
     public function hubs(): HasMany
     {
         return $this->hasMany(Hub::class);
+    }
+
+    public function getLogoUrlAttribute(): ?string
+    {
+        if (!$this->logo) {
+            return null;
+    }
+
+        try {
+            if (Storage::disk('s3')->exists($this->logo)) {
+                return Storage::disk('s3')->url($this->logo);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
+        if (Storage::disk('public')->exists($this->logo)) {
+            return Storage::disk('public')->url($this->logo);
+        }
+
+        return null;
     }
 }

@@ -69,7 +69,7 @@
             </a>
           @endif
           @if($logistic->logo)
-            <img src="{{ asset('storage/' . $logistic->logo) }}" alt="Company Logo" class="mt-2" style="max-height: 80px;">
+            <img src="{{ $logistic->logo_url }}" alt="Company Logo" class="mt-2" style="max-height: 80px;">
           @endif
         @else
           <p class="text-muted">No logistic company record found.</p>

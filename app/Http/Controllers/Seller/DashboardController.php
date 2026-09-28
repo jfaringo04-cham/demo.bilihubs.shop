@@ -17,8 +17,10 @@ use App\Models\User;
 use App\Services\ComplianceMonitor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+
 
 class DashboardController extends Controller
 {
@@ -1440,8 +1442,23 @@ if ($order->ready_for_pickup) {
         ];
 
         if ($request->hasFile('logo')) {
-            $userData['logo'] = $request->file('logo')->store('logos', 'public');
+    // Delete the previous logo from whichever storage currently owns it.
+    if ($user->logo) {
+        try {
+            if (Storage::disk('s3')->exists($user->logo)) {
+                Storage::disk('s3')->delete($user->logo);
+            } elseif (Storage::disk('public')->exists($user->logo)) {
+                Storage::disk('public')->delete($user->logo);
+            }
+        } catch (\Throwable $e) {
+            // Do not block the account update if old-file cleanup fails.
+            report($e);
         }
+    }
+
+    // New seller logos are stored persistently in Supabase Storage.
+    $userData['logo'] = $request->file('logo')->store('logos', 's3');
+}
 
         $user->update($userData);
 

@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+use Illuminate\Support\Facades\Storage;
 
 #[Fillable([
     'name',
@@ -385,5 +386,26 @@ class User extends Authenticatable
     public function seller()
     {
         return $this->hasOne(Seller::class);
+    }
+
+    public function getLogoUrlAttribute(): ?string
+    {
+        if (!$this->logo) {
+            return null;
+    }
+
+        try {
+            if (Storage::disk('s3')->exists($this->logo)) {
+                return Storage::disk('s3')->url($this->logo);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
+        if (Storage::disk('public')->exists($this->logo)) {
+            return Storage::disk('public')->url($this->logo);
+        }
+
+        return null;
     }
 }
