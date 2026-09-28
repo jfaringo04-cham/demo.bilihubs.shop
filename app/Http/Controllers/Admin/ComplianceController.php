@@ -11,6 +11,7 @@ use App\Models\Notification;
 use App\Services\ComplianceMonitor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
 
 class ComplianceController extends Controller
 {
@@ -411,30 +412,75 @@ class ComplianceController extends Controller
     }
 
     public function blacklistImage(Request $request, Product $product)
-    {
-        $request->validate([
-            'image_path' => [
-                'required',
-                'string',
-            ],
-            'reason' => [
-                'required',
-                'string',
-                'max:1000',
-            ],
-        ]);
+{
+    $request->validate([
+        'image_path' => [
+            'required',
+            'string',
+        ],
+        'reason' => [
+            'required',
+            'string',
+            'max:1000',
+        ],
+    ]);
 
-        $fullPath = storage_path(
-            'app/public/' . $request->image_path
+    $imagePath = $request->image_path;
+    $fullPath = null;
+    $temporaryImagePath = null;
+
+    // First try Supabase Storage.
+    try {
+        if (Storage::disk('s3')->exists($imagePath)) {
+            $contents = Storage::disk('s3')->get($imagePath);
+
+            $extension = pathinfo($imagePath, PATHINFO_EXTENSION);
+            $temporaryImagePath = tempnam(
+                sys_get_temp_dir(),
+                'bilihub_blacklist_'
+            );
+
+            if ($extension) {
+                $newTemporaryPath =
+                    $temporaryImagePath . '.' . $extension;
+
+                rename($temporaryImagePath, $newTemporaryPath);
+                $temporaryImagePath = $newTemporaryPath;
+            }
+
+            file_put_contents($temporaryImagePath, $contents);
+
+            $fullPath = $temporaryImagePath;
+        }
+    } catch (\Throwable $e) {
+        logger()->warning(
+            'Could not load compliance image from Supabase.',
+            [
+                'image_path' => $imagePath,
+                'error' => $e->getMessage(),
+            ]
+        );
+    }
+
+    // Backward compatibility for old local product images.
+    if (!$fullPath) {
+        $localPath = storage_path(
+            'app/public/' . $imagePath
         );
 
-        if (!file_exists($fullPath)) {
-            return back()->with(
-                'error',
-                'Image file not found on disk.'
-            );
+        if (file_exists($localPath)) {
+            $fullPath = $localPath;
         }
+    }
 
+    if (!$fullPath || !file_exists($fullPath)) {
+        return back()->with(
+            'error',
+            'Image file not found in Supabase or local storage.'
+        );
+    }
+
+    try {
         $hash = ComplianceMonitor::hashImage($fullPath);
         $phash = ComplianceMonitor::perceptualHash($fullPath);
 
@@ -443,10 +489,18 @@ class ComplianceController extends Controller
             $request->reason,
             $phash
         );
-
-        return back()->with(
-            'success',
-            'Image added to blacklist. Future uploads matching this hash or perceptual hash will be auto-flagged.'
-        );
+    } finally {
+        if (
+            $temporaryImagePath &&
+            file_exists($temporaryImagePath)
+        ) {
+            @unlink($temporaryImagePath);
+        }
     }
+
+    return back()->with(
+        'success',
+        'Image added to blacklist. Future uploads matching this hash or perceptual hash will be auto-flagged.'
+    );
+}
 }

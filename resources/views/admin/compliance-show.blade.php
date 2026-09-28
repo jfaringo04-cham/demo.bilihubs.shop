@@ -90,7 +90,9 @@
           @endforeach
         </div>
       @elseif($product->image)
-        <img src="{{ asset('storage/' . $product->image) }}" class="img-fluid rounded border" alt="{{ $product->name }}">
+    <img src="{{ $product->image_url }}"
+         class="img-fluid rounded border"
+         alt="{{ $product->name }}">
       @else
         <p class="text-muted">No images uploaded.</p>
       @endif
@@ -116,9 +118,11 @@
         </div>
         <form method="POST" action="{{ route('admin.compliance.approve', $product) }}" class="mb-2">
           @csrf
-          <button type="submit" class="btn btn-success w-100" onclick="return confirm(&quot;Approve this product? It will be published live in the seller's shop.&quot;)">
-            <i class="bi bi-check-circle"></i> Approve & Publish to Shop
-          </button>
+          <button type="submit"
+        class="btn btn-success w-100"
+        onclick="return confirm('Approve this product? It will be published live in the seller\'s shop.')">
+    <i class="bi bi-check-circle"></i> Approve & Publish to Shop
+</button>
         </form>
         <form method="POST" action="{{ route('admin.compliance.flag', $product) }}" onsubmit="return confirm('Flag this product again?');">
           @csrf

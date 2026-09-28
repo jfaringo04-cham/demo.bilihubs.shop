@@ -39,7 +39,8 @@
                          @endif
                        </div>
                      @else
-                       <img src="{{ $item->product->image ? asset('storage/' . $item->product->image) : 'https://via.placeholder.com/60x60?text=No+Image' }}" class="rounded me-3" style="width: 64px; height: 64px; object-fit: cover;" alt="{{ $item->product->name }}">
+                       <img src="{{ $item->product->image_url }}"
+                            alt="{{ $item->product->name }}">
                        <div>
                          <h6 class="mb-0 fw-semibold">{{ $item->product->name }}</h6>
                          @if($item->product->stock == 0)

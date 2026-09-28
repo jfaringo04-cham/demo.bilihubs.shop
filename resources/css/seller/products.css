@@ -1798,3 +1798,73 @@
   .variant-row__image .variant-image-box { width: 100px; height: 100px; }
   .variant-row__actions { top: 14px; right: 14px; }
 }
+/* ============================================================
+   Edit Product - Bootstrap Variant Rows
+   ============================================================ */
+
+.variant-row .variant-fields-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    align-items: end;
+}
+
+.variant-row .variant-fields-row > .col-md-4,
+.variant-row .variant-fields-row > .col-md-2,
+.variant-row .variant-fields-row > .col-md-1,
+.variant-row .variant-fields-row > .col-md-auto {
+    width: auto;
+    max-width: none;
+    padding: 0;
+}
+
+.variant-row .variant-fields-row > .col-md-4 {
+    grid-column: 1 / -1;
+}
+
+.variant-row .variant-image-uploader {
+    width: 140px;
+    max-width: 100%;
+}
+
+.variant-row .variant-fields-row .form-control {
+    width: 100%;
+    min-width: 0;
+}
+
+@media (max-width: 767.98px) {
+    .variant-row .variant-fields-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .variant-row .variant-fields-row > .col-md-4 {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .variant-row .variant-fields-row {
+        grid-template-columns: 1fr;
+    }
+
+    .variant-row .variant-fields-row > .col-md-4 {
+        grid-column: auto;
+    }
+}
+/* Fix conflict with old Variant Manager styles on Edit Product */
+.variant-row.card {
+    display: block;
+    padding: 0;
+    grid-template-columns: none;
+    grid-template-areas: none;
+}
+
+.variant-row.card > .card-body {
+    display: block;
+    width: 100%;
+    padding: 20px;
+}
+
+.variant-row.card .variant-fields-row {
+    width: 100%;
+}

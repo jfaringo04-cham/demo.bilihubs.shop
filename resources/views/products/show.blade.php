@@ -13,10 +13,10 @@
   <div class="row g-5">
     <div class="col-lg-6">
       @php
-        $galleryImages = $product->images->count() > 0
-          ? $product->images
-          : collect([(object)['url' => $product->image ? asset('storage/' . $product->image) : 'https://via.placeholder.com/600x400?text=No+Image', 'alt_text' => $product->alt_text ?? $product->name]]);
-      @endphp
+    $galleryImages = $product->images->count() > 0
+        ? $product->images
+        : collect([(object)['url' => $product->image_url]]);
+@endphp
       <img id="main-product-image" src="{{ $galleryImages->first()->url }}" class="img-fluid rounded-3 shadow-sm" alt="{{ $galleryImages->first()->alt_text ?? $product->name }}" style="max-height: 500px; object-fit: cover; width: 100%;">
         @if($galleryImages->count() > 1)
         <div class="d-flex gap-2 mt-3">
@@ -111,7 +111,7 @@
         $productMainImageUrl = $product->image_url;
       @endphp
 
-      @if($product->variations->count() > 1)
+      @if($product->variations->count() > 0)
         <div class="mt-4">
           <label class="form-label fw-medium mb-2">Options</label>
           <div class="d-flex flex-wrap gap-2" id="variation-selector">

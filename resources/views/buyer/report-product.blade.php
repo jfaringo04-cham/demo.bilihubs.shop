@@ -10,7 +10,7 @@
   <div class="card" style="max-width: 700px;">
     <div class="card-body">
       <div class="d-flex align-items-center mb-3 pb-3 border-bottom">
-        <img src="{{ $product->image ? asset('storage/' . $product->image) : 'https://via.placeholder.com/80x80?text=No+Image' }}" class="rounded me-3" style="width: 80px; height: 80px; object-fit: cover;" alt="{{ $product->name }}">
+        <img src="{{ $product->image_url }}">
         <div>
           <h5 class="mb-1">{{ $product->name }}</h5>
           <small class="text-muted">

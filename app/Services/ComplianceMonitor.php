@@ -11,6 +11,7 @@ use App\Models\SupportTicket;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class ComplianceMonitor
 {
@@ -92,6 +93,43 @@ class ComplianceMonitor
 
         foreach ($images as $img) {
             $imagePath = storage_path('app/public/' . $img->path);
+$temporaryImagePath = null;
+
+if (!file_exists($imagePath)) {
+    try {
+        if (Storage::disk('s3')->exists($img->path)) {
+            $extension = pathinfo($img->path, PATHINFO_EXTENSION);
+
+            $temporaryImagePath = tempnam(
+                sys_get_temp_dir(),
+                'bilihub_scan_'
+            );
+
+            if ($temporaryImagePath !== false && $extension !== '') {
+                $newTempPath = $temporaryImagePath . '.' . $extension;
+
+                if (@rename($temporaryImagePath, $newTempPath)) {
+                    $temporaryImagePath = $newTempPath;
+                }
+            }
+
+            if ($temporaryImagePath !== false) {
+                file_put_contents(
+                    $temporaryImagePath,
+                    Storage::disk('s3')->get($img->path)
+                );
+
+                $imagePath = $temporaryImagePath;
+            }
+        }
+    } catch (\Throwable $e) {
+        Log::warning('Compliance scan could not retrieve product image from Supabase.', [
+            'product_id' => $product->id,
+            'image_path' => $img->path,
+            'error' => $e->getMessage(),
+        ]);
+    }
+}
             $fileName = strtolower(pathinfo($img->path, PATHINFO_FILENAME));
             $altText = strtolower($img->alt_text ?? $product->alt_text ?? $product->name ?? '');
 
@@ -168,6 +206,11 @@ class ComplianceMonitor
             } else {
                 $reasons[] = "image file not found on disk: " . basename($imagePath);
                 $severities[] = 'high';
+            }
+
+            // Remove temporary Supabase image after all compliance checks are finished.
+            if ($temporaryImagePath && file_exists($temporaryImagePath)) {
+                @unlink($temporaryImagePath);
             }
         }
 
@@ -352,7 +395,7 @@ class ComplianceMonitor
             }
         }
 
-        imagedestroy($img);
+        
 
         if ($totalSampled > 0) {
             $darkPct = $darkCount / $totalSampled;
@@ -420,8 +463,7 @@ class ComplianceMonitor
                 $pixels[] = (int) (($r + $g + $b) / 3);
             }
         }
-        imagedestroy($img);
-        imagedestroy($small);
+       
         $avg = array_sum($pixels) / count($pixels);
         $bits = '';
         foreach ($pixels as $p) {

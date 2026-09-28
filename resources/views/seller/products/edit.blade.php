@@ -149,7 +149,7 @@
       <label for="secondary_image" class="form-label">Additional Image <span class="text-muted small">(Optional)</span></label>
       @if($product->secondary_image_path)
         <div class="mb-2">
-          <img src="{{ asset('storage/' . $product->secondary_image_path) }}" class="img-fluid rounded shadow-sm" style="max-height: 200px;" alt="Secondary image">
+          <img src="{{ $product->secondary_image_url }}" class="img-fluid rounded shadow-sm" style="max-height: 200px;">
           <div class="mt-2">
             <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#removeSecondaryImageModal">
               <i class="bi bi-trash"></i> Remove Image
@@ -216,7 +216,7 @@
           <div class="variant-row card mb-3" data-variation-id="{{ $variation->id }}" data-index="{{ $variantIndex }}">
             <div class="card-body">
               <input type="hidden" name="variations[{{ $variantIndex }}][id]" value="{{ $variation->id }}">
-              <div class="row g-3 align-items-end">
+              <div class="row g-3 align-items-end variant-fields-row">
                 <div class="col-md-4">
                   <label class="form-label form-label-sm mb-0">Image</label>
                   <div class="variant-image-uploader" data-index="{{ $variantIndex }}">
@@ -284,7 +284,7 @@
         @empty
           <div class="variant-row card mb-3" data-index="0">
             <div class="card-body">
-              <div class="row g-3 align-items-end">
+              <div class="row g-3 align-items-end variant-fields-row">
                 <div class="col-md-4">
                   <label class="form-label form-label-sm mb-0">Image</label>
                   <div class="variant-image-uploader" data-index="0">

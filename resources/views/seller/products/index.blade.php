@@ -41,7 +41,10 @@
           <tr class="{{ in_array($product->compliance_status, ['flagged', 'auto_flagged']) ? 'table-danger' : ($product->compliance_status == 'pending' ? 'table-warning' : '') }}">
             <td>
               <div class="d-flex align-items-center">
-                <img src="{{ $product->image ? asset('storage/' . $product->image) : 'https://via.placeholder.com/50x50?text=No+Image' }}" class="rounded me-2" style="width: 50px; height: 50px; object-fit: cover;" alt="{{ $product->name }}">
+                <img src="{{ $product->image_url }}"
+     class="rounded me-2"
+     style="width: 50px; height: 50px; object-fit: cover;"
+     alt="{{ $product->name }}">
                 <div>
                   <strong>{{ $product->name }}</strong>
                   @if($product->compliance_status == 'flagged' && $product->flagged_reason)

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Support\Facades\Storage;
 
 class ProductVariant extends Model
 {
@@ -121,7 +122,17 @@ class ProductVariant extends Model
         }
 
         if ($this->image) {
-            return asset('storage/' . $this->image);
+            try {
+                if (Storage::disk('s3')->exists($this->image)) {
+                    return Storage::disk('s3')->url($this->image);
+                }
+            } catch (\Throwable $e) {
+                // Fall back to old local storage below.
+            }
+
+            if (Storage::disk('public')->exists($this->image)) {
+                return Storage::disk('public')->url($this->image);  
+            }
         }
 
         if ($this->product && $this->product->image_url) {

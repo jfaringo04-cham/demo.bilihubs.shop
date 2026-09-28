@@ -107,11 +107,11 @@ $revenueData = $revenueData->map(
         ->count('user_id');
 
     $lowStockProducts = $seller->products()
-        ->where('stock', '>', 0)
-        ->whereRaw('stock < COALESCE(low_stock_threshold, 10)')
-        ->orderBy('stock')
-        ->limit(5)
-        ->get();
+    ->where('stock', '>', 0)
+    ->whereRaw('stock <= COALESCE(low_stock_threshold, 10)')
+    ->orderBy('stock')
+    ->limit(5)
+    ->get();
 
     $reviewsCount = Review::whereHas('product', function ($query) use ($seller) {
         $query->where('user_id', $seller->id);
@@ -210,7 +210,7 @@ $revenueData = $revenueData->map(
         $imagePaths = [];
         if ($request->hasFile('images')) {
             foreach ($request->file('images') as $img) {
-                $stored = $img->store('products', 'public');
+                $stored = $img->store('products', 's3');
                 $imagePaths[] = $stored;
             }
             $imagePath = $imagePaths[0] ?? null;
@@ -223,7 +223,7 @@ $revenueData = $revenueData->map(
 
         $secondaryImagePath = null;
         if ($request->hasFile('secondary_image')) {
-            $secondaryImagePath = $request->file('secondary_image')->store('products', 'public');
+            $secondaryImagePath = $request->file('secondary_image')->store('products', 's3');
         }
 
         $priceMinor = (int) round((float) $request->price * 100);
@@ -295,7 +295,7 @@ $revenueData = $revenueData->map(
 
                 $varImage = null;
                 if (isset($variationData['image']) && $variationData['image']) {
-                    $varImage = $variationData['image']->store('products', 'public');
+                    $varImage = $variationData['image']->store('products', 's3');
                 }
 
                 $variation = $product->variations()->create([
@@ -344,7 +344,7 @@ $revenueData = $revenueData->map(
 
         if (!$isDraft) {
             ComplianceMonitor::recordPriceSnapshot($product);
-            ComplianceMonitor::checkProduct($product);
+            \App\Jobs\RunProductComplianceScan::dispatch($product->id);
         }
 
         $message = $isDraft ? 'Product saved as draft.' : 'Product published successfully.';
@@ -433,7 +433,7 @@ $revenueData = $revenueData->map(
         $newImagePaths = [];
         if ($request->hasFile('new_images')) {
             foreach ($request->file('new_images') as $img) {
-                $newImagePaths[] = $img->store('products', 'public');
+                $newImagePaths[] = $img->store('products', 's3');
             }
         }
 
@@ -451,27 +451,69 @@ $revenueData = $revenueData->map(
             $data['video_path'] = null;
         }
 
-        if ($request->hasFile('secondary_image')) {
-            if ($product->secondary_image_path) {
+       if ($request->hasFile('secondary_image')) {
+    if ($product->secondary_image_path) {
+        try {
+            if (\Storage::disk('s3')->exists($product->secondary_image_path)) {
+                \Storage::disk('s3')->delete($product->secondary_image_path);
+            } elseif (\Storage::disk('public')->exists($product->secondary_image_path)) {
                 \Storage::disk('public')->delete($product->secondary_image_path);
             }
-            $data['secondary_image_path'] = $request->file('secondary_image')->store('products', 'public');
+        } catch (\Throwable $e) {
+            \Log::warning('Could not delete old secondary product image.', [
+                'product_id' => $product->id,
+                'image' => $product->secondary_image_path,
+                'error' => $e->getMessage(),
+            ]);
         }
+    }
+
+    $data['secondary_image_path'] = $request
+        ->file('secondary_image')
+        ->store('products', 's3');
+}
 
         if ($request->filled('remove_secondary_image')) {
-            if ($product->secondary_image_path) {
+    if ($product->secondary_image_path) {
+        try {
+            if (\Storage::disk('s3')->exists($product->secondary_image_path)) {
+                \Storage::disk('s3')->delete($product->secondary_image_path);
+            } elseif (\Storage::disk('public')->exists($product->secondary_image_path)) {
                 \Storage::disk('public')->delete($product->secondary_image_path);
             }
-            $data['secondary_image_path'] = null;
+        } catch (\Throwable $e) {
+            \Log::warning('Could not delete secondary product image.', [
+                'product_id' => $product->id,
+                'image' => $product->secondary_image_path,
+                'error' => $e->getMessage(),
+            ]);
         }
+    }
+
+    $data['secondary_image_path'] = null;
+}
 
         if (!empty($request->remove_images)) {
             $toRemove = $product->images()->whereIn('id', $request->remove_images)->get();
             foreach ($toRemove as $img) {
-                \Storage::disk('public')->delete($img->path);
-                $product->variations()->where('image_id', $img->id)->delete();
-                $img->delete();
-            }
+    try {
+        if (\Storage::disk('s3')->exists($img->path)) {
+            \Storage::disk('s3')->delete($img->path);
+        } elseif (\Storage::disk('public')->exists($img->path)) {
+            \Storage::disk('public')->delete($img->path);
+        }
+    } catch (\Throwable $e) {
+        \Log::warning('Could not delete product image.', [
+            'product_id' => $product->id,
+            'image_id' => $img->id,
+            'image' => $img->path,
+            'error' => $e->getMessage(),
+        ]);
+    }
+
+    $product->variations()->where('image_id', $img->id)->delete();
+    $img->delete();
+}
             $removedPaths = $toRemove->pluck('path')->toArray();
             if ($product->image && in_array($product->image, $removedPaths, true)) {
                 $nextImg = $product->fresh()->images()->orderBy('sort_order')->orderBy('id')->first();
@@ -565,9 +607,21 @@ $revenueData = $revenueData->map(
                     if ($existingVar) {
                         if (isset($variationData['image']) && $variationData['image']) {
                             if ($existingVar->image) {
-                                \Storage::disk('public')->delete($existingVar->image);
-                            }
-                            $payload['image'] = $variationData['image']->store('products', 'public');
+    try {
+        if (\Storage::disk('s3')->exists($existingVar->image)) {
+            \Storage::disk('s3')->delete($existingVar->image);
+        } elseif (\Storage::disk('public')->exists($existingVar->image)) {
+            \Storage::disk('public')->delete($existingVar->image);
+        }
+    } catch (\Throwable $e) {
+        \Log::warning('Could not delete old variant image.', [
+            'variant_id' => $existingVar->id,
+            'image' => $existingVar->image,
+            'error' => $e->getMessage(),
+        ]);
+    }
+}
+                            $payload['image'] = $variationData['image']->store('products', 's3');
                         }
                         $existingVar->update($payload);
                     }
@@ -575,7 +629,7 @@ $revenueData = $revenueData->map(
                 } else {
                     $varImage = null;
                     if (isset($variationData['image']) && $variationData['image']) {
-                        $varImage = $variationData['image']->store('products', 'public');
+                        $varImage = $variationData['image']->store('products', 's3');
                     }
                     $payload['image'] = $varImage;
                     $payload['image_id'] = null;
@@ -658,7 +712,7 @@ $revenueData = $revenueData->map(
 
         if (!$isDraft) {
             ComplianceMonitor::recordPriceSnapshot($product);
-            ComplianceMonitor::checkProduct($product->fresh(), true);
+            \App\Jobs\RunProductComplianceScan::dispatch($product->id);
         }
 
         if ($wasFlagged && !$isDraft) {
@@ -763,8 +817,58 @@ $revenueData = $revenueData->map(
         }
 
         foreach ($product->images as $img) {
+    try {
+        if (\Storage::disk('s3')->exists($img->path)) {
+            \Storage::disk('s3')->delete($img->path);
+        } elseif (\Storage::disk('public')->exists($img->path)) {
             \Storage::disk('public')->delete($img->path);
         }
+    } catch (\Throwable $e) {
+        \Log::warning('Could not delete product image during product deletion.', [
+            'product_id' => $product->id,
+            'image_id' => $img->id,
+            'image' => $img->path,
+            'error' => $e->getMessage(),
+        ]);
+    }
+}
+
+        foreach ($product->variations as $variant) {
+    if (!$variant->image) {
+        continue;
+    }
+
+    try {
+        if (\Storage::disk('s3')->exists($variant->image)) {
+            \Storage::disk('s3')->delete($variant->image);
+        } elseif (\Storage::disk('public')->exists($variant->image)) {
+            \Storage::disk('public')->delete($variant->image);
+        }
+    } catch (\Throwable $e) {
+        \Log::warning('Could not delete variant image during product deletion.', [
+            'product_id' => $product->id,
+            'variant_id' => $variant->id,
+            'image' => $variant->image,
+            'error' => $e->getMessage(),
+        ]);
+    }
+}
+
+        if ($product->secondary_image_path) {
+    try {
+        if (\Storage::disk('s3')->exists($product->secondary_image_path)) {
+            \Storage::disk('s3')->delete($product->secondary_image_path);
+        } elseif (\Storage::disk('public')->exists($product->secondary_image_path)) {
+            \Storage::disk('public')->delete($product->secondary_image_path);
+        }
+    } catch (\Throwable $e) {
+        \Log::warning('Could not delete secondary image during product deletion.', [
+            'product_id' => $product->id,
+            'image' => $product->secondary_image_path,
+            'error' => $e->getMessage(),
+        ]);
+    }
+}
 
         $name = $product->name;
         $product->delete();

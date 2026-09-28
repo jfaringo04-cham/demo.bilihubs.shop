@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Storage;
 
 class Product extends Model
 {
@@ -202,19 +203,35 @@ class Product extends Model
     }
 
     public function getImageUrlAttribute(): string
-    {
-        $img = $this->display_image;
+{
+    $img = $this->display_image;
 
-        if ($img) {
-            return $img->url;
-        }
-
-        if ($this->image) {
-            return asset('storage/' . $this->image);
-        }
-
-        return 'https://via.placeholder.com/300x200?text=No+Image';
+    // Preferred: ProductImage record
+    if ($img) {
+        return $img->url;
     }
+
+    // Fallback: legacy products.image / image_path
+    $path = $this->image ?: $this->image_path;
+
+    if ($path) {
+        // New Supabase Storage
+        try {
+            if (Storage::disk('s3')->exists($path)) {
+                return Storage::disk('s3')->url($path);
+            }
+        } catch (\Throwable $e) {
+            // Fall back to old local storage.
+        }
+
+        // Old local public storage
+        if (Storage::disk('public')->exists($path)) {
+            return Storage::disk('public')->url($path);
+        }
+    }
+
+    return 'https://via.placeholder.com/300x200?text=No+Image';
+}
 
     public function getVideoUrlAttribute()
     {
@@ -231,22 +248,43 @@ class Product extends Model
             && file_exists(storage_path('app/public/' . $this->video_path));
     }
 
-    public function getSecondaryImageUrlAttribute()
-    {
-        if ($this->secondary_image_path) {
-            return asset('storage/' . $this->secondary_image_path);
-        }
-
+    public function getSecondaryImageUrlAttribute(): ?string
+{
+    if (!$this->secondary_image_path) {
         return null;
     }
 
-    public function hasSecondaryImage(): bool
-    {
-        return !empty($this->secondary_image_path)
-            && file_exists(
-                storage_path('app/public/' . $this->secondary_image_path)
-            );
+    try {
+        if (Storage::disk('s3')->exists($this->secondary_image_path)) {
+            return Storage::disk('s3')->url($this->secondary_image_path);
+        }
+    } catch (\Throwable $e) {
+        // Fall back to old local storage below.
     }
+
+    if (Storage::disk('public')->exists($this->secondary_image_path)) {
+        return Storage::disk('public')->url($this->secondary_image_path);
+    }
+
+    return null;
+}
+
+public function hasSecondaryImage(): bool
+{
+    if (!$this->secondary_image_path) {
+        return false;
+    }
+
+    try {
+        if (Storage::disk('s3')->exists($this->secondary_image_path)) {
+            return true;
+        }
+    } catch (\Throwable $e) {
+        // Check old local storage below.
+    }
+
+    return Storage::disk('public')->exists($this->secondary_image_path);
+}
 
     /*
     |--------------------------------------------------------------------------

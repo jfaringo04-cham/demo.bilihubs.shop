@@ -267,13 +267,15 @@
       <div class="d-flex flex-column gap-3">
         @foreach($lowStockProducts as $product)
           <div class="d-flex align-items-center gap-3">
-            @if($product->image_path)
-              <img src="{{ asset('storage/' . $product->image_path) }}" alt="{{ $product->name }}" class="inventory-thumb">
-            @else
-              <div class="inventory-thumb d-flex align-items-center justify-content-center">
-                <i class="bi bi-image text-muted"></i>
-              </div>
-            @endif
+            @if($product->image || $product->image_path || $product->display_image)
+    <img src="{{ $product->image_url }}"
+         alt="{{ $product->name }}"
+         class="inventory-thumb">
+@else
+    <div class="inventory-thumb d-flex align-items-center justify-content-center">
+        <i class="bi bi-image text-muted"></i>
+    </div>
+@endif
             <div class="flex-fill">
               <h6 class="fw-semibold mb-1 small">{{ \Str::limit($product->name, 30) }}</h6>
               <span class="text-muted small">{{ $product->stock }} left</span>

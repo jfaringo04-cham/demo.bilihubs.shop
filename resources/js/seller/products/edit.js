@@ -83,7 +83,7 @@ document.addEventListener('DOMContentLoaded', function () {
     row.setAttribute('data-index', index);
     row.innerHTML = `
       <div class="card-body">
-        <div class="row g-3 align-items-end">
+        <div class="row g-3 align-items-end variant-fields-row">
           <div class="col-md-4">
             <label class="form-label form-label-sm mb-0">Image</label>
             <div class="variant-image-uploader" data-index="${index}">
