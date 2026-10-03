@@ -10,10 +10,15 @@ use Illuminate\Support\Facades\Auth;
 class SupportController extends Controller
 {
     public function index()
-    {
-        $tickets = Auth::user()->supportTickets()->latest()->get();
-        return view('buyer.support.index', compact('tickets'));
-    }
+{
+    $tickets = Auth::user()
+        ->supportTickets()
+        ->with('product')
+        ->latest()
+        ->get();
+
+    return view('buyer.support.index', compact('tickets'));
+}
 
     public function create()
     {

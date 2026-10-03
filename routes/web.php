@@ -15,6 +15,7 @@ use App\Http\Controllers\Buyer\AddressController;
 use App\Http\Controllers\Buyer\ReviewController;
 use App\Http\Controllers\Buyer\SupportController;
 use App\Http\Controllers\Buyer\NotificationController;
+use App\Http\Controllers\Buyer\WishlistController;
 use App\Http\Controllers\Api\AddressApiController;
 use App\Http\Controllers\Shared\MessageController as SharedMessageController;
 use App\Http\Controllers\Admin\RegistrationController;
@@ -268,6 +269,10 @@ Route::middleware('auth')->group(function () {
     });
 
     Route::prefix('buyer')->name('buyer.')->middleware('customer')->group(function () {
+        Route::get('/wishlist', [WishlistController::class, 'index'])
+        ->name('wishlist.index');
+        Route::post('/wishlist/{product}', [WishlistController::class, 'toggle'])
+        ->name('wishlist.toggle');
         Route::get('/addresses', [AddressController::class, 'index'])->name('addresses.index');
         Route::get('/addresses/create', [AddressController::class, 'create'])->name('addresses.create');
         Route::post('/addresses', [AddressController::class, 'store'])->name('addresses.store');
@@ -335,7 +340,6 @@ Route::middleware('auth')->group(function () {
 
 Route::get('/products', [ProductController::class, 'index'])->name('products.index');
 Route::get('/products/{product}', [ProductController::class, 'show'])->name('products.show');
-Route::post('/products/{product}/reviews', [ProductController::class, 'storeReview'])->name('products.reviews.store');
 Route::get('/seller/{seller}', [SellerDashboardController::class, 'storefront'])->name('seller.storefront');
 
 Route::get('/apply/rider', [App\Http\Controllers\Auth\RegisteredUserController::class, 'createRiderApplication'])->name('apply.rider');

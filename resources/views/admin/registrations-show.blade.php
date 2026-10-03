@@ -68,7 +68,7 @@
               <i class="bi bi-file-earmark-pdf"></i> View Business Permit / DTI
             </a>
           @endif
-          @if($logistic->logo)
+          @if($logistic->logo_url)
             <img src="{{ $logistic->logo_url }}" alt="Company Logo" class="mt-2" style="max-height: 80px;">
           @endif
         @else

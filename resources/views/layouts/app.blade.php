@@ -129,20 +129,51 @@
             </li>
 
             @if(Auth::user()->isCustomer())
-              <li class="nav-item">
-                <a class="nav-link position-relative" href="{{ route('cart.index') }}" title="Shopping Cart">
-                  <i class="bi bi-cart3 fs-5"></i>
-                  @php
-                    $cartCount = \App\Models\CartItem::where('user_id', Auth::id())->count();
-                  @endphp
-                  @if($cartCount > 0)
-                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size: 0.65rem; min-width: 18px; height: 18px;">
-                      {{ $cartCount > 9 ? '9+' : $cartCount }}
-                    </span>
-                  @endif
-                </a>
-              </li>
+    @php
+        $wishlistCount = \App\Models\Wishlist::where('user_id', Auth::id())->count();
+        $cartCount = \App\Models\CartItem::where('user_id', Auth::id())->count();
+    @endphp
+
+    {{-- Wishlist --}}
+<li class="nav-item">
+    <a
+        class="nav-link position-relative"
+        href="{{ route('buyer.wishlist.index') }}"
+        title="My Wishlist"
+    >
+        <i class="bi bi-heart fs-5"></i>
+
+        <span
+            id="navbar-wishlist-count"
+            class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger {{ $wishlistCount < 1 ? 'd-none' : '' }}"
+            style="font-size: 0.65rem; min-width: 18px; height: 18px;"
+            data-count="{{ $wishlistCount }}"
+        >
+            {{ $wishlistCount > 9 ? '9+' : $wishlistCount }}
+        </span>
+    </a>
+</li>
+
+    {{-- Shopping Cart --}}
+    <li class="nav-item">
+        <a
+            class="nav-link position-relative"
+            href="{{ route('cart.index') }}"
+            title="Shopping Cart"
+        >
+            <i class="bi bi-cart3 fs-5"></i>
+
+            @if($cartCount > 0)
+                <span
+                    class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                    style="font-size: 0.65rem; min-width: 18px; height: 18px;"
+                >
+                    {{ $cartCount > 9 ? '9+' : $cartCount }}
+                </span>
             @endif
+        </a>
+    </li>
+@endif
 
             <li class="nav-item dropdown">
               <a class="nav-link dropdown-toggle d-flex align-items-center gap-2" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
@@ -180,6 +211,7 @@
                 @if(Auth::user()->isCustomer())
                   <li><a class="dropdown-item" href="{{ route('profile.edit') }}"><i class="bi bi-person me-2 text-slate-400"></i>Profile</a></li>
                   <li><a class="dropdown-item" href="{{ route('orders.index') }}"><i class="bi bi-receipt me-2 text-slate-400"></i>Orders</a></li>
+                  <li><a class="dropdown-item" href="{{ route('buyer.wishlist.index') }}"><i class="bi bi-heart me-2 text-slate-400"></i>My Wishlist</a></li>
                   <li><a class="dropdown-item" href="{{ route('buyer.addresses.index') }}"><i class="bi bi-geo me-2 text-slate-400"></i>Addresses</a></li>
                   <li><a class="dropdown-item" href="{{ route('buyer.messages.index') }}"><i class="bi bi-chat-dots me-2 text-slate-400"></i>Messages</a></li>
                   <li><a class="dropdown-item" href="{{ route('buyer.support.index') }}"><i class="bi bi-chat-left-text me-2 text-slate-400"></i>Support</a></li>

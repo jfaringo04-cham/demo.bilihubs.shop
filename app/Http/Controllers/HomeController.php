@@ -14,6 +14,7 @@ class HomeController extends Controller
         $products = Product::with(['category', 'seller'])
             ->where('compliance_status', 'approved')
             ->where('status', 'published')
+            ->withSoldCount()
             ->take(8)
             ->get();
         $categories = Category::all();

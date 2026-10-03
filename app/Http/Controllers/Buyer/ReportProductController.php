@@ -29,15 +29,19 @@ class ReportProductController extends Controller
         ]);
 
         SupportTicket::create([
-            'user_id' => Auth::id(),
-            'type' => 'complaint',
-            'subject' => 'Product Report: ' . $product->name,
-            'message' => 'Reason: ' . $request->reason . "\n\nDetails: " . $request->details,
-            'priority' => 'high',
-            'status' => 'open',
-        ]);
+    'user_id' => Auth::id(),
+    'type' => 'complaint',
+    'product_id' => $product->id,
+    'against_user_id' => $product->user_id,
+    'subject' => 'Product Report: ' . $product->name,
+    'message' => 'Reason: ' . $request->reason . "\n\nDetails: " . $request->details,
+    'priority' => 'high',
+    'status' => 'open',
+]);
 
-        $admins = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
+        $admins = User::whereHas('roles', function ($query) {
+    $query->where('name', 'superadmin');
+})->get();
         foreach ($admins as $admin) {
             Notification::create([
                 'user_id' => $admin->id,
@@ -50,6 +54,11 @@ class ReportProductController extends Controller
 
         ComplianceMonitor::checkUserReports($product);
 
-        return back()->with('success', 'Thank you for your report. Our team will review this product.');
+        return redirect()
+    ->route('buyer.support.index')
+    ->with(
+        'success',
+        'Your product report has been submitted successfully. Our team will review it.'
+    );
     }
 }

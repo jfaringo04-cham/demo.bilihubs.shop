@@ -345,10 +345,52 @@ public function hasSecondaryImage(): bool
     }
 
     /*
+|--------------------------------------------------------------------------
+| WISHLIST
+|--------------------------------------------------------------------------
+*/
+
+public function wishlists()
+{
+    return $this->hasMany(Wishlist::class);
+}
+
+public function wishlistedByUsers()
+{
+    return $this->belongsToMany(User::class, 'wishlists')
+        ->withTimestamps();
+}
+
+    /*
     |--------------------------------------------------------------------------
     | Query Scopes
     |--------------------------------------------------------------------------
     */
+
+    public function scopeWithSoldCount($query)
+{
+    return $query->withSum(
+        [
+            'orderItems as sold_count' => function ($query) {
+                $query
+                    ->join(
+                        'seller_orders',
+                        'seller_orders.id',
+                        '=',
+                        'order_items.seller_order_id'
+                    )
+                    ->join(
+                        'orders',
+                        'orders.id',
+                        '=',
+                        'seller_orders.order_id'
+                    )
+                    ->whereIn('orders.status', ['completed', 'delivered']);
+            },
+        ],
+        'quantity'
+    );
+}
 
     public function scopeTrending($query, $limit = 8, $days = 30)
     {

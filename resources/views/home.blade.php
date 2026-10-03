@@ -101,7 +101,7 @@
             'health and beauty' => 'bi-heart-pulse',
           ];
         @endphp
-        @foreach($categories as $category)
+        @foreach($categories->take(8) as $category)
           @php
             $icon = $categoryIcons[strtolower($category->name)] ?? 'bi-tag';
           @endphp
@@ -216,44 +216,26 @@
   @endif
 
   <!-- Featured Products -->
-  <section class="py-5" id="featured">
+<section class="py-5" id="featured">
     <div class="container py-4">
-      <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2 class="section-title mb-0">Featured Products</h2>
-        <a href="{{ route('products.index') }}" class="btn btn-secondary btn-sm rounded-xl">View All</a>
-      </div>
-      <div class="row g-4">
-        @foreach($products->take(8) as $product)
-          <div class="col-6 col-md-3">
-            <a href="{{ route('products.show', $product) }}" class="text-decoration-none">
-              <div class="card product-card h-100 border-0 shadow-sm">
-                <div class="position-relative">
-                  <img src="{{ $product->image_url }}" class="product-image" alt="{{ $product->alt_text ?? $product->name }}" style="height: 220px; object-fit: cover;">
-                  @if($product->hasActiveDiscount())
-                    <span class="badge bg-danger position-absolute" style="top: 12px; left: 12px; border-radius: 8px;">
-                      -{{ rtrim(rtrim(number_format($product->discount_percent, 2), '0'), '.') }}%
-                    </span>
-                  @endif
-                </div>
-                <div class="card-body">
-                  <h6 class="fw-semibold text-slate-800 mb-2" style="min-height: 40px;">{{ $product->name }}</h6>
-                  @if($product->hasActiveDiscount())
-                    <p class="price mb-1">
-                      <span class="text-danger">&#8369;{{ number_format($product->effective_price, 2) }}</span>
-                      <small class="text-muted text-decoration-line-through ms-1">&#8369;{{ number_format($product->price, 2) }}</small>
-                    </p>
-                  @else
-                    <p class="price mb-1">&#8369;{{ number_format($product->price, 2) }}</p>
-                  @endif
-                  <small class="text-muted">{{ $product->category->name ?? 'Uncategorized' }}</small>
-                </div>
-              </div>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="section-title mb-0">Featured Products</h2>
+
+            <a href="{{ route('products.index') }}"
+               class="btn btn-secondary btn-sm rounded-xl">
+                View All
             </a>
-          </div>
-        @endforeach
-      </div>
+        </div>
+
+        <div class="row g-4">
+            @foreach($products->take(8) as $product)
+                <div class="col-xl-3 col-lg-4 col-md-6 col-sm-6">
+                    <x-product-card :product="$product" />
+                </div>
+            @endforeach
+        </div>
     </div>
-  </section>
+</section>
 
    <!-- About Section -->
    <section class="about-section" id="about">

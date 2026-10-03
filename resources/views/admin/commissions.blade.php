@@ -49,7 +49,7 @@
         <select name="seller" class="form-select" onchange="this.form.submit()">
           <option value="">All Sellers</option>
           @foreach($sellers as $s)
-            <option value="{{ $s->id }}" {{ request('seller') == $s->id ? 'selected' : '' }}>{{ $s->name }}</option>
+            <option value="{{ $s->id }}" {{ request('seller') == $s->id ? 'selected' : '' }}>{{ $s->seller?->name ?? $s->name }}</option>
           @endforeach
         </select>
       </div>
@@ -83,7 +83,9 @@
         @forelse($commissions as $c)
           <tr>
             <td>{{ $c->order->order_number ?? 'N/A' }}</td>
-            <td>{{ $c->seller->name ?? 'N/A' }}</td>
+            <td>
+    {{ $c->seller?->seller?->name ?? $c->seller?->name ?? 'N/A' }}
+</td>
             <td>&#8369;{{ number_format($c->order_total_minor / 100, 2) }}</td>
             <td>{{ $c->rate }}%</td>
             <td class="fw-bold text-danger">&#8369;{{ number_format($c->amount_minor / 100, 2) }}</td>
@@ -102,7 +104,7 @@
             </td>
           </tr>
         @empty
-          <tr><td colspan="7" class="text-center text-muted py-4"><i class="bi bi-inbox"></i> No commissions yet. Delivered orders generate commissions.</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-4"><i class="bi bi-inbox"></i> No commissions yet. Completed sales generate commissions.</td></tr>
         @endforelse
       </tbody>
     </table>

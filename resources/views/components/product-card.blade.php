@@ -30,9 +30,22 @@
             <span class="trending-badge">🔥 Trending</span>
         @endif
 
-        <button type="button" class="wishlist-btn" onclick="toggleWishlist(this)" data-product-id="{{ $product->id }}">
-            <i class="bi bi-heart"></i>
-        </button>
+        @php
+    $isWishlisted = auth()->check()
+        && auth()->user()->wishlists()
+            ->where('product_id', $product->id)
+            ->exists();
+@endphp
+
+<button
+    type="button"
+    class="wishlist-btn {{ $isWishlisted ? 'active' : '' }}"
+    onclick="toggleWishlist(this)"
+    data-product-id="{{ $product->id }}"
+    aria-label="{{ $isWishlisted ? 'Remove from wishlist' : 'Add to wishlist' }}"
+>
+    <i class="bi {{ $isWishlisted ? 'bi-heart-fill' : 'bi-heart' }}"></i>
+</button>
     </div>
 
     <div class="product-info">

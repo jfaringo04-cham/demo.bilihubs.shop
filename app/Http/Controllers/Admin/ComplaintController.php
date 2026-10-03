@@ -23,8 +23,13 @@ class ComplaintController extends Controller
 
     public function index(Request $request)
     {
-        $query = SupportTicket::with(['user', 'againstUser', 'order'])
-            ->whereIn('type', ['complaint', 'dispute']);
+        $query = SupportTicket::with([
+    'user',
+    'againstUser.seller',
+    'order',
+    'product',
+])
+    ->whereIn('type', ['complaint', 'dispute']);
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -40,10 +45,16 @@ class ComplaintController extends Controller
     }
 
     public function show(SupportTicket $ticket)
-    {
-        $ticket->load(['user', 'againstUser', 'order']);
-        return view('admin.complaints-show', compact('ticket'));
-    }
+{
+    $ticket->load([
+        'user',
+        'againstUser.seller',
+        'order',
+        'product',
+    ]);
+
+    return view('admin.complaints-show', compact('ticket'));
+}
 
     public function respond(Request $request, SupportTicket $ticket)
     {
@@ -58,11 +69,12 @@ class ComplaintController extends Controller
         ]);
 
         $this->createNotification(
-            $ticket->user_id,
-            'Complaint Update',
-            'Your ' . $ticket->type . ' (Ref #' . $ticket->id . ') has been reviewed. ' . $request->response,
-            'support'
-        );
+    $ticket->user_id,
+    'Complaint Update',
+    'Your ' . $ticket->type . ' (Ref #' . $ticket->id . ') has been reviewed. ' . $request->response,
+    'support',
+    route('buyer.support.show', $ticket)
+);
 
         return back()->with('success', 'Response sent and complaint resolved.');
     }

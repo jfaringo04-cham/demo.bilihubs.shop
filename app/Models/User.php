@@ -408,4 +408,23 @@ class User extends Authenticatable
 
         return null;
     }
+     
+       /*
+|--------------------------------------------------------------------------
+| WISHLIST
+|--------------------------------------------------------------------------
+*/
+
+public function wishlists()
+{
+    return $this->hasMany(Wishlist::class);
+}
+
+public function wishlistProducts()
+{
+    return $this->belongsToMany(Product::class, 'wishlists')
+        ->withTimestamps();
+}
+
+    
 }

@@ -61,7 +61,9 @@
     <tbody>
       @forelse($bySeller as $row)
         <tr>
-          <td>{{ $row['seller']->name ?? 'N/A' }}</td>
+          <td>
+    {{ $row['seller']?->seller?->name ?? $row['seller']?->name ?? 'N/A' }}
+</td>
           <td>{{ $row['count'] }}</td>
           <td class="fw-bold text-danger">&#8369;{{ number_format($row['amount'], 2) }}</td>
         </tr>
@@ -83,7 +85,9 @@
         @forelse($commissions as $c)
           <tr>
             <td>{{ $c->order->order_number ?? 'N/A' }}</td>
-            <td>{{ $c->seller->name ?? 'N/A' }}</td>
+            <td>
+    {{ $c->seller?->seller?->name ?? $c->seller?->name ?? 'N/A' }}
+</td>
             <td>&#8369;{{ number_format($c->order_total_minor / 100, 2) }}</td>
             <td>{{ $c->rate }}%</td>
             <td class="fw-bold text-danger">&#8369;{{ number_format($c->amount_minor / 100, 2) }}</td>

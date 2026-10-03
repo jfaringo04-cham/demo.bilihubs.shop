@@ -183,6 +183,15 @@
                     <i class="bi bi-lightning-charge-fill me-1"></i> Place Order
                   </button>
                 </div>
+                      </div>
+
+              {{-- Report Product --}}
+              <div class="mt-3">
+                <a href="{{ route('buyer.report-product.create', $product) }}"
+                   class="btn btn-sm btn-outline-danger rounded-xl">
+                  <i class="bi bi-flag me-1"></i>
+                  Report Product
+                </a>
               </div>
             @endif
           @else
@@ -219,6 +228,160 @@
     </div>
   </div>
 
+    {{-- Customer Reviews --}}
+  <section class="mt-5" id="customer-reviews">
+    <div class="card border-0 shadow-sm rounded-4">
+      <div class="card-body p-4 p-lg-5">
+
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+          <div>
+            <h3 class="fw-bold text-slate-900 mb-1">
+              Customer Reviews
+            </h3>
+
+            <p class="text-muted mb-0">
+              Reviews from buyers who purchased this product.
+            </p>
+          </div>
+
+          @if($totalReviews > 0)
+            <div class="d-flex align-items-center gap-3">
+
+              <div class="text-end">
+                <div class="fs-3 fw-bold">
+                  {{ number_format($averageRating ?? 0, 1) }}
+                  <span class="fs-6 text-muted">/ 5</span>
+                </div>
+
+                <small class="text-muted">
+                  {{ $totalReviews }}
+                  {{ $totalReviews == 1 ? 'review' : 'reviews' }}
+                </small>
+              </div>
+
+              <div class="fs-4 text-warning">
+                @for($star = 1; $star <= 5; $star++)
+                  @if($star <= round($averageRating ?? 0))
+                    <i class="bi bi-star-fill"></i>
+                  @else
+                    <i class="bi bi-star"></i>
+                  @endif
+                @endfor
+              </div>
+
+            </div>
+          @endif
+        </div>
+
+        @if($reviews->count() > 0)
+
+          <div class="border-top">
+
+            @foreach($reviews as $review)
+              <div class="py-4 {{ !$loop->last ? 'border-bottom' : '' }}">
+
+                <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+
+                  <div>
+                    <div class="fw-semibold text-slate-900">
+                      <i class="bi bi-person-circle me-1 text-muted"></i>
+                      @php
+    $reviewerName = $review->user->name ?? null;
+
+    if ($reviewerName) {
+        $parts = array_values(
+            array_filter(
+                array_map('trim', explode(',', $reviewerName))
+            )
+        );
+
+        if (count($parts) >= 2) {
+            $lastName = $parts[0];
+            $firstNames = preg_split('/\s+/', $parts[1]);
+            $firstInitial = strtoupper(
+                substr($firstNames[0] ?? '', 0, 1)
+            );
+
+            $displayReviewerName = $lastName . ', ' . $firstInitial . '***';
+        } else {
+            $words = preg_split('/\s+/', trim($reviewerName));
+            $first = $words[0] ?? 'Buyer';
+            $displayReviewerName = $first . ' ' .
+                strtoupper(substr($words[1] ?? '', 0, 1)) . '***';
+        }
+    } else {
+        $displayReviewerName = 'BiliHub Buyer';
+    }
+@endphp
+
+{{ $displayReviewerName }}
+                    </div>
+
+                    <div class="text-warning mt-1">
+                      @for($star = 1; $star <= 5; $star++)
+                        @if($star <= $review->rating)
+                          <i class="bi bi-star-fill"></i>
+                        @else
+                          <i class="bi bi-star"></i>
+                        @endif
+                      @endfor
+
+                      <span class="text-dark ms-2 fw-semibold">
+                        {{ $review->rating }}/5
+                      </span>
+                    </div>
+                  </div>
+
+                  <small class="text-muted text-nowrap">
+                    {{ $review->created_at->format('M d, Y') }}
+                  </small>
+
+                </div>
+
+                @if($review->comment)
+                  <p class="mb-0 text-slate-600">
+                    {{ $review->comment }}
+                  </p>
+                @else
+                  <p class="mb-0 text-muted fst-italic">
+                    No written comment.
+                  </p>
+                @endif
+
+              </div>
+            @endforeach
+
+          </div>
+
+          @if($reviews->hasPages())
+            <div class="d-flex justify-content-center mt-4">
+              {{ $reviews->links() }}
+            </div>
+          @endif
+
+        @else
+
+          <div class="text-center border rounded-4 py-5 px-3">
+
+            <i class="bi bi-star fs-1 text-muted"></i>
+
+            <h5 class="fw-semibold mt-3 mb-2">
+              No reviews yet
+            </h5>
+
+            <p class="text-muted mb-0">
+              Buyers who complete their orders can leave a review for this product.
+            </p>
+
+          </div>
+
+        @endif
+
+      </div>
+    </div>
+  </section>
+
+  {{-- Related Products --}}
   @if($relatedProducts->count() > 0)
     <div class="mt-5">
       <h3 class="fw-bold text-slate-900 mb-3">Related Products</h3>

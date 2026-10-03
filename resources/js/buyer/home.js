@@ -146,19 +146,129 @@ const initHome = () => {
         setInterval(updateCountdown, 1000);
     }
 
-    window.toggleWishlist = (button) => {
-        if (!button) return;
-        button.classList.toggle('active');
-        const icon = button.querySelector('i');
-        if (!icon) return;
-        if (button.classList.contains('active')) {
-            icon.classList.remove('bi-heart');
-            icon.classList.add('bi-heart-fill');
-        } else {
-            icon.classList.remove('bi-heart-fill');
-            icon.classList.add('bi-heart');
+    window.toggleWishlist = async (button) => {
+    if (!button || button.disabled) return;
+
+    const productId = button.dataset.productId;
+    const csrfToken = document
+        .querySelector('meta[name="csrf-token"]')
+        ?.getAttribute('content');
+
+    if (!productId || !csrfToken) {
+        console.error('Wishlist: missing product ID or CSRF token.');
+        return;
+    }
+
+    button.disabled = true;
+
+    try {
+        const response = await fetch(`/buyer/wishlist/${productId}`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json',
+            },
+        });
+
+        if (response.status === 401 || response.status === 419) {
+            window.location.href = '/login';
+            return;
         }
-    };
+
+        if (!response.ok) {
+            throw new Error(`Wishlist request failed: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const icon = button.querySelector('i');
+
+        const wishlistBadge = document.getElementById('navbar-wishlist-count');
+
+if (wishlistBadge) {
+    let wishlistCount = Number(wishlistBadge.dataset.count || 0);
+
+    if (data.wishlisted) {
+        wishlistCount += 1;
+    } else {
+        wishlistCount = Math.max(0, wishlistCount - 1);
+    }
+
+    wishlistBadge.dataset.count = String(wishlistCount);
+    wishlistBadge.textContent = wishlistCount > 9 ? '9+' : String(wishlistCount);
+    wishlistBadge.classList.toggle('d-none', wishlistCount === 0);
+}
+
+        button.classList.toggle('active', data.wishlisted);
+
+        if (icon) {
+            icon.classList.toggle('bi-heart-fill', data.wishlisted);
+            icon.classList.toggle('bi-heart', !data.wishlisted);
+        }
+
+        button.setAttribute(
+            'aria-label',
+            data.wishlisted ? 'Remove from wishlist' : 'Add to wishlist'
+        );
+
+        // Special behavior for the My Wishlist page.
+        // Special behavior for the My Wishlist page.
+const wishlistPage = document.getElementById('wishlist-page');
+
+if (wishlistPage && data.wishlisted === false) {
+    const wishlistItem = button.closest('.wishlist-item');
+    const countElement = document.getElementById('wishlist-count');
+
+    if (wishlistItem) {
+        wishlistItem.remove();
+    }
+if (countElement) {
+    let count = Number(countElement.dataset.count || 0);
+    count = Math.max(0, count - 1);
+
+    countElement.dataset.count = String(count);
+    countElement.textContent =
+        `${count} ${count === 1 ? 'saved product' : 'saved products'}`;
+
+    if (count === 0) {
+        const productsGrid = wishlistPage.querySelector('.row.g-4');
+
+        if (productsGrid) {
+            productsGrid.remove();
+        }
+
+        countElement.closest('.mb-4')?.remove();
+
+        const emptyState = document.createElement('div');
+        emptyState.className = 'text-center py-5 my-5';
+        emptyState.innerHTML = `
+            <div class="mb-3">
+                <i class="bi bi-heart display-3 text-muted"></i>
+            </div>
+
+            <h3 class="fw-bold">Your wishlist is empty</h3>
+
+            <p class="text-muted mb-4">
+                Save products you like by clicking the heart icon.
+            </p>
+
+            <a href="/products" class="btn btn-dark px-4">
+                <i class="bi bi-bag me-1"></i>
+                Browse Products
+            </a>
+        `;
+
+        wishlistPage.appendChild(emptyState);
+    }
+}
+}
+
+    } catch (error) {
+        console.error('Wishlist error:', error);
+    } finally {
+        button.disabled = false;
+    }
+};
 
     const track = document.getElementById('testimonialsCarousel');
     if (!track) return;

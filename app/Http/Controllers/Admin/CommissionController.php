@@ -12,11 +12,16 @@ class CommissionController extends Controller
 {
     protected float $defaultRate = 10;
 
-    private function ensureCommissionsExist()
+    public function ensureCommissionsExist()
     {
-        $delivered = Order::where('status', 'delivered')->with('items.product')->get();
+        $completedOrders = Order::whereIn('status', [
+    'delivered',
+    'completed',
+])
+    ->with('items.product')
+    ->get();
 
-        foreach ($delivered as $order) {
+        foreach ($completedOrders as $order) {
             $bySeller = [];
 
             foreach ($order->items as $item) {
@@ -65,7 +70,7 @@ class CommissionController extends Controller
     {
         $this->ensureCommissionsExist();
 
-        $query = Commission::with(['order', 'seller']);
+        $query = Commission::with(['order', 'seller.seller']);
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -82,7 +87,9 @@ class CommissionController extends Controller
         $totalPending = Commission::where('status', 'pending')->sum('amount_minor') / 100;
         $totalPaid = Commission::where('status', 'paid')->sum('amount_minor') / 100;
 
-        $sellers = User::whereHas('roles', fn ($q) => $q->where('name', 'seller'))->get();
+        $sellers = User::whereHas('roles', fn ($q) => $q->where('name', 'seller'))
+    ->with('seller')
+    ->get();
 
         return view('admin.commissions', compact(
             'commissions',

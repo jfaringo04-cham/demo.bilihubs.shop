@@ -8,8 +8,18 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class SupportTicket extends Model
 {
     protected $fillable = [
-        'user_id', 'type', 'order_id', 'against_user_id', 'subject', 'message',
-        'evidence', 'priority', 'status', 'response', 'responded_at',
+        'user_id',
+        'type',
+        'order_id',
+        'product_id',
+        'against_user_id',
+        'subject',
+        'message',
+        'evidence',
+        'priority',
+        'status',
+        'response',
+        'responded_at',
     ];
 
     protected $casts = [
@@ -24,6 +34,11 @@ class SupportTicket extends Model
     public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class);
+    }
+
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class);
     }
 
     public function againstUser(): BelongsTo
