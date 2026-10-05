@@ -1,5 +1,23 @@
 @extends('layouts.logistic', ['title' => 'Sorting Area', 'logistic' => $logistic])
 
+@php
+    $formatDeliveryAddress = function ($address) {
+        if (blank($address)) {
+            return 'N/A';
+        }
+
+        $data = json_decode($address, true);
+
+        if (is_array($data)) {
+            return $data['address']
+                ?? $data['full_address']
+                ?? $address;
+        }
+
+        return $address;
+    };
+@endphp
+
 @section('content')
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
   <h1 class="h2"><i class="bi bi-box-seam"></i> Sorting Area - {{ $logistic->company_name }}</h1>
@@ -72,7 +90,7 @@
                     @endforeach
                   </td>
                   <td><small>{{ Str::limit($shipment->pickup_address, 50) }}</small></td>
-                  <td><small>{{ Str::limit($shipment->delivery_address, 50) }}</small></td>
+                  <td><small>{{ Str::limit($formatDeliveryAddress($shipment->delivery_address), 50) }}</small></td>
                   <td>
                     <span class="badge bg-secondary">{{ $shipment->delivery_zone ?? 'Not Set' }}</span>
                   </td>
@@ -125,7 +143,7 @@
                       <small class="d-block">{{ $item->product_name }} x{{ $item->quantity }}</small>
                     @endforeach
                   </td>
-                  <td><small>{{ Str::limit($shipment->delivery_address, 50) }}</small></td>
+                  <td><small>{{ Str::limit($formatDeliveryAddress($shipment->delivery_address), 50) }}</small></td>
                   <td>
                     <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#scanModal{{ $shipment->id }}">
                       <i class="bi bi-upc-scan"></i> Scan
@@ -141,24 +159,27 @@
                             </div>
                             <div class="modal-body">
                               <p><strong>Tracking:</strong> {{ $shipment->tracking_number }}</p>
-                              <p><strong>Destination:</strong> {{ $shipment->delivery_address }}</p>
+                              <p><strong>Destination:</strong> {{ $formatDeliveryAddress($shipment->delivery_address) }}</p>
                               <div class="mb-3">
-                                <label class="form-label">Delivery Zone <span class="text-danger">*</span></label>
-                                <select name="delivery_zone" class="form-select" required>
-                                  <option value="">Select Zone</option>
-                                  <option value="Zone A - Metro Manila">Zone A - Metro Manila</option>
-                                  <option value="Zone B - Luzon">Zone B - Luzon</option>
-                                  <option value="Zone C - Visayas">Zone C - Visayas</option>
-                                  <option value="Zone D - Mindanao">Zone D - Mindanao</option>
-                                  <option value="Zone E - International">Zone E - International</option>
-                                </select>
-                              </div>
+    <label class="form-label">
+        Delivery Zone <span class="text-danger">*</span>
+    </label>
+
+    <select name="delivery_zone" class="form-select" required>
+        <option value="">Select Zone</option>
+        <option value="Zone A">Zone A</option>
+        <option value="Zone B">Zone B</option>
+        <option value="Zone C">Zone C</option>
+        <option value="Zone D">Zone D</option>
+        <option value="Zone E">Zone E</option>
+    </select>
+</div>
                               <div class="mb-3">
                                 <label class="form-label">Delivery Type <span class="text-danger">*</span></label>
                                 <select name="delivery_type" class="form-select" required>
                                   <option value="standard">Standard Delivery</option>
                                   <option value="same_day">Same Day Delivery</option>
-                                  <option value="cod">Cash on Delivery (COD)</option>
+                                  <option value="express">Express Delivery</option>
                                 </select>
                               </div>
                             </div>
@@ -259,7 +280,7 @@
                                     <option value="Area B - Medium Items">Area B - Medium Items</option>
                                     <option value="Area C - Large Items">Area C - Large Items</option>
                                     <option value="Area D - Fragile">Area D - Fragile</option>
-                                    <option value="Area E - COD">Area E - COD</option>
+                                    <option value="Area E - Special Handling">Area E - Special Handling</option>
                                   </select>
                                 </div>
                                 <div class="mb-3">
@@ -418,7 +439,16 @@
                     </span>
                   </td>
                   <td>
-    @if(!$shipment->rider)
+    @php
+    $parentOrder = $shipment->sellerOrder?->order;
+
+    $isFailedReturn = !is_null($shipment->failed_return_received_at);
+
+    $canAssignRider = !$isFailedReturn
+        || ($parentOrder && $parentOrder->status === 'rescheduled');
+@endphp
+
+@if(!$shipment->rider && $canAssignRider)
         <button type="button"
                 class="btn btn-sm btn-outline-success"
                 data-bs-toggle="modal"
@@ -510,6 +540,12 @@
                 </div>
             </div>
         </div>
+        @elseif(!$shipment->rider && $isFailedReturn && !$canAssignRider)
+        <span class="badge bg-warning text-dark">
+            <i class="bi bi-clock"></i>
+            Awaiting Reschedule
+        </span>
+
     @else
         <span class="text-success">
             <i class="bi bi-check-circle"></i>
@@ -531,9 +567,6 @@
       </div>
     </div>
   </div>
-
-  <!-- By Zone -->
-  <div class="tab-pane fade" id="zones" role="tabpanel"></div>
 
   <!-- By Zone -->
   <div class="tab-pane fade" id="zones" role="tabpanel">
@@ -581,7 +614,7 @@
                     <tr>
                       <td><code>{{ $shipment->tracking_number }}</code></td>
                       <td>{{ $shipment->sellerOrder?->order?->order_number ?? 'N/A' }}</td>
-                      <td><small>{{ Str::limit($shipment->delivery_address, 50) }}</small></td>
+                      <td><small>{{ Str::limit($formatDeliveryAddress($shipment->delivery_address), 50) }}</small></td>
                       <td>
                         <span class="badge bg-{{ $shipment->sorting_status == 'staged' ? 'success' : 'primary' }}">{{ ucfirst($shipment->sorting_status) }}</span>
                       </td>

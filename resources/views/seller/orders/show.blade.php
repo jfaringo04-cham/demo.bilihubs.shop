@@ -178,7 +178,7 @@
       @endif
     </div>
 
-    @if($order->status == 'delivery_failed')
+    @if($order->status == 'reschedule_requested')
       <div class="table-container mb-4">
         <h5 class="mb-3">Delivery Failed - Action Required</h5>
         <div class="alert alert-warning">

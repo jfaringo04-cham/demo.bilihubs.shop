@@ -94,34 +94,65 @@
           <tbody>
             @forelse($assignedOrders as $order)
               @php
-                $distance = null;
-                if ($order->customer_latitude && $order->customer_longitude && Auth::user()->latitude && Auth::user()->longitude) {
-                  $distance = $order->calculateDistance(
-                    Auth::user()->latitude,
-                    Auth::user()->longitude,
-                    $order->customer_latitude,
-                    $order->customer_longitude
-                  );
-                }
-              @endphp
+    $distance = null;
+
+    if (
+        $order->customer_latitude &&
+        $order->customer_longitude &&
+        Auth::user()->latitude &&
+        Auth::user()->longitude
+    ) {
+        $distance = $order->calculateDistance(
+            Auth::user()->latitude,
+            Auth::user()->longitude,
+            $order->customer_latitude,
+            $order->customer_longitude
+        );
+    }
+
+    $shippingData = json_decode($order->shipping_address, true);
+
+    $displayAddress = is_array($shippingData)
+        ? ($shippingData['address'] ?? $order->shipping_address)
+        : $order->shipping_address;
+@endphp
               <tr>
                 <td>{{ $order->order_number }}</td>
                 <td>{{ $order->user->name ?? 'N/A' }}</td>
                 <td>
-                  <a href="https://www.google.com/maps/dir/?api=1&destination={{ urlencode($order->shipping_address) }}" target="_blank" class="text-decoration-none">
-                    {{ Str::limit($order->shipping_address, 30) }}
-                  </a>
+                  <a href="https://www.google.com/maps/dir/?api=1&destination={{ urlencode($displayAddress) }}"
+   target="_blank"
+   class="text-decoration-none">
+
+    {{ Str::limit($displayAddress, 30) }}
+</a>
                 </td>
                 <td>
                   <span class="badge bg-info">{{ $order->delivery_zone ?? 'N/A' }}</span>
                 </td>
                 <td>
-                  @if($order->ready_for_pickup)
-                    <span class="badge bg-success">Ready</span>
-                  @else
-                    <span class="badge bg-secondary">Pending</span>
-                  @endif
-                </td>
+  @if($order->delivery_status === 'delivered')
+    <span class="badge bg-success">Completed</span>
+
+  @elseif($order->delivery_status === 'delivery_failed')
+    <span class="badge bg-danger">Failed</span>
+
+  @elseif($order->delivery_status === 'out_for_delivery')
+    <span class="badge bg-primary">Out for Delivery</span>
+
+  @elseif($order->delivery_status === 'picked_up_from_sorting_center')
+    <span class="badge bg-primary">Picked Up</span>
+
+  @elseif($order->delivery_status === 'ready_for_delivery_pickup')
+    <span class="badge bg-info">Ready for Delivery</span>
+
+  @elseif($order->ready_for_pickup)
+    <span class="badge bg-warning text-dark">Ready</span>
+
+  @else
+    <span class="badge bg-secondary">Pending</span>
+  @endif
+</td>
                 <td>
                   @if($distance)
                     {{ number_format($distance, 1) }} km
@@ -161,11 +192,26 @@
   @vite('resources/js/rider/dashboard.js')
 @endpush
 
-<script type="application/json" id="rider-dashboard-data">@json($assignedOrders
-  ->map(fn($order) => [
-    'address' => $order->shipping_address,
-    'customerName' => $order->user->name ?? 'Customer',
-  ])
-  ->values())</script>
+@php
+    $dashboardOrders = $assignedOrders->map(function ($order) {
+        $shippingData = json_decode($order->shipping_address, true);
 
+        return [
+            'address' => is_array($shippingData)
+                ? ($shippingData['address'] ?? $order->shipping_address)
+                : $order->shipping_address,
 
+            'customerName' => $order->user->name ?? 'Customer',
+
+            'latitude' => $order->customer_latitude
+                ? (float) $order->customer_latitude
+                : null,
+
+            'longitude' => $order->customer_longitude
+                ? (float) $order->customer_longitude
+                : null,
+        ];
+    })->values();
+@endphp
+
+<script type="application/json" id="rider-dashboard-data">@json($dashboardOrders)</script>

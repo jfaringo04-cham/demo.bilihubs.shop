@@ -102,68 +102,75 @@ class OrderController extends Controller
     }
 
     public function requestReschedule(Request $request, Order $order)
-    {
-        if ($order->user_id !== Auth::id()) abort(403);
-
-        if ($order->status !== 'delivery_failed') {
-            return back()->with('error', 'This order is not eligible for reschedule.');
-        }
-
-        $request->validate(['reschedule_reason' => 'nullable|string|max:1000']);
-
-        $order->update([
-            'status' => 'rescheduled',
-            'reschedule_reason' => $request->reschedule_reason,
-            'reschedule_requested_at' => now(),
-            'rescheduled_at' => now(),
-            'delivery_status' => 'pending',
-            'failed_at' => null,
-            'failure_reason' => null,
-        ]);
-
-        foreach ($order->sellerOrders()->with('shipment')->get() as $sellerOrder) {
-            $shipment = $sellerOrder->shipment;
-            if (!$shipment) continue;
-
-            $bestRider = \App\Services\RiderAssignmentService::findBestRiderForShipment($shipment);
-
-            if ($bestRider) {
-                \App\Services\RiderAssignmentService::assignRiderToShipment($shipment, $bestRider);
-
-                \App\Models\Notification::create([
-                    'user_id' => $bestRider->id,
-                    'title' => 'Rescheduled Delivery Assigned',
-                    'type' => 'delivery',
-                    'message' => 'Order ' . $order->order_number .
-                        ' has been rescheduled for delivery. Destination: ' .
-                        ($shipment->delivery_zone ?: 'N/A') .
-                        '. Please proceed with the delivery.',
-                    'link' => route('rider.pickups'),
-                ]);
-            }
-        }
-
-        $this->createNotification(
-            $order->user_id,
-            'Delivery Rescheduled',
-            'Your order ' . $order->order_number . ' has been rescheduled for delivery.',
-            'order',
-            route('orders.show', $order)
-        );
-
-        $seller = $order->items->first()->product->user ?? null;
-        if ($seller) {
-            $this->createNotification(
-                $seller->id,
-                'Order Rescheduled',
-                'Order ' . $order->order_number . ' has been rescheduled for delivery.',
-                'order',
-                route('seller.orders.show', $order)
-            );
-        }
-
-        return back()->with('success', 'Delivery rescheduled successfully. A rider will be assigned shortly.');
+{
+    if ($order->user_id !== Auth::id()) {
+        abort(403);
     }
+
+    if ($order->status !== 'delivery_failed') {
+        return back()->with(
+            'error',
+            'This order is not eligible for reschedule.'
+        );
+    }
+
+    $request->validate([
+        'reschedule_reason' => 'nullable|string|max:1000',
+    ]);
+
+    /*
+     * Buyer is only REQUESTING a reschedule here.
+     * Do not assign another rider yet.
+     * Do not clear the failed-delivery information yet.
+     */
+    $order->update([
+        'status' => 'reschedule_requested',
+        'reschedule_reason' => $request->reschedule_reason,
+        'reschedule_requested_at' => now(),
+        'rescheduled_at' => null,
+    ]);
+
+    /*
+     * Keep:
+     * delivery_status = delivery_failed
+     * failed_at
+     * failure_reason
+     *
+     * These will remain until the reschedule is approved
+     * and the parcel is ready for another delivery attempt.
+     */
+
+    $this->createNotification(
+        $order->user_id,
+        'Reschedule Requested',
+        'Your reschedule request for order ' .
+            $order->order_number .
+            ' has been submitted.',
+        'order',
+        route('orders.show', $order)
+    );
+
+    $seller = $order->items->first()?->product?->user;
+
+    if ($seller) {
+        $this->createNotification(
+            $seller->id,
+            'Reschedule Requested',
+            'Buyer requested a delivery reschedule for order ' .
+                $order->order_number .
+                ($request->reschedule_reason
+                    ? '. Reason: ' . $request->reschedule_reason
+                    : '.'),
+            'order',
+            route('seller.orders.show', $order)
+        );
+    }
+
+    return back()->with(
+        'success',
+        'Reschedule request submitted successfully.'
+    );
+}
 
     public function requestCancellation(Request $request, Order $order)
     {

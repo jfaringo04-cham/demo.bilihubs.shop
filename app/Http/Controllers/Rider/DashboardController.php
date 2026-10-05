@@ -87,21 +87,31 @@ class DashboardController extends Controller
     }
 
     public function show(Order $order)
-    {
-        if ($order->rider_id !== Auth::id()) {
-            abort(403);
-        }
-
-        $order->load('user', 'items.product');
-
-        return view('rider.orders.show', compact('order'));
+{
+    if ($order->rider_id !== Auth::id()) {
+        abort(403);
     }
+
+    $order->load('user', 'items.product');
+
+    $shipment = $this->riderShipmentForOrder($order, Auth::user());
+
+    return view('rider.orders.show', compact('order', 'shipment'));
+}
 
     public function updateStatus(Request $request, Order $order)
     {
         if ($order->rider_id !== Auth::id()) {
             abort(403);
         }
+
+          // Lock completed deliveries
+    if ($order->delivery_status === 'delivered') {
+        return back()->with(
+            'error',
+            'This delivery has already been completed and can no longer be modified.'
+        );
+    }
 
         $request->validate([
             'delivery_status' => 'required|in:out_for_delivery,delivered,delivery_failed',
@@ -129,8 +139,14 @@ class DashboardController extends Controller
         ];
 
         if ($request->delivery_status === 'delivered') {
-            $data['delivered_at'] = now();
-            $data['status'] = 'delivered';
+    $data['delivered_at'] = now();
+    $data['status'] = 'delivered';
+
+    // A successful delivery should not keep the previous
+    // failed-attempt message as the current delivery note.
+    $data['delivery_notes'] = $request->filled('delivery_notes')
+        ? $request->delivery_notes
+        : null;
 
             // Handle proof of delivery upload
             if ($request->hasFile('proof_of_delivery')) {
@@ -142,6 +158,7 @@ class DashboardController extends Controller
             if ($shipment = $this->riderShipmentForOrder($order)) {
     $shipment->update([
         'status' => 'delivered',
+        'sorting_status' => 'completed',
         'delivered_at' => now(),
     ]);
 
@@ -211,10 +228,17 @@ class DashboardController extends Controller
                 ]);
             }
 
-            Auth::user()->decrement('current_load');
-            if (Auth::user()->current_load < Auth::user()->max_capacity) {
-                Auth::user()->update(['availability_status' => 'available']);
-            }
+            if (Auth::user()->current_load > 0) {
+    Auth::user()->decrement('current_load');
+}
+
+Auth::user()->refresh();
+
+if (Auth::user()->current_load < Auth::user()->max_capacity) {
+    Auth::user()->update([
+        'availability_status' => 'available',
+    ]);
+}
 
             $this->createNotification(
                 $order->user_id,
@@ -377,20 +401,20 @@ class DashboardController extends Controller
     }
 
     public function deliveries(Request $request)
-    {
-        $rider = Auth::user();
+{
+    $rider = Auth::user();
 
-        $deliveries = Order::where(function ($query) {
-            $query->whereNull('rider_id')
-                  ->orWhere('delivery_status', 'pending');
-        })
-        ->where('ready_for_pickup', true)
+    $deliveries = Order::where('rider_id', $rider->id)
+        ->whereIn('delivery_status', [
+            'picked_up_from_sorting_center',
+            'out_for_delivery',
+        ])
         ->with(['user', 'items.product'])
         ->latest()
         ->paginate(20);
 
-        return view('rider.deliveries', compact('deliveries'));
-    }
+    return view('rider.deliveries', compact('deliveries'));
+}
 
     public function accept(Order $order)
     {
@@ -500,8 +524,12 @@ class DashboardController extends Controller
     {
         $rider = Auth::user();
         $query = Order::where('rider_id', $rider->id)
-            ->whereIn('delivery_status', ['assigned_to_rider', 'in_transit'])
-            ->with(['user', 'items.product', 'sellerOrders.shipment']);
+    ->whereIn('delivery_status', [
+        'assigned_to_rider',
+        'in_transit',
+        'ready_for_delivery_pickup',
+    ])
+    ->with(['user', 'items.product', 'sellerOrders.shipment']);
 
         if ($request->filled('status')) {
             $query->where('delivery_status', $request->status);
@@ -582,10 +610,9 @@ class DashboardController extends Controller
         }
 
         $order->update([
-            'status' => 'at_sorting_center',
-            'delivery_status' => 'delivered_to_sorting_center',
-            'delivered_at' => now(),
-        ]);
+    'status' => 'at_sorting_center',
+    'delivery_status' => 'delivered_to_sorting_center',
+]);
 
         if ($shipment) {
             $shipment->update([
@@ -597,11 +624,19 @@ class DashboardController extends Controller
         }
 
         if ($oldRider) {
-            $oldRider->decrement('current_load');
-            if ($oldRider->current_load < $oldRider->max_capacity) {
-                $oldRider->update(['availability_status' => 'available']);
-            }
-        }
+    // Never allow rider load to become negative.
+    if ($oldRider->current_load > 0) {
+        $oldRider->decrement('current_load');
+    }
+
+    $oldRider->refresh();
+
+    if ($oldRider->current_load < $oldRider->max_capacity) {
+        $oldRider->update([
+            'availability_status' => 'available',
+        ]);
+    }
+}
 
         // Notify sorting center / logistic owner that parcel is awaiting confirmation
         $logisticOwner = \App\Models\Logistic::find(Auth::user()->logistic_id)->owner ?? null;
@@ -618,6 +653,103 @@ class DashboardController extends Controller
 
         return back()->with('success', 'Parcel delivered to sorting center. Awaiting sorting center confirmation.');
     }
+
+    public function returnFailedToSortingCenter(Request $request, Order $order)
+{
+    // Only the rider currently assigned to this order can return it.
+    if ($order->rider_id !== Auth::id()) {
+        abort(403);
+    }
+
+    // This action is only allowed for a failed delivery.
+    if ($order->delivery_status !== 'delivery_failed') {
+        return back()->with(
+            'error',
+            'Only failed deliveries can be returned to the sorting center.'
+        );
+    }
+
+    $request->validate([
+        'notes' => 'nullable|string|max:1000',
+    ]);
+
+    $rider = Auth::user();
+
+    // Get the shipment currently handled by this rider.
+    $shipment = $this->riderShipmentForOrder($order, $rider);
+
+    if (!$shipment) {
+        return back()->with(
+            'error',
+            'No shipment was found for this failed delivery.'
+        );
+    }
+
+    // Make sure the shipment has a hub/sorting center.
+    if (!$shipment->hub_id && $shipment->sellerOrder) {
+        $hub = \App\Services\HubAssignmentService::findBestHubForSellerOrder(
+            $shipment->sellerOrder
+        );
+
+        if ($hub) {
+            $shipment->update([
+                'hub_id' => $hub->id,
+                'logistic_id' => $hub->logistic_id,
+            ]);
+        }
+    }
+
+    /*
+     * The parcel has physically arrived back at the sorting center,
+     * but Logistics still needs to confirm receipt.
+     */
+    $shipment->update([
+        'status' => 'failed_return_at_sorting_center',
+        'sorting_status' => 'pending',
+        'failed_returned_to_sorting_center_at' => now(),
+        'failed_return_received_at' => null,
+        'received_by_sorting_center' => false,
+        'notes' => ($shipment->notes ? $shipment->notes . "\n" : '') .
+            ($request->notes
+                ? 'Failed delivery returned by rider: ' . $request->notes
+                : 'Failed delivery returned by rider to sorting center.'),
+    ]);
+
+    /*
+     * Keep the order as delivery_failed.
+     * The delivery attempt really failed, so we should not erase that
+     * state until the buyer chooses the next action.
+     */
+    $order->update([
+        'status' => 'delivery_failed',
+        'delivery_status' => 'delivery_failed',
+    ]);
+
+    // Notify Logistics that the returned parcel needs physical confirmation.
+    $logisticOwner = \App\Models\Logistic::find($shipment->logistic_id)->owner ?? null;
+
+    if ($logisticOwner) {
+        $hubName = $shipment->hub
+            ? $shipment->hub->name
+            : 'Sorting Center';
+
+        $this->createNotification(
+            $logisticOwner->id,
+            'Failed Parcel Awaiting Receipt',
+            'Rider ' . $rider->name .
+                ' returned failed delivery ' . $order->order_number .
+                ' to ' . $hubName .
+                '. Please confirm physical receipt.',
+            'shipment',
+            route('logistic.sorting-area')
+        );
+    }
+
+    return back()->with(
+        'success',
+        'Failed parcel returned to sorting center. Awaiting logistics confirmation.'
+    );
+}
 
     public function pickupFromSortingCenter(Order $order)
     {
@@ -656,7 +788,7 @@ class DashboardController extends Controller
         $rider = Auth::user();
 
         $query = Order::where('rider_id', $rider->id)
-            ->whereIn('delivery_status', ['delivered', 'failed'])
+            ->whereIn('delivery_status', ['delivered', 'delivery_failed'])
             ->with(['user', 'items.product']);
 
         if ($request->filled('status')) {

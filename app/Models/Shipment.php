@@ -42,7 +42,9 @@ class Shipment extends Model
         'sorted_at',
         'staged_at',
         'received_by_sorting_center',
-    ];
+        'failed_returned_to_sorting_center_at',
+        'failed_return_received_at',
+        ];
 
     protected $casts = [
         'picked_up_at' => 'datetime',
@@ -149,8 +151,13 @@ class Shipment extends Model
         }
 
         if ($this->status === 'in_transit' || $this->status === 'delivered') {
-            $steps[] = ['label' => 'In Transit', 'timestamp' => null, 'class' => 'primary'];
-        }
+    $steps[] = [
+        'label' => 'In Transit',
+        'timestamp' => null,
+        'class' => 'primary',
+        'completed' => true,
+    ];
+}
 
         if ($this->status === 'delivered') {
             $steps[] = ['label' => 'Delivered', 'timestamp' => $this->delivered_at, 'class' => 'success'];

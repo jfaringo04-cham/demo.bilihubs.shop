@@ -49,13 +49,92 @@
             <p class="fw-bold">{{ $shipment->created_at->format('M d, Y h:i A') }}</p>
           </div>
           <div class="col-12">
-            <label class="form-label text-muted">Pickup Address</label>
-            <p class="fw-bold">{{ $shipment->pickup_address }}</p>
-          </div>
+  <label class="form-label text-muted">Pickup Location</label>
+
+  @php
+    $pickupParts = array_map(
+        'trim',
+        explode(',', $shipment->pickup_address ?? '')
+    );
+
+    $pickupStore = !empty($pickupParts)
+        ? array_shift($pickupParts)
+        : null;
+
+    $pickupAddress = implode(', ', $pickupParts);
+  @endphp
+
+  <div class="border rounded-3 p-3 bg-light">
+
+    @if($pickupStore)
+      <div class="mb-2">
+        <small class="text-muted d-block">Store / Seller</small>
+        <span class="fw-bold">
+          <i class="bi bi-shop me-1"></i>
+          {{ $pickupStore }}
+        </span>
+      </div>
+    @endif
+
+    <div>
+      <small class="text-muted d-block">Pickup Address</small>
+      <span class="fw-semibold">
+        <i class="bi bi-geo-alt me-1"></i>
+        {{ $pickupAddress ?: 'No pickup address available.' }}
+      </span>
+    </div>
+
+  </div>
+</div>
           <div class="col-12">
-            <label class="form-label text-muted">Delivery Address</label>
-            <p class="fw-bold">{{ $shipment->delivery_address }}</p>
-          </div>
+  <label class="form-label text-muted">Delivery Address</label>
+
+  @php
+    $deliveryData = json_decode($shipment->delivery_address ?? '', true);
+
+    $deliveryRecipient = is_array($deliveryData)
+        ? ($deliveryData['recipient'] ?? null)
+        : null;
+
+    $deliveryPhone = is_array($deliveryData)
+        ? ($deliveryData['phone'] ?? null)
+        : null;
+
+    $deliveryAddress = is_array($deliveryData)
+        ? ($deliveryData['address'] ?? $shipment->delivery_address)
+        : $shipment->delivery_address;
+  @endphp
+
+  <div class="border rounded-3 p-3 bg-light">
+    @if($deliveryRecipient)
+      <div class="mb-2">
+        <small class="text-muted d-block">Recipient</small>
+        <span class="fw-bold">
+          <i class="bi bi-person me-1"></i>
+          {{ $deliveryRecipient }}
+        </span>
+      </div>
+    @endif
+
+    @if($deliveryPhone)
+      <div class="mb-2">
+        <small class="text-muted d-block">Contact Number</small>
+        <span class="fw-semibold">
+          <i class="bi bi-telephone me-1"></i>
+          {{ $deliveryPhone }}
+        </span>
+      </div>
+    @endif
+
+    <div>
+      <small class="text-muted d-block">Address</small>
+      <span class="fw-semibold">
+        <i class="bi bi-geo-alt me-1"></i>
+        {{ $deliveryAddress ?: 'No delivery address available.' }}
+      </span>
+    </div>
+  </div>
+</div>
           @if($shipment->notes)
             <div class="col-12">
               <label class="form-label text-muted">Notes</label>
@@ -90,35 +169,93 @@
       </div>
     </div>
 
+    @if(!in_array($shipment->status, ['delivered', 'cancelled'], true))
     <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white">
-        <h5 class="mb-0">Update Status</h5>
-      </div>
-      <div class="card-body">
-        <form method="POST" action="{{ route('logistic.shipments.status', $shipment) }}">
-          @csrf
-          <div class="row g-3">
-            <div class="col-md-8">
-              <select name="status" class="form-select">
-                <option value="pending" {{ $shipment->status == 'pending' ? 'selected' : '' }}>Pending</option>
-                <option value="assigned" {{ $shipment->status == 'assigned' ? 'selected' : '' }}>Assigned</option>
-                <option value="picked_up" {{ $shipment->status == 'picked_up' ? 'selected' : '' }}>Picked Up</option>
-                <option value="in_transit" {{ $shipment->status == 'in_transit' ? 'selected' : '' }}>In Transit</option>
-                <option value="delivered" {{ $shipment->status == 'delivered' ? 'selected' : '' }}>Delivered</option>
-                <option value="cancelled" {{ $shipment->status == 'cancelled' ? 'selected' : '' }}>Cancelled</option>
-                <option value="delayed" {{ $shipment->status == 'delayed' ? 'selected' : '' }}>Delayed</option>
-              </select>
-            </div>
-            <div class="col-md-4">
-              <button type="submit" class="btn btn-bili-hub w-100">Update Status</button>
-            </div>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
+        <div class="card-header bg-white">
+            <h5 class="mb-0">Update Status</h5>
+        </div>
 
-  <div class="col-md-4">
+        <div class="card-body">
+            <form method="POST"
+                  action="{{ route('logistic.shipments.status', $shipment) }}">
+                @csrf
+
+                <div class="row g-3">
+                    <div class="col-md-8">
+                        <select name="status" class="form-select">
+                            <option value="pending"
+                                {{ $shipment->status == 'pending' ? 'selected' : '' }}>
+                                Pending
+                            </option>
+
+                            <option value="assigned"
+                                {{ $shipment->status == 'assigned' ? 'selected' : '' }}>
+                                Assigned
+                            </option>
+
+                            <option value="picked_up"
+                                {{ $shipment->status == 'picked_up' ? 'selected' : '' }}>
+                                Picked Up
+                            </option>
+
+                            <option value="in_transit"
+                                {{ $shipment->status == 'in_transit' ? 'selected' : '' }}>
+                                In Transit
+                            </option>
+
+                            <option value="delivered"
+                                {{ $shipment->status == 'delivered' ? 'selected' : '' }}>
+                                Delivered
+                            </option>
+
+                            <option value="cancelled"
+                                {{ $shipment->status == 'cancelled' ? 'selected' : '' }}>
+                                Cancelled
+                            </option>
+
+                            <option value="delayed"
+                                {{ $shipment->status == 'delayed' ? 'selected' : '' }}>
+                                Delayed
+                            </option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-4">
+                        <button type="submit"
+                                class="btn btn-bili-hub w-100">
+                            Update Status
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+@else
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            @if($shipment->status === 'delivered')
+                <i class="bi bi-check-circle-fill text-success fs-1"></i>
+
+                <h5 class="mt-3 mb-1">Delivery Completed</h5>
+
+                <p class="text-muted mb-0">
+                    This shipment has already been delivered and can no longer be modified.
+                </p>
+            @else
+                <i class="bi bi-x-circle-fill text-danger fs-1"></i>
+
+                <h5 class="mt-3 mb-1">Shipment Cancelled</h5>
+
+                <p class="text-muted mb-0">
+                    This shipment has been cancelled and can no longer be modified.
+                </p>
+            @endif
+        </div>
+    </div>
+@endif
+
+  <div class="col-12">
+    @if(!in_array($shipment->status, ['delivered', 'cancelled'], true))
     <div class="card border-0 shadow-sm mb-4">
       <div class="card-header bg-white">
         <h5 class="mb-0">Assign Rider</h5>
@@ -141,6 +278,7 @@
         </form>
       </div>
     </div>
+    @endif
 
     <div class="card border-0 shadow-sm">
       <div class="card-header bg-white d-flex justify-content-between align-items-center">
@@ -154,16 +292,23 @@
               <div class="timeline-content">
                 <h6 class="mb-0">{{ $step['label'] }}</h6>
                 @if($step['timestamp'])
-                  @php
-                    $ts = $step['timestamp'];
-                    if (!$ts instanceof \Carbon\Carbon) {
-                        $ts = \Carbon\Carbon::parse($ts);
-                    }
-                  @endphp
-                  <small class="text-muted">{{ $ts->format('M d, Y h:i A') }}</small>
-                @else
-                  <small class="text-muted">Pending</small>
-                @endif
+    @php
+        $ts = $step['timestamp'];
+        if (!$ts instanceof \Carbon\Carbon) {
+            $ts = \Carbon\Carbon::parse($ts);
+        }
+    @endphp
+
+    <small class="text-muted">
+        {{ $ts->format('M d, Y h:i A') }}
+    </small>
+@elseif($step['completed'] ?? false)
+    <small class="text-success">
+        <i class="bi bi-check-circle me-1"></i>Completed
+    </small>
+@else
+    <small class="text-muted">Pending</small>
+@endif
               </div>
             </div>
           @endforeach

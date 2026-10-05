@@ -67,7 +67,11 @@ use Illuminate\Support\Facades\Storage;
     'preferred_logistic_id',
     'daily_pickups_completed',
     'daily_deliveries_completed',
-    'last_quota_reset_date'
+    'last_quota_reset_date',
+
+    'latitude',
+    'longitude',
+    'location_updated_at',
 ])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable

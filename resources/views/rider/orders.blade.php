@@ -48,25 +48,45 @@
                     $order->customer_longitude
                   );
                 }
+                $shippingData = json_decode($order->shipping_address, true);
+
+$displayAddress = is_array($shippingData)
+    ? ($shippingData['address'] ?? $order->shipping_address)
+    : $order->shipping_address;
               @endphp
               <tr>
                 <td>{{ $order->order_number }}</td>
                 <td>{{ $order->user->name ?? 'N/A' }}</td>
                 <td>
-                  <a href="https://www.google.com/maps/dir/?api=1&destination={{ urlencode($order->shipping_address) }}" target="_blank" class="text-decoration-none">
-                    {{ Str::limit($order->shipping_address, 40) }}
-                  </a>
-                </td>
+    <a href="https://www.google.com/maps/dir/?api=1&destination={{ urlencode($displayAddress) }}"
+       target="_blank"
+       class="text-decoration-none">
+        {{ Str::limit($displayAddress, 40) }}
+    </a>
+</td>
                 <td>{{ $order->user->phone ?? 'N/A' }}</td>
                 <td>
                   <span class="badge bg-info">{{ $order->delivery_zone ?? 'N/A' }}</span>
                 </td>
                 <td>
-                  @if($order->ready_for_pickup)
-                    <span class="badge bg-success">Ready</span>
-                  @else
-                    <span class="badge bg-secondary">Pending</span>
-                  @endif
+                  @if($order->delivery_status === 'delivered')
+    <span class="badge bg-success">Completed</span>
+
+@elseif($order->delivery_status === 'delivery_failed')
+    <span class="badge bg-danger">Failed</span>
+
+@elseif(in_array($order->delivery_status, [
+    'picked_up_from_sorting_center',
+    'out_for_delivery'
+]))
+    <span class="badge bg-primary">In Delivery</span>
+
+@elseif($order->ready_for_pickup)
+    <span class="badge bg-warning text-dark">Ready</span>
+
+@else
+    <span class="badge bg-secondary">Pending</span>
+@endif
                 </td>
                 <td>
                   @if($distance)

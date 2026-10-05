@@ -10,7 +10,9 @@ use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+
 
 class CheckoutController extends Controller
 {
@@ -26,30 +28,123 @@ class CheckoutController extends Controller
     }
 
     private function geocodeAddress($address)
-    {
-        $apiKey = config('services.googlemaps.key');
-        if (!$apiKey) {
-            return null;
-        }
-
-        $url = 'https://maps.googleapis.com/maps/api/geocode/json?address=' . urlencode($address) . '&key=' . $apiKey;
-
-        $response = @file_get_contents($url);
-        if (!$response) {
-            return null;
-        }
-
-        $data = json_decode($response, true);
-        if ($data['status'] === 'OK' && !empty($data['results'])) {
-            $location = $data['results'][0]['geometry']['location'];
-            return [
-                'lat' => $location['lat'],
-                'lng' => $location['lng'],
-            ];
-        }
-
+{
+    if (empty($address)) {
         return null;
     }
+
+    /*
+     * 1. Try Google Maps first if configured.
+     */
+    $apiKey = config('services.googlemaps.key');
+
+    if (!empty($apiKey)) {
+        try {
+            $response = Http::timeout(10)->get(
+                'https://maps.googleapis.com/maps/api/geocode/json',
+                [
+                    'address' => $address,
+                    'key' => $apiKey,
+                ]
+            );
+
+            if ($response->successful()) {
+                $data = $response->json();
+
+                if (
+                    ($data['status'] ?? null) === 'OK' &&
+                    !empty($data['results'][0]['geometry']['location'])
+                ) {
+                    $location = $data['results'][0]['geometry']['location'];
+
+                    return [
+                        'lat' => (float) $location['lat'],
+                        'lng' => (float) $location['lng'],
+                    ];
+                }
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /*
+     * 2. OpenStreetMap fallback.
+     *
+     * Try the complete address first.
+     * If that fails, progressively remove the most specific
+     * address components until a usable location is found.
+     */
+    $parts = array_values(
+        array_filter(
+            array_map('trim', explode(',', $address))
+        )
+    );
+
+    $queries = [];
+
+    // Complete buyer-entered address.
+    $queries[] = $address;
+
+    // Progressively remove the first / most specific components.
+    for ($i = 1; $i < count($parts); $i++) {
+        $remaining = array_slice($parts, $i);
+
+        if (count($remaining) >= 2) {
+            $queries[] = implode(', ', $remaining);
+        }
+    }
+
+    // Add Philippines for better matching.
+    $queries = array_map(function ($query) {
+        if (stripos($query, 'Philippines') === false) {
+            return $query . ', Philippines';
+        }
+
+        return $query;
+    }, $queries);
+
+    $queries = array_values(array_unique($queries));
+
+    foreach ($queries as $query) {
+        try {
+            $response = Http::timeout(10)
+                ->withHeaders([
+                    'User-Agent' => config('app.name', 'BiliHub') . '/1.0',
+                    'Accept' => 'application/json',
+                ])
+                ->get('https://nominatim.openstreetmap.org/search', [
+                    'q' => $query,
+                    'format' => 'jsonv2',
+                    'limit' => 1,
+                    'countrycodes' => 'ph',
+                ]);
+
+            if (!$response->successful()) {
+                continue;
+            }
+
+            $results = $response->json();
+
+            if (
+                !empty($results[0]['lat']) &&
+                !empty($results[0]['lon'])
+            ) {
+                return [
+                    'lat' => (float) $results[0]['lat'],
+                    'lng' => (float) $results[0]['lon'],
+                ];
+            }
+
+            // Be polite to the public Nominatim service.
+            usleep(1000000);
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    return null;
+}
 
     private function determineDeliveryZone($lat, $lng)
     {

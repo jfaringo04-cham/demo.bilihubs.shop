@@ -10,59 +10,277 @@ const readPayload = (id) => {
 };
 
 const initDelivery = () => {
+    /*
+    |--------------------------------------------------------------------------
+    | DELIVERY MAP
+    |--------------------------------------------------------------------------
+    */
+
     const mapElement = document.getElementById('rider-map');
     const data = readPayload('rider-delivery-data');
-    const center = { lat: 14.5995, lng: 120.9842 };
 
-    if (mapElement && data?.address) {
+    const latitude = Number.parseFloat(data?.latitude);
+    const longitude = Number.parseFloat(data?.longitude);
+
+    const hasCoordinates =
+        Number.isFinite(latitude) &&
+        Number.isFinite(longitude);
+
+    const center = hasCoordinates
+        ? { lat: latitude, lng: longitude }
+        : null;
+
+    if (mapElement && data) {
         if (window.google?.maps) {
+            const fallbackCenter = {
+                lat: 14.5995,
+                lng: 120.9842,
+            };
+
             const map = new window.google.maps.Map(mapElement, {
                 zoom: 14,
-                center,
+                center: center || fallbackCenter,
             });
-            const geocoder = new window.google.maps.Geocoder();
-            geocoder.geocode({ address: data.address }, (results, status) => {
-                if (status !== 'OK' || !results?.[0]) return;
-                map.setCenter(results[0].geometry.location);
+
+            if (hasCoordinates) {
                 new window.google.maps.Marker({
                     map,
-                    position: results[0].geometry.location,
+                    position: center,
                     title: data.customerName || 'Customer',
                 });
-            });
-        } else if (window.L) {
-            const map = window.L.map(mapElement).setView([center.lat, center.lng], 14);
-            window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors',
-            }).addTo(map);
+            } else if (data.address) {
+                const geocoder = new window.google.maps.Geocoder();
 
-            const popup = document.createElement('div');
-            const name = document.createElement('strong');
-            name.textContent = data.customerName || 'Customer';
-            const address = document.createElement('div');
-            address.textContent = data.address;
-            popup.append(name, document.createElement('br'), address);
-            window.L.marker([center.lat, center.lng]).addTo(map).bindPopup(popup);
+                geocoder.geocode(
+                    { address: data.address },
+                    (results, status) => {
+                        if (status !== 'OK' || !results?.[0]) {
+                            mapElement.innerHTML = `
+                                <div class="alert alert-warning m-3">
+                                    Exact delivery location is unavailable.
+                                    Use Google Maps or Waze from the delivery address.
+                                </div>
+                            `;
+                            return;
+                        }
+
+                        const location =
+                            results[0].geometry.location;
+
+                        map.setCenter(location);
+
+                        new window.google.maps.Marker({
+                            map,
+                            position: location,
+                            title:
+                                data.customerName ||
+                                'Customer',
+                        });
+                    }
+                );
+            }
+        } else if (window.L) {
+            if (hasCoordinates) {
+                const map = window.L
+                    .map(mapElement)
+                    .setView(
+                        [latitude, longitude],
+                        15
+                    );
+
+                window.L.tileLayer(
+                    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    {
+                        attribution:
+                            '© OpenStreetMap contributors',
+                    }
+                ).addTo(map);
+
+                const popup =
+                    document.createElement('div');
+
+                const name =
+                    document.createElement('strong');
+
+                name.textContent =
+                    data.customerName || 'Customer';
+
+                const address =
+                    document.createElement('div');
+
+                address.textContent =
+                    data.address || '';
+
+                popup.append(
+                    name,
+                    document.createElement('br'),
+                    address
+                );
+
+                window.L
+                    .marker([latitude, longitude])
+                    .addTo(map)
+                    .bindPopup(popup)
+                    .openPopup();
+            } else {
+                mapElement.innerHTML = `
+                    <div class="d-flex align-items-center justify-content-center h-100 p-4 text-center">
+                        <div>
+                            <i class="bi bi-geo-alt fs-1 text-muted"></i>
+
+                            <h6 class="mt-2 mb-1">
+                                Exact location unavailable
+                            </h6>
+
+                            <small class="text-muted">
+                                Customer coordinates were not saved
+                                for this order. Use Google Maps or
+                                Waze from the delivery address.
+                            </small>
+                        </div>
+                    </div>
+                `;
+            }
         }
     }
 
-    const statusSelect = document.getElementById('delivery_status');
-    const proofFields = document.getElementById('delivery-proof-fields');
-    const photoInput = document.getElementById('proof_of_delivery');
-    if (!statusSelect || !proofFields || !photoInput) return;
+    /*
+    |--------------------------------------------------------------------------
+    | DELIVERY STATUS FORM
+    |--------------------------------------------------------------------------
+    */
 
-    const toggleProofFields = () => {
-        const delivered = statusSelect.value === 'delivered';
-        proofFields.style.display = delivered ? 'block' : 'none';
-        photoInput.required = delivered;
+    const statusSelect =
+        document.getElementById('delivery_status');
+
+    if (!statusSelect) {
+        return;
+    }
+
+    const proofFields =
+        document.getElementById(
+            'delivery-proof-fields'
+        );
+
+    const photoInput =
+        document.getElementById(
+            'proof_of_delivery'
+        );
+
+    const deliveryNotesField =
+        document.getElementById(
+            'delivery-notes-field'
+        );
+
+    const deliveryNotesInput =
+        document.getElementById(
+            'delivery_notes'
+        );
+
+    const failureReasonField =
+        document.getElementById(
+            'failure-reason-field'
+        );
+
+    const failureReasonInput =
+        document.getElementById(
+            'failure_reason'
+        );
+
+    /*
+    |--------------------------------------------------------------------------
+    | TOGGLE DELIVERY FIELDS
+    |--------------------------------------------------------------------------
+    */
+
+    const toggleDeliveryFields = () => {
+        const status = statusSelect.value;
+
+        const isDelivered =
+            status === 'delivered';
+
+        const isFailed =
+            status === 'delivery_failed';
+
+        /*
+        |----------------------------------------------------------------------
+        | Proof of Delivery
+        |----------------------------------------------------------------------
+        */
+
+        if (proofFields) {
+            proofFields.style.display =
+                isDelivered ? 'block' : 'none';
+        }
+
+        if (photoInput) {
+            photoInput.required = isDelivered;
+            photoInput.disabled = !isDelivered;
+        }
+
+        /*
+        |----------------------------------------------------------------------
+        | Delivery Notes
+        |----------------------------------------------------------------------
+        */
+
+        if (deliveryNotesField) {
+            deliveryNotesField.style.display =
+                isFailed ? 'none' : 'block';
+        }
+
+        if (deliveryNotesInput) {
+            deliveryNotesInput.disabled =
+                isFailed;
+        }
+
+        /*
+        |----------------------------------------------------------------------
+        | Failure Reason
+        |----------------------------------------------------------------------
+        */
+
+        if (failureReasonField) {
+            failureReasonField.style.display =
+                isFailed ? 'block' : 'none';
+        }
+
+        if (failureReasonInput) {
+            failureReasonInput.required =
+                isFailed;
+
+            failureReasonInput.disabled =
+                !isFailed;
+        }
     };
 
-    statusSelect.addEventListener('change', toggleProofFields);
-    toggleProofFields();
+    /*
+    |--------------------------------------------------------------------------
+    | STATUS CHANGE
+    |--------------------------------------------------------------------------
+    */
+
+    statusSelect.addEventListener(
+        'change',
+        toggleDeliveryFields
+    );
+
+    // Run immediately when page loads.
+    toggleDeliveryFields();
 };
 
+/*
+|--------------------------------------------------------------------------
+| INITIALIZE
+|--------------------------------------------------------------------------
+*/
+
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initDelivery, { once: true });
+    document.addEventListener(
+        'DOMContentLoaded',
+        initDelivery,
+        { once: true }
+    );
 } else {
     initDelivery();
 }

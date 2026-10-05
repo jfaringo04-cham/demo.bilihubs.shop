@@ -41,9 +41,52 @@
           <p class="fw-bold">{{ $shipment->pickup_address }}</p>
         </div>
         <div class="mb-3">
-          <label class="form-label text-muted">Delivery Address</label>
-          <p class="fw-bold">{{ $shipment->delivery_address }}</p>
+    <label class="form-label text-muted">Delivery Address</label>
+
+    @php
+        $deliveryData = json_decode($shipment->delivery_address ?? '', true);
+
+        $deliveryRecipient = is_array($deliveryData)
+            ? ($deliveryData['recipient'] ?? null)
+            : null;
+
+        $deliveryPhone = is_array($deliveryData)
+            ? ($deliveryData['phone'] ?? null)
+            : null;
+
+        $deliveryAddress = is_array($deliveryData)
+            ? ($deliveryData['address'] ?? $shipment->delivery_address)
+            : $shipment->delivery_address;
+    @endphp
+
+    @if($deliveryRecipient)
+        <div class="mb-2">
+            <small class="text-muted d-block">Recipient</small>
+            <span class="fw-bold">
+                <i class="bi bi-person me-1"></i>
+                {{ $deliveryRecipient }}
+            </span>
         </div>
+    @endif
+
+    @if($deliveryPhone)
+        <div class="mb-2">
+            <small class="text-muted d-block">Contact Number</small>
+            <span class="fw-semibold">
+                <i class="bi bi-telephone me-1"></i>
+                {{ $deliveryPhone }}
+            </span>
+        </div>
+    @endif
+
+    <div>
+        <small class="text-muted d-block">Address</small>
+        <span class="fw-semibold">
+            <i class="bi bi-geo-alt me-1"></i>
+            {{ $deliveryAddress ?: 'No delivery address available.' }}
+        </span>
+    </div>
+</div>
       </div>
     </div>
 

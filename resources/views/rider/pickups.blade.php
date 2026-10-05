@@ -44,11 +44,17 @@
                 $order->customer_longitude
               );
             }
+
+            $shippingData = json_decode($order->shipping_address, true);
+
+$displayAddress = is_array($shippingData)
+    ? ($shippingData['address'] ?? $order->shipping_address)
+    : $order->shipping_address;
           @endphp
           <tr>
             <td>{{ $order->order_number }}</td>
             <td>{{ $order->user->name ?? 'N/A' }}</td>
-            <td>{{ Str::limit($order->shipping_address, 40) }}</td>
+            <td>{{ Str::limit($displayAddress, 40) }}</td>
             <td>{{ $order->user->phone ?? 'N/A' }}</td>
             <td>
               <span class="badge bg-info">{{ $order->delivery_zone ?? 'N/A' }}</span>
@@ -67,11 +73,52 @@
                 N/A
               @endif
             </td>
-            <td>
-              <span class="badge bg-{{ $order->delivery_status == 'picked_up_from_sorting_center' ? 'info' : ($order->delivery_status == 'out_for_delivery' ? 'primary' : ($order->delivery_status == 'delivered_to_sorting_center' ? 'info' : 'warning')) }}">
-                {{ $order->delivery_status == 'picked_up_from_sorting_center' ? 'Ready for Delivery' : ucfirst(str_replace('_', ' ', $order->delivery_status)) }}
-              </span>
-            </td>
+           <td>
+  @switch($order->delivery_status)
+
+    @case('assigned_to_rider')
+      <span class="badge bg-warning text-dark">Assigned for Pickup</span>
+      @break
+
+    @case('in_transit')
+      <span class="badge bg-primary">To Sorting Center</span>
+      @break
+
+    @case('delivered_to_sorting_center')
+      <span class="badge bg-info">At Sorting Center</span>
+      @break
+
+    @case('at_sorting_center')
+      <span class="badge bg-info">At Sorting Center</span>
+      @break
+
+    @case('ready_for_delivery_pickup')
+      <span class="badge bg-warning text-dark">Ready for Delivery Pickup</span>
+      @break
+
+    @case('picked_up_from_sorting_center')
+      <span class="badge bg-primary">Picked Up</span>
+      @break
+
+    @case('out_for_delivery')
+      <span class="badge bg-primary">Out for Delivery</span>
+      @break
+
+    @case('delivered')
+      <span class="badge bg-success">Delivered</span>
+      @break
+
+    @case('delivery_failed')
+      <span class="badge bg-danger">Delivery Failed</span>
+      @break
+
+    @default
+      <span class="badge bg-secondary">
+        {{ ucfirst(str_replace('_', ' ', $order->delivery_status ?? 'pending')) }}
+      </span>
+
+  @endswitch
+</td>
             <td>
               @if(in_array($order->delivery_status, ['at_sorting_center', 'ready_for_delivery_pickup']))
                 <form method="POST" action="{{ route('rider.pickups.pickup-from-sorting-center', $order) }}" class="d-inline">

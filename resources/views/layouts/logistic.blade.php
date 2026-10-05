@@ -41,6 +41,13 @@
         <span class="sidebar-icon"><i class="bi bi-house"></i></span>
         <span>Home</span>
       </a>
+      <a href="{{ route('logistic.orders') }}"
+   class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.orders*') ? 'active' : '' }}">
+    <span class="sidebar-icon">
+        <i class="bi bi-receipt"></i>
+    </span>
+    <span>Orders</span>
+</a>
       <a href="{{ route('logistic.riders') }}" class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.riders') ? 'active' : '' }}">
         <span class="sidebar-icon"><i class="bi bi-people"></i></span>
         <span>Riders</span>

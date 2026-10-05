@@ -1040,42 +1040,103 @@ $revenueData = $revenueData->map(
     }
 
     public function approveReschedule(Request $request, Order $order)
-    {
-        $seller = Auth::user();
-        $hasSellerProduct = $order->items()->whereHas('product', function ($query) use ($seller) {
+{
+    $seller = Auth::user();
+
+    $hasSellerProduct = $order->items()
+        ->whereHas('product', function ($query) use ($seller) {
             $query->where('user_id', $seller->id);
-        })->exists();
+        })
+        ->exists();
 
-        if (!$hasSellerProduct) {
-            abort(403);
-        }
-
-        $shipment = $order->shipment;
-        if ($shipment) {
-            $bestRider = \App\Services\RiderAssignmentService::findBestRiderForShipment($shipment);
-            if ($bestRider) {
-                \App\Services\RiderAssignmentService::assignRiderToShipment($shipment, $bestRider);
-
-                $this->createNotification(
-                    $bestRider->id,
-                    'Rescheduled Delivery Assigned',
-                    'Order ' . $order->order_number . ' has been rescheduled for delivery. Destination: ' . ($shipment->delivery_zone ?: 'N/A') . '. Please proceed with the delivery.',
-                    'delivery',
-                    route('rider.pickups')
-                );
-            }
-        }
-
-        $this->createNotification(
-            $order->user_id,
-            'Reschedule Approved',
-            'Your reschedule request for order ' . $order->order_number . ' has been approved. A rider will be assigned shortly.',
-            'order',
-            route('orders.show', $order)
-        );
-
-        return back()->with('success', 'Reschedule request approved.');
+    if (!$hasSellerProduct) {
+        abort(403);
     }
+
+    /*
+     * Only a pending reschedule request can be approved.
+     */
+    if ($order->status !== 'reschedule_requested') {
+        return back()->with(
+            'error',
+            'This order does not have a pending reschedule request.'
+        );
+    }
+
+    /*
+     * Make sure the failed parcel has physically returned
+     * and Logistics has confirmed receipt.
+     */
+    $shipments = $order->sellerOrders()
+        ->with('shipment')
+        ->get()
+        ->pluck('shipment')
+        ->filter();
+
+    if ($shipments->isEmpty()) {
+        return back()->with(
+            'error',
+            'No shipment was found for this order.'
+        );
+    }
+
+    $hasUnreceivedFailedReturn = $shipments->contains(function ($shipment) {
+        return is_null($shipment->failed_return_received_at);
+    });
+
+    if ($hasUnreceivedFailedReturn) {
+        return back()->with(
+            'error',
+            'The failed parcel must be returned to and received by the sorting center before the reschedule can be approved.'
+        );
+    }
+
+    /*
+     * Seller only approves the request.
+     * Logistics will assign the next delivery rider.
+     */
+    $order->update([
+        'status' => 'rescheduled',
+        'rescheduled_at' => now(),
+    ]);
+
+    $this->createNotification(
+        $order->user_id,
+        'Reschedule Approved',
+        'Your reschedule request for order ' .
+            $order->order_number .
+            ' has been approved. The parcel is now awaiting delivery rider assignment.',
+        'order',
+        route('orders.show', $order)
+    );
+
+    /*
+     * Notify Logistics that the parcel can now
+     * be assigned to another delivery rider.
+     */
+    foreach ($shipments as $shipment) {
+        $logisticOwner = \App\Models\Logistic::find(
+            $shipment->logistic_id
+        )?->owner;
+
+        if ($logisticOwner) {
+            $this->createNotification(
+                $logisticOwner->id,
+                'Rescheduled Parcel Ready for Assignment',
+                'Order ' .
+                    $order->order_number .
+                    ' has been approved for redelivery and is ready for rider assignment.',
+                'shipment',
+                route('logistic.rider-assignment')
+            );
+        }
+    }
+
+    return back()->with(
+        'success',
+        'Reschedule request approved. Logistics can now assign a delivery rider.'
+    );
+}
 
     public function rejectReschedule(Request $request, Order $order)
     {
@@ -1174,7 +1235,7 @@ if ($order->ready_for_pickup) {
 
         $sellerOrder = $this->sellerOrderForAuthenticatedSeller($order, $seller);
 
-        if ($sellerOrder && !$sellerOrder->shipment) {
+        if ($sellerOrder) {
             $hub = \App\Services\HubAssignmentService::findBestHubForSellerOrder($sellerOrder);
 
             if ($hub) {
@@ -1188,36 +1249,50 @@ if ($order->ready_for_pickup) {
                     ->whereColumn('current_load', '<', 'max_capacity')
                     ->first();
 
-                \App\Models\Shipment::create([
-                    'seller_order_id' => $sellerOrder->id,
-                    'logistic_id' => $hub->logistic_id,
-                    'hub_id' => $hub->id,
-                    'rider_id' => $pickupRider ? $pickupRider->id : null,
-                    'tracking_number' => $trackingNumber,
-                    'tracking_code' => $trackingNumber,
-                    'status' => $pickupRider ? 'assigned' : 'pending',
-                    'pickup_address' => $this->sellerPickupAddress($sellerOrder, $seller),
-                    'delivery_address' => $order->shipping_address,
-                    'notes' => 'Auto-assigned hub based on seller pickup location: ' . $hub->name,
-                ]);
+                $shipment = $sellerOrder->shipment;
 
-                $this->createNotification(
-                    $hub->logistic->owner_user_id,
-                    'New Shipment Assignment',
-                    'Order ' . $order->order_number . ' is ready for pickup and has been auto-assigned to your hub (' . $hub->name . ') based on seller pickup location.',
-                    'shipment',
-                    route('logistic.shipments')
-                );
+if (!$shipment) {
+    $shipment = \App\Models\Shipment::create([
+        'seller_order_id' => $sellerOrder->id,
+        'logistic_id' => $hub->logistic_id,
+        'hub_id' => $hub->id,
+        'rider_id' => $pickupRider ? $pickupRider->id : null,
+        'tracking_number' => $trackingNumber,
+        'tracking_code' => $trackingNumber,
+        'status' => $pickupRider ? 'assigned' : 'pending',
+        'pickup_address' => $this->sellerPickupAddress($sellerOrder, $seller),
+        'delivery_address' => $order->shipping_address,
+        'notes' => 'Auto-assigned hub based on seller pickup location: ' . $hub->name,
+    ]);
+} else {
+    $shipment->update([
+        'logistic_id' => $hub->logistic_id,
+        'hub_id' => $hub->id,
+        'rider_id' => $pickupRider ? $pickupRider->id : null,
+        'status' => $pickupRider ? 'assigned' : 'pending',
+        'pickup_address' => $this->sellerPickupAddress($sellerOrder, $seller),
+        'delivery_address' => $order->shipping_address,
+    ]);
+}
 
-                if ($pickupRider) {
-                    $this->createNotification(
-                        $pickupRider->id,
-                        'New Pickup Assignment',
-                        'You have been assigned to pick up order ' . $order->order_number . ' from ' . ($sellerOrder->seller?->name ?? $seller->business_name ?? $seller->name) . '. Please proceed to the seller and scan the QR code to confirm pickup.',
-                        'delivery',
-                        route('rider.pickups')
-                    );
-                }
+if ($pickupRider) {
+    $order->update([
+        'rider_id' => $pickupRider->id,
+        'delivery_status' => 'assigned_to_rider',
+    ]);
+
+    // Parcel is now part of the pickup rider's active load.
+    $pickupRider->increment('current_load');
+
+    // Mark rider busy only when maximum capacity is reached.
+    $pickupRider->refresh();
+
+    if ($pickupRider->current_load >= $pickupRider->max_capacity) {
+        $pickupRider->update([
+            'availability_status' => 'busy',
+        ]);
+    }
+}
             }
         }
 
@@ -1270,13 +1345,15 @@ if ($order->ready_for_pickup) {
 
         $owner = $sellerOrder->seller?->owner ?? $legacySeller;
 
-        $address = collect([
-            $owner?->business_name,
-            $owner?->street_address,
-            $owner?->barangay,
-            $owner?->municipality,
-            $owner?->province,
-        ])->filter()->implode(', ');
+       $address = collect([
+    $owner?->business_name,
+    $owner?->house_number,
+    $owner?->street_address,
+    $owner?->barangay_name ?: $owner?->barangay,
+    $owner?->municipality_name ?: $owner?->municipality,
+    $owner?->province_name ?: $owner?->province,
+    $owner?->region_name ?: $owner?->region,
+])->filter()->implode(', ');
 
         return $address !== '' ? $address : 'Seller address';
     }

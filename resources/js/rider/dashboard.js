@@ -16,7 +16,16 @@ const initDashboard = () => {
     const orders = Array.isArray(readPayload('rider-dashboard-data')) ? readPayload('rider-dashboard-data') : [];
     if (!orders.length) return;
 
-    const center = { lat: 14.5995, lng: 120.9842 };
+    const firstOrderWithCoordinates = orders.find(
+    (order) => order.latitude !== null && order.longitude !== null
+);
+
+const center = firstOrderWithCoordinates
+    ? {
+        lat: Number(firstOrderWithCoordinates.latitude),
+        lng: Number(firstOrderWithCoordinates.longitude),
+    }
+    : { lat: 14.2816, lng: 121.4103 };
 
     if (window.google?.maps) {
         const map = new window.google.maps.Map(mapElement, {
@@ -47,15 +56,27 @@ const initDashboard = () => {
     }).addTo(map);
 
     orders.forEach((order) => {
-        if (!order.address) return;
-        const popup = document.createElement('div');
-        const name = document.createElement('strong');
-        name.textContent = order.customerName || 'Customer';
-        const address = document.createElement('div');
-        address.textContent = order.address;
-        popup.append(name, document.createElement('br'), address);
-        window.L.marker([center.lat, center.lng]).addTo(map).bindPopup(popup);
-    });
+    if (order.latitude === null || order.longitude === null) return;
+
+    const lat = Number(order.latitude);
+    const lng = Number(order.longitude);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    const popup = document.createElement('div');
+
+    const name = document.createElement('strong');
+    name.textContent = order.customerName || 'Customer';
+
+    const address = document.createElement('div');
+    address.textContent = order.address || 'Address unavailable';
+
+    popup.append(name, document.createElement('br'), address);
+
+    window.L.marker([lat, lng])
+        .addTo(map)
+        .bindPopup(popup);
+});
 };
 
 if (document.readyState === 'loading') {

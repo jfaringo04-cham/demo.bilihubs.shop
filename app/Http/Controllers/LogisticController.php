@@ -7,6 +7,7 @@ use App\Models\Logistic;
 use App\Models\User;
 use App\Models\Notification;
 use App\Models\Shipment;
+use App\Models\SellerOrder;
 use App\Models\ShipmentMessage;
 use App\Models\RiderLocation;
 use App\Models\Hub;
@@ -132,6 +133,129 @@ $activeRiders = $logistic->riders()
 
         return view('logistic.home', compact('logistic', 'totalRiders', 'pendingRiders', 'activeRiders', 'alerts'));
     }
+
+    public function riderAssignment(Request $request)
+{
+    $logistic = Auth::user()->ownedLogistic;
+
+    if (!$logistic) {
+        return redirect()
+            ->route('home')
+            ->with('error', 'No logistics company found for your account.');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Shipments ready for rider assignment
+    |--------------------------------------------------------------------------
+    */
+    $shipmentsQuery = Shipment::query()
+    ->where('logistic_id', $logistic->id)
+    ->where('sorting_status', 'staged')
+    ->whereNull('rider_id')
+    ->whereNotIn('status', ['delivered', 'cancelled'])
+    ->where(function ($query) {
+        $query
+            // Normal parcel: existing behavior stays unchanged.
+            ->whereNull('failed_return_received_at')
+
+            // Failed-return parcel: only show after
+            // the seller approved the reschedule.
+            ->orWhere(function ($failedReturnQuery) {
+                $failedReturnQuery
+                    ->whereNotNull('failed_return_received_at')
+                    ->whereHas('sellerOrder.order', function ($orderQuery) {
+                        $orderQuery->where('status', 'rescheduled');
+                    });
+            });
+    })
+    ->with([
+        'sellerOrder.order.user',
+        'sellerOrder.seller',
+    ]);
+
+    if ($request->filled('search')) {
+        $search = trim($request->search);
+
+        $shipmentsQuery->where(function ($query) use ($search) {
+            $query->where('tracking_number', 'like', "%{$search}%")
+                ->orWhereHas('sellerOrder.order', function ($orderQuery) use ($search) {
+                    $orderQuery->where('order_number', 'like', "%{$search}%");
+                })
+                ->orWhereHas('sellerOrder.order.user', function ($userQuery) use ($search) {
+                    $userQuery->where('name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%");
+                });
+        });
+    }
+
+    $shipments = $shipmentsQuery
+        ->latest()
+        ->paginate(15)
+        ->withQueryString();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Available riders
+    |--------------------------------------------------------------------------
+    */
+    $availableRiders = User::query()
+        ->whereHas('roles', function ($query) {
+            $query->where('name', 'rider');
+        })
+        ->where('logistic_id', $logistic->id)
+        ->where('availability_status', 'available')
+        ->whereColumn('current_load', '<', 'max_capacity')
+        ->orderBy('name')
+        ->get();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Dashboard counters
+    |--------------------------------------------------------------------------
+    */
+    $awaitingAssignmentCount = Shipment::where('logistic_id', $logistic->id)
+    ->where('sorting_status', 'staged')
+    ->whereNull('rider_id')
+    ->whereNotIn('status', ['delivered', 'cancelled'])
+    ->where(function ($query) {
+        $query
+            ->whereNull('failed_return_received_at')
+            ->orWhere(function ($failedReturnQuery) {
+                $failedReturnQuery
+                    ->whereNotNull('failed_return_received_at')
+                    ->whereHas('sellerOrder.order', function ($orderQuery) {
+                        $orderQuery->where('status', 'rescheduled');
+                    });
+            });
+    })
+    ->count();
+
+    $availableRidersCount = $availableRiders->count();
+
+    $assignedCount = Shipment::where('logistic_id', $logistic->id)
+        ->whereNotNull('rider_id')
+        ->whereNotIn('status', ['delivered', 'cancelled'])
+        ->count();
+
+    $fullCapacityCount = User::query()
+        ->whereHas('roles', function ($query) {
+            $query->where('name', 'rider');
+        })
+        ->where('logistic_id', $logistic->id)
+        ->whereColumn('current_load', '>=', 'max_capacity')
+        ->count();
+
+    return view('logistic.rider-assignment', compact(
+        'logistic',
+        'shipments',
+        'availableRiders',
+        'awaitingAssignmentCount',
+        'availableRidersCount',
+        'assignedCount',
+        'fullCapacityCount'
+    ));
+}
 
     public function riders()
     {
@@ -322,18 +446,219 @@ $activeRiders = $logistic->riders()
         return redirect()->route('logistic.riders')->with('success', 'Rider registered successfully and linked to your company.');
     }
 
-    public function shipments()
-    {
-        $logistic = Auth::user()->ownedLogistic;
+    public function orders(Request $request)
+{
+    $logistic = Auth::user()->ownedLogistic;
 
-        if (!$logistic) {
-            return redirect()->route('home')->with('error', 'No logistics company found for your account.');
-        }
-
-        $shipments = $logistic->shipments()->with('sellerOrder.order.user', 'sellerOrder.items.product', 'sellerOrder.seller', 'rider')->latest()->paginate(20);
-
-        return view('logistic.shipments', compact('logistic', 'shipments'));
+    if (!$logistic) {
+        return redirect()
+            ->route('home')
+            ->with('error', 'No logistics company found for your account.');
     }
+
+    $baseQuery = SellerOrder::query()
+        ->where('logistic_id', $logistic->id);
+
+    // Summary cards
+    $totalOrders = (clone $baseQuery)->count();
+
+    $pendingOrders = (clone $baseQuery)
+        ->where('status', 'pending')
+        ->count();
+
+    $deliveredOrders = (clone $baseQuery)
+        ->where('status', 'delivered')
+        ->count();
+
+    // Order list
+    $orders = SellerOrder::query()
+        ->where('logistic_id', $logistic->id)
+        ->with([
+            'order.user',
+            'seller',
+            'items.product',
+            'shipment.rider',
+        ]);
+
+    // Search
+    if ($request->filled('search')) {
+        $search = trim($request->search);
+
+        $orders->where(function ($query) use ($search) {
+            $query
+                ->whereHas('order', function ($orderQuery) use ($search) {
+                    $orderQuery
+                        ->where('order_number', 'like', "%{$search}%")
+                        ->orWhereHas('user', function ($userQuery) use ($search) {
+                            $userQuery
+                                ->where('name', 'like', "%{$search}%")
+                                ->orWhere('email', 'like', "%{$search}%");
+                        });
+                })
+                ->orWhereHas('shipment', function ($shipmentQuery) use ($search) {
+                    $shipmentQuery
+                        ->where('tracking_number', 'like', "%{$search}%");
+                })
+                ->orWhereHas('seller', function ($sellerQuery) use ($search) {
+                    $sellerQuery
+                        ->where('name', 'like', "%{$search}%");
+                });
+        });
+    }
+
+    // Seller order status
+    if ($request->filled('status')) {
+        $orders->where('status', $request->status);
+    }
+
+    $orders = $orders
+        ->latest()
+        ->paginate(20)
+        ->withQueryString();
+
+    return view('logistic.orders.index', compact(
+        'logistic',
+        'orders',
+        'totalOrders',
+        'pendingOrders',
+        'deliveredOrders'
+    ));
+}
+    
+
+
+
+    public function shipments(Request $request)
+{
+    $logistic = Auth::user()->ownedLogistic;
+
+    if (!$logistic) {
+        return redirect()
+            ->route('home')
+            ->with('error', 'No logistics company found for your account.');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Base Query
+    |--------------------------------------------------------------------------
+    */
+    $baseQuery = $logistic->shipments();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Summary Cards
+    |--------------------------------------------------------------------------
+    */
+    $totalShipments = (clone $baseQuery)->count();
+
+    $pendingShipments = (clone $baseQuery)
+        ->whereIn('status', ['pending', 'assigned'])
+        ->count();
+
+    $inTransitShipments = (clone $baseQuery)
+        ->whereIn('status', [
+            'picked_up',
+            'in_transit',
+            'at_sorting_center',
+            'sorted',
+            'staged'
+        ])
+        ->count();
+
+    $deliveredShipments = (clone $baseQuery)
+        ->where('status', 'delivered')
+        ->count();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Shipment List
+    |--------------------------------------------------------------------------
+    */
+    $shipments = $logistic->shipments()
+        ->with([
+            'sellerOrder.order.user',
+            'sellerOrder.items.product',
+            'sellerOrder.seller',
+            'rider'
+        ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Search
+    |--------------------------------------------------------------------------
+    */
+    if ($request->filled('search')) {
+
+        $search = trim($request->search);
+
+        $shipments->where(function ($query) use ($search) {
+
+            $query->where('tracking_number', 'like', "%{$search}%")
+
+                ->orWhere('courier', 'like', "%{$search}%")
+
+                ->orWhereHas('rider', function ($riderQuery) use ($search) {
+                    $riderQuery->where('name', 'like', "%{$search}%");
+                })
+
+                ->orWhereHas('sellerOrder.order', function ($orderQuery) use ($search) {
+                    $orderQuery->where('order_number', 'like', "%{$search}%");
+                })
+
+                ->orWhereHas('sellerOrder.order.user', function ($buyerQuery) use ($search) {
+                    $buyerQuery
+                        ->where('name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%");
+                })
+
+                ->orWhereHas('sellerOrder.seller', function ($sellerQuery) use ($search) {
+                    $sellerQuery->where('name', 'like', "%{$search}%");
+                });
+        });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Status Filter
+    |--------------------------------------------------------------------------
+    */
+    if ($request->filled('status')) {
+
+        $allowedStatuses = [
+            'pending',
+            'assigned',
+            'picked_up',
+            'in_transit',
+            'delivered',
+            'cancelled',
+            'delayed'
+        ];
+
+        if (in_array($request->status, $allowedStatuses, true)) {
+            $shipments->where('status', $request->status);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Results
+    |--------------------------------------------------------------------------
+    */
+    $shipments = $shipments
+        ->latest()
+        ->paginate(20)
+        ->withQueryString();
+
+    return view('logistic.shipments', compact(
+        'logistic',
+        'shipments',
+        'totalShipments',
+        'pendingShipments',
+        'inTransitShipments',
+        'deliveredShipments'
+    ));
+}
 
     public function sortingArea()
     {
@@ -393,31 +718,62 @@ $activeRiders = $logistic->riders()
             }
         }
 
-        $shipment->update([
-            'sorting_status' => 'received',
-            'received_at' => now(),
-            'received_by_sorting_center' => true,
+        $isFailedReturn = $shipment->status === 'failed_return_at_sorting_center';
+
+if ($isFailedReturn) {
+    /*
+     * Failed delivery parcel has physically returned
+     * to the sorting center.
+     */
+    $shipment->update([
+        'sorting_status' => 'received',
+        'failed_return_received_at' => now(),
+        'received_by_sorting_center' => true,
+        'rider_id' => null,
+    ]);
+
+    /*
+     * Keep the failed-delivery state.
+     * Buyer still needs to choose reschedule or return.
+     */
+    if ($order) {
+        $order->update([
+            'rider_id' => null,
+            'status' => 'delivery_failed',
+            'delivery_status' => 'delivery_failed',
         ]);
+    }
+} else {
+    /*
+     * Normal seller-to-sorting-center receipt.
+     */
+    $shipment->update([
+        'sorting_status' => 'received',
+        'received_at' => now(),
+        'received_by_sorting_center' => true,
+    ]);
 
-        // Increment pickup rider's daily quota if this was a pickup rider delivery
-        if ($order && $order->rider_id) {
-    $pickupRider = \App\Models\User::find($order->rider_id);
+    // Increment pickup rider's daily quota only for normal pickup flow.
+    if ($order && $order->rider_id) {
+        $pickupRider = \App\Models\User::find($order->rider_id);
 
-    if ($pickupRider && $pickupRider->isRider()) {
-        $pickupRider->increment('daily_pickups_completed');
-       
+        if ($pickupRider && $pickupRider->isRider()) {
+            $pickupRider->increment('daily_pickups_completed');
         }
     }
-    // Pickup leg is complete.
-    // Final-delivery rider will be assigned separately by Logistics.
-    $order->update([
-        'rider_id' => null,
-        'delivery_status' => 'at_sorting_center',
-    ]);
+
+    // Normal pickup leg is complete.
+    if ($order) {
+        $order->update([
+            'rider_id' => null,
+            'delivery_status' => 'at_sorting_center',
+        ]);
+    }
 
     $shipment->update([
         'rider_id' => null,
     ]);
+}
 
 
         // Notify the seller that owns this specific SellerOrder/parcel.
@@ -476,15 +832,25 @@ $activeRiders = $logistic->riders()
             'delivery_type' => $validated['delivery_type'],
         ]);
 
-        $order = $shipment->sellerOrder?->order;
+       $order = $shipment->sellerOrder?->order;
 
-        if ($order) {
-            $order->update([
-                'status' => 'sorted',
-                'delivery_status' => 'at_sorting_center',
-                'delivery_zone' => $validated['delivery_zone'],
-            ]);
-        }
+if ($order) {
+    if ($shipment->failed_return_received_at) {
+        // Failed-return parcel:
+        // keep the failed-delivery state until the buyer chooses
+        // reschedule or return.
+        $order->update([
+            'delivery_zone' => $validated['delivery_zone'],
+        ]);
+    } else {
+        // Normal first-time sorting-center flow.
+        $order->update([
+            'status' => 'sorted',
+            'delivery_status' => 'at_sorting_center',
+            'delivery_zone' => $validated['delivery_zone'],
+        ]);
+    }
+}
 
        
 
@@ -563,6 +929,25 @@ if ($shipment->rider_id) {
     );
 }
 
+/*
+ * Resolve the parent order before assigning a delivery rider.
+ */
+$order = $shipment->sellerOrder?->order;
+
+/*
+ * Failed-return parcels cannot be assigned again until:
+ * 1. Logistics has physically received the returned parcel, and
+ * 2. The buyer's reschedule request has been approved by the seller.
+ */
+if ($shipment->failed_return_received_at) {
+    if (!$order || $order->status !== 'rescheduled') {
+        return back()->with(
+            'error',
+            'This failed-return parcel cannot be assigned until the reschedule request has been approved.'
+        );
+    }
+}
+
         $validated = $request->validate([
             'rider_id' => ['required', 'exists:users,id'],
         ]);
@@ -582,11 +967,13 @@ if ($shipment->rider_id) {
         }
 
         $shipment->update([
-            'rider_id' => $rider->id,
-            'status' => $shipment->status === 'at_sorting_center' ? 'staged' : 'assigned',
-        ]);
-
-        $order = $shipment->sellerOrder?->order;
+    'rider_id' => $rider->id,
+    'status' => in_array(
+        $shipment->status,
+        ['at_sorting_center', 'failed_return_at_sorting_center'],
+        true
+    ) ? 'staged' : 'assigned',
+]);
 
         if ($order) {
             // Keep these legacy Order fields synchronized until the rider/order
@@ -855,6 +1242,15 @@ if ($shipment->rider_id) {
             return redirect()->route('logistic.shipments')->with('error', 'Shipment not found in your company.');
         }
 
+        // Delivered and cancelled shipments are final and can no longer be modified.
+if (in_array($shipment->status, ['delivered', 'cancelled'], true)) {
+    return back()->with(
+        'error',
+        'This shipment is already ' . ucfirst($shipment->status) .
+        ' and can no longer be updated.'
+    );
+}
+
         $request->validate([
             'status' => ['required', 'in:pending,assigned,picked_up,in_transit,delivered,cancelled,delayed'],
         ]);
@@ -972,7 +1368,11 @@ if ($shipment->rider_id) {
             $riderLocation = RiderLocation::where('user_id', $shipment->rider_id)->latest()->first();
         }
 
-        return view('logistic.shipments-track', compact('shipment', 'riderLocation'));
+        return view('logistic.shipments-track', compact(
+    'shipment',
+    'riderLocation',
+    'logistic'
+));
     }
 
     public function shipmentChat(Shipment $shipment)

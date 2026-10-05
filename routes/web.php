@@ -207,6 +207,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/pickups', [RiderDashboardController::class, 'pickups'])->name('pickups');
         Route::post('/pickups/{order}/confirm', [RiderDashboardController::class, 'confirmPickup'])->name('pickups.confirm');
         Route::post('/pickups/{order}/deliver-to-sorting-center', [RiderDashboardController::class, 'deliverToSortingCenter'])->name('pickups.deliver-to-sorting-center');
+        Route::post('/pickups/{order}/return-failed-to-sorting-center', [RiderDashboardController::class, 'returnFailedToSortingCenter'])->name('pickups.return-failed-to-sorting-center');
         Route::post('/pickups/{order}/pickup-from-sorting-center', [RiderDashboardController::class, 'pickupFromSortingCenter'])->name('pickups.pickup-from-sorting-center');
         Route::get('/addresses', [RiderDashboardController::class, 'addresses'])->name('addresses');
         Route::get('/history', [RiderDashboardController::class, 'history'])->name('history');
@@ -222,7 +223,9 @@ Route::middleware('auth')->group(function () {
     Route::prefix('logistic')->name('logistic.')->middleware('logistic_owner')->group(function () {
         Route::get('/', [LogisticController::class, 'home'])->name('home');
         Route::get('/dashboard', [LogisticController::class, 'index'])->name('dashboard');
+        Route::get('/orders', [LogisticController::class, 'orders'])->name('orders');
         Route::get('/riders', [LogisticController::class, 'riders'])->name('riders');
+        Route::get('/rider-assignment', [LogisticController::class, 'riderAssignment'])->name('rider-assignment');
         Route::get('/riders/{rider}', [LogisticController::class, 'showRider'])->name('riders.show');
         Route::post('/riders/{rider}/approve', [LogisticController::class, 'approveRiderApplication'])->name('riders.approve');
         Route::post('/riders/{rider}/reject', [LogisticController::class, 'rejectRiderApplication'])->name('riders.reject');

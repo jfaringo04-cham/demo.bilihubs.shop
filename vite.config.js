@@ -38,6 +38,7 @@ export default defineConfig({
                 'resources/js/logistics/riders.js',
                 'resources/js/logistics/shipments.js',
                 'resources/js/rider/layout.js',
+                'resources/js/rider/location.js',
                 'resources/js/rider/dashboard.js',
                 'resources/js/rider/deliveries.js',
                 'resources/js/rider/pickups.js',
