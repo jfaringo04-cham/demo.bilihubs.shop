@@ -77,6 +77,14 @@ class AuthController extends Controller
 
         $user = Auth::user();
 
+        if ($user->status === User::STATUS_PENDING) {
+    Auth::logout();
+
+    return response()->json([
+        'message' => 'Your account is still pending approval.',
+    ], 403);
+}
+
         if ($user->status === User::STATUS_REJECTED) {
             Auth::logout();
             return response()->json([
@@ -95,7 +103,7 @@ class AuthController extends Controller
         $token = $user->createToken($deviceName)->plainTextToken;
 
         return response()->json([
-            'user' => $user->load('hub', 'logistic'),
+            'user' => $user->load('roles', 'hub', 'logistic'),
             'token' => $token,
             'token_type' => 'Bearer',
         ]);
