@@ -23,6 +23,13 @@ use App\Http\Controllers\Api\AddressApiController;
 */
 
 // Public routes
+Route::get('/test', function () {
+    return response()->json([
+        'success' => true,
+        'message' => 'BiliHub Flutter successfully connected to Laravel API.',
+        'app' => 'BiliHub',
+    ]);
+});
 Route::post('/auth/register', [AuthController::class, 'register']);
 Route::post('/auth/login', [AuthController::class, 'login']);
 Route::post('/auth/social/google', [AuthController::class, 'googleLogin']);
