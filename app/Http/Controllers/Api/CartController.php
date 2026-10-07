@@ -17,7 +17,7 @@ class CartController extends Controller
             'product:id,name,price_minor,discounted_price_minor,discount_percent,discount_starts_at,discount_ends_at,stock,status',
             'product.images',
             'variation:id,product_id,name,price_minor,discounted_price_minor,discount_percent,stock',
-            'size:id,name,code',
+            'size:id,name,slug',
         ])
         ->where('user_id', Auth::id())
         ->orderBy('created_at', 'desc')
@@ -56,10 +56,10 @@ class CartController extends Controller
                     'stock' => $item->variation->stock,
                 ] : null,
                 'size' => $item->size ? [
-                    'id' => $item->size->id,
-                    'name' => $item->size->name,
-                    'code' => $item->size->code,
-                ] : null,
+    'id' => $item->size->id,
+    'name' => $item->size->name,
+    'slug' => $item->size->slug,
+] : null,
                 'quantity' => $item->quantity,
                 'price' => $priceMinor / 100,
                 'subtotal' => $itemSubtotalMinor / 100,
@@ -100,9 +100,14 @@ class CartController extends Controller
 
         $product = Product::with(['variations', 'sizes'])->findOrFail($request->product_id);
 
-        if ($product->status !== 'active' || $product->compliance_status !== 'approved' || !$product->is_approved) {
-            return response()->json(['message' => 'Product is not available'], 422);
-        }
+        if (
+    $product->status !== 'published' ||
+    $product->compliance_status !== 'approved'
+) {
+    return response()->json([
+        'message' => 'Product is not available',
+    ], 422);
+}
 
         $variation = null;
 

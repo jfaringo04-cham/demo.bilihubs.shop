@@ -24,59 +24,52 @@ class AddressController extends Controller
     }
 
     public function store(Request $request)
-    {
-        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-            'recipient_name' => 'required|string|max:255',
-            'phone' => 'required|string|max:20',
-            'house_number' => 'nullable|string|max:50',
-            'street_address' => 'required|string|max:255',
-            'barangay' => 'required|string|max:255',
-            'barangay_name' => 'nullable|string|max:255',
-            'municipality' => 'required|string|max:255',
-            'municipality_name' => 'nullable|string|max:255',
-            'province' => 'required|string|max:255',
-            'province_name' => 'nullable|string|max:255',
-            'region' => 'required|string|max:255',
-            'region_name' => 'nullable|string|max:255',
-            'latitude' => 'nullable|numeric|between:-90,90',
-            'longitude' => 'nullable|numeric|between:-180,180',
-            'is_default' => 'boolean',
-            'label' => 'nullable|string|max:50',
-        ]);
+{
+    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+        'label' => 'nullable|string|max:50',
+        'address_line1' => 'required|string|max:255',
+        'address_line2' => 'nullable|string|max:255',
+        'city' => 'required|string|max:255',
+        'province' => 'required|string|max:255',
+        'postal_code' => 'nullable|string|max:20',
+        'country' => 'nullable|string|max:255',
+        'phone' => 'required|string|max:20',
+        'latitude' => 'nullable|numeric|between:-90,90',
+        'longitude' => 'nullable|numeric|between:-180,180',
+        'is_default' => 'boolean',
+    ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        if ($request->is_default) {
-            Address::where('user_id', Auth::id())->update(['is_default' => false]);
-        }
-
-        $address = Address::create([
-            'user_id' => Auth::id(),
-            'recipient_name' => $request->recipient_name,
-            'phone' => $request->phone,
-            'house_number' => $request->house_number,
-            'street_address' => $request->street_address,
-            'barangay' => $request->barangay,
-            'barangay_name' => $request->barangay_name,
-            'municipality' => $request->municipality,
-            'municipality_name' => $request->municipality_name,
-            'province' => $request->province,
-            'province_name' => $request->province_name,
-            'region' => $request->region,
-            'region_name' => $request->region_name,
-            'latitude' => $request->latitude,
-            'longitude' => $request->longitude,
-            'is_default' => $request->is_default ?? false,
-            'label' => $request->label,
-        ]);
-
+    if ($validator->fails()) {
         return response()->json([
-            'message' => 'Address saved.',
-            'data' => $this->formatAddress($address),
-        ], 201);
+            'errors' => $validator->errors(),
+        ], 422);
     }
+
+    if ($request->boolean('is_default')) {
+        Address::where('user_id', Auth::id())
+            ->update(['is_default' => false]);
+    }
+
+    $address = Address::create([
+        'user_id' => Auth::id(),
+        'label' => $request->label,
+        'address_line1' => $request->address_line1,
+        'address_line2' => $request->address_line2,
+        'city' => $request->city,
+        'province' => $request->province,
+        'postal_code' => $request->postal_code,
+        'country' => $request->country ?? 'Philippines',
+        'phone' => $request->phone,
+        'latitude' => $request->latitude,
+        'longitude' => $request->longitude,
+        'is_default' => $request->boolean('is_default'),
+    ]);
+
+    return response()->json([
+        'message' => 'Address saved.',
+        'data' => $this->formatAddress($address),
+    ], 201);
+}
 
     public function show(Address $address)
     {
@@ -90,50 +83,60 @@ class AddressController extends Controller
     }
 
     public function update(Request $request, Address $address)
-    {
-        if ($address->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
-        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-            'recipient_name' => 'nullable|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'house_number' => 'nullable|string|max:50',
-            'street_address' => 'nullable|string|max:255',
-            'barangay' => 'nullable|string|max:255',
-            'barangay_name' => 'nullable|string|max:255',
-            'municipality' => 'nullable|string|max:255',
-            'municipality_name' => 'nullable|string|max:255',
-            'province' => 'nullable|string|max:255',
-            'province_name' => 'nullable|string|max:255',
-            'region' => 'nullable|string|max:255',
-            'region_name' => 'nullable|string|max:255',
-            'latitude' => 'nullable|numeric|between:-90,90',
-            'longitude' => 'nullable|numeric|between:-180,180',
-            'is_default' => 'boolean',
-            'label' => 'nullable|string|max:50',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        if ($request->is_default) {
-            Address::where('user_id', Auth::id())->update(['is_default' => false]);
-        }
-
-        $address->update($request->only([
-            'recipient_name', 'phone', 'house_number', 'street_address',
-            'barangay', 'barangay_name', 'municipality', 'municipality_name',
-            'province', 'province_name', 'region', 'region_name',
-            'latitude', 'longitude', 'is_default', 'label',
-        ]));
-
+{
+    if ($address->user_id !== Auth::id()) {
         return response()->json([
-            'message' => 'Address updated.',
-            'data' => $this->formatAddress($address->fresh()),
-        ]);
+            'message' => 'Unauthorized',
+        ], 403);
     }
+
+    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+        'label' => 'nullable|string|max:50',
+        'address_line1' => 'nullable|string|max:255',
+        'address_line2' => 'nullable|string|max:255',
+        'city' => 'nullable|string|max:255',
+        'province' => 'nullable|string|max:255',
+        'postal_code' => 'nullable|string|max:20',
+        'country' => 'nullable|string|max:255',
+        'phone' => 'nullable|string|max:20',
+        'latitude' => 'nullable|numeric|between:-90,90',
+        'longitude' => 'nullable|numeric|between:-180,180',
+        'is_default' => 'boolean',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'errors' => $validator->errors(),
+        ], 422);
+    }
+
+    if ($request->boolean('is_default')) {
+        Address::where('user_id', Auth::id())
+            ->where('id', '!=', $address->id)
+            ->update(['is_default' => false]);
+    }
+
+    $address->update($request->only([
+        'label',
+        'address_line1',
+        'address_line2',
+        'city',
+        'province',
+        'postal_code',
+        'country',
+        'phone',
+        'latitude',
+        'longitude',
+        'is_default',
+    ]));
+
+    $address->refresh();
+
+    return response()->json([
+        'message' => 'Address updated.',
+        'data' => $this->formatAddress($address),
+    ]);
+}
 
     public function destroy(Address $address)
     {
@@ -164,27 +167,29 @@ class AddressController extends Controller
     }
 
     private function formatAddress(Address $address): array
-    {
-        return [
-            'id' => $address->id,
-            'recipient_name' => $address->recipient_name,
-            'phone' => $address->phone,
-            'house_number' => $address->house_number,
-            'street_address' => $address->street_address,
-            'barangay' => $address->barangay,
-            'barangay_name' => $address->barangay_name,
-            'municipality' => $address->municipality,
-            'municipality_name' => $address->municipality_name,
-            'province' => $address->province,
-            'province_name' => $address->province_name,
-            'region' => $address->region,
-            'region_name' => $address->region_name,
-            'latitude' => $address->latitude,
-            'longitude' => $address->longitude,
-            'is_default' => $address->is_default,
-            'label' => $address->label,
-            'full_address' => $address->full_address,
-            'created_at' => $address->created_at?->toISOString(),
-        ];
-    }
+{
+    return [
+        'id' => $address->id,
+        'label' => $address->label,
+        'address_line1' => $address->address_line1,
+        'address_line2' => $address->address_line2,
+        'city' => $address->city,
+        'province' => $address->province,
+        'postal_code' => $address->postal_code,
+        'country' => $address->country,
+        'phone' => $address->phone,
+        'latitude' => $address->latitude,
+        'longitude' => $address->longitude,
+        'is_default' => (bool) $address->is_default,
+        'full_address' => collect([
+            $address->address_line1,
+            $address->address_line2,
+            $address->city,
+            $address->province,
+            $address->postal_code,
+            $address->country,
+        ])->filter()->implode(', '),
+        'created_at' => $address->created_at?->toISOString(),
+    ];
+}
 }

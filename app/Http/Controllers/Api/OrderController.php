@@ -38,16 +38,16 @@ class OrderController extends Controller
         $orders = $query->paginate($perPage);
 
         return response()->json([
-            'data' => $orders->items()->map(function ($order) {
-                return $this->formatOrder($order);
-            }),
-            'meta' => [
-                'current_page' => $orders->currentPage(),
-                'last_page' => $orders->lastPage(),
-                'per_page' => $orders->perPage(),
-                'total' => $orders->total(),
-            ],
-        ]);
+    'data' => collect($orders->items())->map(function ($order) {
+        return $this->formatOrder($order);
+    })->values(),
+    'meta' => [
+        'current_page' => $orders->currentPage(),
+        'last_page' => $orders->lastPage(),
+        'per_page' => $orders->perPage(),
+        'total' => $orders->total(),
+    ],
+]);
     }
 
     public function store(Request $request)
@@ -77,7 +77,16 @@ class OrderController extends Controller
         foreach ($request->items as $item) {
             $product = Product::with(['variations.sizes', 'seller'])->findOrFail($item['product_id']);
 
-            if (!$product->seller_id) {
+if (
+    $product->status !== 'published' ||
+    $product->compliance_status !== 'approved'
+) {
+    return response()->json([
+        'message' => "Product {$product->name} is not available.",
+    ], 422);
+}
+
+if (!$product->seller_id) {
                 return response()->json([
                     'message' => "Product {$product->name} is not connected to a seller shop yet.",
                 ], 422);
@@ -153,7 +162,8 @@ class OrderController extends Controller
             $order = Order::create([
                 'user_id' => Auth::id(),
                 'order_number' => 'ORD-' . Str::upper(Str::random(10)),
-                'status' => 'pending',
+'reference' => 'REF-' . Str::upper(Str::random(12)),
+'status' => 'pending',
                 'payment_method' => $request->payment_method,
                 'payment_status' => $request->payment_method === 'cod' ? 'unpaid' : 'pending',
                 'subtotal_minor' => $subtotalMinor,
@@ -163,14 +173,18 @@ class OrderController extends Controller
                 'shipping_minor' => $shippingFeeMinor,
                 'total_minor' => $totalMinor,
                 'notes' => $request->notes,
-                'shipping_address' => collect([
-                    $address->address_line1,
-                    $address->address_line2,
-                    $address->city,
-                    $address->province,
-                    $address->postal_code,
-                    $address->country,
-                ])->filter()->implode(', '),
+                'shipping_address' => [
+    'label' => $address->label,
+    'address_line1' => $address->address_line1,
+    'address_line2' => $address->address_line2,
+    'city' => $address->city,
+    'province' => $address->province,
+    'postal_code' => $address->postal_code,
+    'country' => $address->country,
+    'phone' => $address->phone,
+    'latitude' => $address->latitude,
+    'longitude' => $address->longitude,
+],
                 'ordered_at' => now(),
                 'customer_latitude' => null,
                 'customer_longitude' => null,
@@ -288,12 +302,13 @@ class OrderController extends Controller
                 ->whereIn('product_id', array_column($cartItems, 'product_id'))
                 ->delete();
 
-            DB::commit();
+           // Create one shipment for each seller/shop parcel
+// before committing so the whole checkout remains atomic.
+$this->createShipmentsForSellerOrders($order);
 
-            // Create one shipment for each seller/shop parcel.
-            $this->createShipmentsForSellerOrders($order);
+DB::commit();
 
-            return response()->json([
+return response()->json([
                 'message' => 'Order placed successfully.',
                 'data' => $this->formatOrder($order->load(
                     'items.product',
@@ -317,7 +332,7 @@ class OrderController extends Controller
         $order->load([
             'items.product:id,name,price_minor,discounted_price_minor,discount_percent,discount_starts_at,discount_ends_at,image',
             'items.variation:id,product_id,name,price_minor,discounted_price_minor,discount_percent,image',
-            'items.size:id,name,code',
+            'items.size:id,name,slug',
             'sellerOrders.seller:id,name,slug',
             'sellerOrders.shipment:id,seller_order_id,tracking_number,status,delivered_at,picked_up_at,rider_id',
             'sellerOrders.shipment.rider:id,name,phone,vehicle_type,latitude,longitude',
@@ -330,42 +345,66 @@ class OrderController extends Controller
     }
 
     public function cancel(Order $order)
-    {
-        if ($order->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+{
+    if ($order->user_id !== Auth::id()) {
+        return response()->json(['message' => 'Unauthorized'], 403);
+    }
 
-        if (!in_array($order->status, ['pending', 'confirmed', 'preparing'])) {
-            return response()->json([
-                'message' => 'Order cannot be cancelled at this stage.',
-            ], 422);
-        }
+    if (!in_array($order->status, ['pending', 'confirmed', 'preparing'])) {
+        return response()->json([
+            'message' => 'Order cannot be cancelled at this stage.',
+        ], 422);
+    }
 
-        $order->update([
-            'status' => 'cancelled',
-            'cancelled_at' => now(),
-            'cancellation_reason' => request('reason') ?? 'Customer cancelled',
+    DB::beginTransaction();
+
+    try {
+        $order->loadMissing([
+            'items.product',
+            'items.variation',
         ]);
 
-        // Restore stock
+        // Restore inventory first.
         foreach ($order->items as $item) {
-            if ($item->variant_id) {
+            if ($item->variant_id && $item->variation) {
                 $item->variation->increment('stock', $item->quantity);
-            } else {
+            } elseif ($item->product) {
                 $item->product->increment('stock', $item->quantity);
             }
 
             if ($item->size_id) {
-                $item->product->sizes()->where('sizes.id', $item->size_id)
-                    ->increment('pivot_stock', $item->quantity);
+                DB::table('product_size')
+                    ->where('product_id', $item->product_id)
+                    ->where('size_id', $item->size_id)
+                    ->increment('stock', $item->quantity);
             }
         }
+
+        $order->sellerOrders()->update([
+    'status' => 'cancelled',
+]);
+
+Shipment::whereIn(
+    'seller_order_id',
+    $order->sellerOrders()->pluck('id')
+)->update([
+    'status' => 'cancelled',
+]);
+
+        DB::commit();
 
         return response()->json([
             'message' => 'Order cancelled successfully.',
             'data' => $this->formatOrder($order->fresh()),
         ]);
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        return response()->json([
+            'message' => 'Failed to cancel order: ' . $e->getMessage(),
+        ], 500);
     }
+}
 
     public function rate(Request $request, Order $order)
     {
@@ -444,8 +483,18 @@ class OrderController extends Controller
             'confirmed_at' => $order->confirmed_at?->toISOString(),
             'delivered_at' => $order->delivered_at?->toISOString(),
             'address' => [
-                'full_address' => $order->shipping_address,
-            ],
+    'full_address' => collect($order->shipping_address)
+        ->only([
+            'address_line1',
+            'address_line2',
+            'city',
+            'province',
+            'postal_code',
+            'country',
+        ])
+        ->filter()
+        ->implode(', '),
+],
             'items' => $order->items->map(function ($item) {
                 return [
                     'id' => $item->id,
@@ -545,9 +594,20 @@ class OrderController extends Controller
                 'logistic_id' => $hub?->logistic_id,
                 'hub_id' => $hub?->id,
                 'tracking_number' => 'SPE-' . Str::upper(Str::random(10)),
-                'status' => $hub ? 'pending' : 'pending_logistic',
+'tracking_code' => 'SPE-' . Str::upper(Str::random(12)),
+'status' => $hub ? 'pending' : 'pending_logistic',
                 'pickup_address' => $pickup ?: 'Seller address',
-                'delivery_address' => $order->shipping_address,
+                'delivery_address' => collect($order->shipping_address)
+    ->only([
+        'address_line1',
+        'address_line2',
+        'city',
+        'province',
+        'postal_code',
+        'country',
+    ])
+    ->filter()
+    ->implode(', '),
                 'notes' => $hub
                     ? 'Auto-assigned hub based on seller pickup location: ' . $hub->name
                     : 'Awaiting logistic assignment',

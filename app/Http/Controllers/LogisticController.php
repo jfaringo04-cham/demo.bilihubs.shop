@@ -669,10 +669,14 @@ $activeRiders = $logistic->riders()
         }
 
         $pendingShipments = $logistic->shipments()
-            ->where('sorting_status', 'pending')
-            ->with('sellerOrder.order.user', 'sellerOrder.items.product', 'sellerOrder.seller')
-            ->latest()
-            ->paginate(20);
+    ->where('sorting_status', 'pending')
+    ->whereNotIn('status', ['cancelled', 'delivered'])
+    ->whereHas('sellerOrder.order', function ($query) {
+        $query->where('status', '!=', 'cancelled');
+    })
+    ->with('sellerOrder.order.user', 'sellerOrder.items.product', 'sellerOrder.seller')
+    ->latest()
+    ->paginate(20);
 
         $receivedShipments = $logistic->shipments()
             ->where('sorting_status', 'received')
@@ -820,9 +824,9 @@ if ($isFailedReturn) {
         }
 
         $validated = $request->validate([
-            'delivery_zone' => ['required', 'string', 'max:255'],
-            'delivery_type' => ['required', 'in:standard,same_day,cod'],
-        ]);
+    'delivery_zone' => ['required', 'in:Zone A,Zone B,Zone C,Zone D,Zone E'],
+    'delivery_type' => ['required', 'in:standard,same_day,express'],
+]);
 
         $shipment->update([
             'sorting_status' => 'scanned',
@@ -1097,7 +1101,7 @@ if ($shipment->failed_return_received_at) {
         if (str_contains($deliveryAddress, 'manila') || str_contains($deliveryAddress, 'quezon') || str_contains($deliveryAddress, 'makati') || str_contains($deliveryAddress, 'pasig') || str_contains($deliveryAddress, 'taguig') || str_contains($deliveryAddress, 'mcity') || str_contains($deliveryAddress, 'paraÃƒÆ’Ã‚Â±aque') || str_contains($deliveryAddress, 'valenzuela') || str_contains($deliveryAddress, 'malabon') || str_contains($deliveryAddress, 'caloocan') || str_contains($deliveryAddress, 'las piÃƒÆ’Ã‚Â±as') || str_contains($deliveryAddress, 'mandaluyong') || str_contains($deliveryAddress, 'marikina') || str_contains($deliveryAddress, 'mersa') || str_contains($deliveryAddress, 'navotas') || str_contains($deliveryAddress, 'san juan') || str_contains($deliveryAddress, 'tondo') || str_contains($deliveryAddress, 'manila') || str_contains($deliveryAddress, 'ncr')) {
             $zone = 'Zone A - Metro Manila';
         } elseif (str_contains($deliveryAddress, 'cebu') || str_contains($deliveryAddress, 'iloilo') || str_contains($deliveryAddress, 'bacolod') || str_contains($deliveryAddress, 'cagayan de oro') || str_contains($deliveryAddress, 'davao') || str_contains($deliveryAddress, 'cavite') || str_contains($deliveryAddress, 'laguna') || str_contains($deliveryAddress, 'batangas') || str_contains($deliveryAddress, 'pampanga') || str_contains($deliveryAddress, 'bulacan') || str_contains($deliveryAddress, 'rizal') || str_contains($deliveryAddress, 'quezon') || str_contains($deliveryAddress, 'laguna') || str_contains($deliveryAddress, 'pagsanjan') || str_contains($deliveryAddress, 'los ba') || str_contains($deliveryAddress, 'santa cruz')) {
-            $zone = 'Zone A - Metro Manila';
+            $zone = 'Zone A';
         } elseif (str_contains($deliveryAddress, 'cagayan') || str_contains($deliveryAddress, 'iligan') || str_contains($deliveryAddress, 'zonk') || str_contains($deliveryAddress, 'samal') || str_contains($deliveryAddress, 'bukidnon') || str_contains($deliveryAddress, 'misamis')) {
             $zone = 'Zone B - Luzon';
         } elseif (str_contains($deliveryAddress, 'cebu') || str_contains($deliveryAddress, 'bohol') || str_contains($deliveryAddress, 'negros') || str_contains($deliveryAddress, 'crown') || str_contains($deliveryAddress, 'siquior') || str_contains($deliveryAddress, 'bacolod') || str_contains($deliveryAddress, 'iloilo')) {

@@ -48,34 +48,39 @@ class Order extends Model
     'rescheduled_at',
 
     // Proof of Delivery
-    'proof_of_delivery',
-    'delivery_signature',
-    'delivered_to',
+  'proof_of_delivery',
+'delivery_signature',
+'delivered_to',
+'reference',
+'cancelled_at',
+'cancellation_reason',
 ];
 
     protected $casts = [
-        'ordered_at' => 'datetime',
-        'shipped_at' => 'datetime',
-        'delivered_at' => 'datetime',
-        'assigned_at' => 'datetime',
-        'collected_at' => 'datetime',
-        'picked_up_at' => 'datetime',
-        'failed_at' => 'datetime',
-        'confirmed_received_at' => 'datetime',
-        'reschedule_requested_at' => 'datetime',
-        'rescheduled_at' => 'datetime',
+    'shipping_address' => 'array',
 
-        // Milestone 4 integer centavo fields.
-        'subtotal_minor' => 'integer',
-        'tax_minor' => 'integer',
-        'shipping_minor' => 'integer',
-        'total_minor' => 'integer',
-        'amount_collected_minor' => 'integer',
+    'ordered_at' => 'datetime',
+    'shipped_at' => 'datetime',
+    'delivered_at' => 'datetime',
+    'assigned_at' => 'datetime',
+    'collected_at' => 'datetime',
+    'picked_up_at' => 'datetime',
+    'failed_at' => 'datetime',
+    'confirmed_received_at' => 'datetime',
+    'reschedule_requested_at' => 'datetime',
+    'rescheduled_at' => 'datetime',
 
-        'customer_latitude' => 'decimal:7',
-        'customer_longitude' => 'decimal:7',
-        'ready_for_pickup' => 'boolean',
-    ];
+    // Milestone 4 integer centavo fields.
+    'subtotal_minor' => 'integer',
+    'tax_minor' => 'integer',
+    'shipping_minor' => 'integer',
+    'total_minor' => 'integer',
+    'amount_collected_minor' => 'integer',
+
+    'customer_latitude' => 'decimal:7',
+    'customer_longitude' => 'decimal:7',
+    'ready_for_pickup' => 'boolean',
+];
 
     public function user(): BelongsTo
     {

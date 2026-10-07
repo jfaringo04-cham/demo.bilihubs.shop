@@ -25,7 +25,9 @@
         </div>
       </div>
         @php
-    $shipping = json_decode($order->shipping_address, true);
+    $shipping = is_array($order->shipping_address)
+        ? $order->shipping_address
+        : json_decode($order->shipping_address, true);
 
     $recipient = is_array($shipping)
         ? ($shipping['recipient'] ?? null)
@@ -36,7 +38,17 @@
         : null;
 
     $deliveryAddress = is_array($shipping)
-        ? ($shipping['address'] ?? $order->shipping_address)
+        ? (
+            $shipping['address']
+            ?? implode(', ', array_filter([
+                $shipping['address_line1'] ?? null,
+                $shipping['address_line2'] ?? null,
+                $shipping['city'] ?? null,
+                $shipping['province'] ?? null,
+                $shipping['postal_code'] ?? null,
+                $shipping['country'] ?? null,
+            ]))
+        )
         : $order->shipping_address;
 @endphp
 
@@ -620,7 +632,9 @@
 @endpush
 
 @php
-    $mapShipping = json_decode($order->shipping_address, true);
+    $mapShipping = is_array($order->shipping_address)
+        ? $order->shipping_address
+        : json_decode($order->shipping_address, true);
 
     $mapAddress = is_array($mapShipping)
         ? ($mapShipping['address'] ?? $order->shipping_address)
