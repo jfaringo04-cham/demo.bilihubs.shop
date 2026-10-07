@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Role;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -14,48 +15,60 @@ use Laravel\Socialite\Facades\Socialite;
 class AuthController extends Controller
 {
     public function register(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed',
-            'mobile_number' => 'nullable|string|digits:11',
-            'role' => 'required|in:customer,seller,rider',
-            'first_name' => 'nullable|string|max:255',
-            'middle_name' => 'nullable|string|max:1',
-            'last_name' => 'nullable|string|max:255',
-            'sex' => 'nullable|in:Male,Female',
-            'birthday' => 'nullable|date',
-            'age' => 'nullable|integer|min:0|max:120',
-        ]);
+{
+    $validator = Validator::make($request->all(), [
+        'name' => 'required|string|max:255',
+        'email' => 'required|string|email|max:255|unique:users,email',
+        'password' => 'required|string|min:8|confirmed',
+        'mobile_number' => 'nullable|string|digits:11|unique:users,mobile_number',
+        'role' => 'required|in:buyer,seller,rider',
+        'first_name' => 'nullable|string|max:255',
+        'middle_name' => 'nullable|string|max:1',
+        'last_name' => 'nullable|string|max:255',
+        'sex' => 'nullable|in:Male,Female',
+        'birthday' => 'nullable|date',
+        'age' => 'nullable|integer|min:0|max:120',
+    ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'mobile_number' => $request->mobile_number,
-            'role' => $request->role,
-            'first_name' => $request->first_name,
-            'middle_name' => $request->middle_name,
-            'last_name' => $request->last_name,
-            'sex' => $request->sex,
-            'birthday' => $request->birthday,
-            'age' => $request->age,
-            'status' => in_array($request->role, ['seller', 'rider']) ? User::STATUS_PENDING : User::STATUS_APPROVED,
-        ]);
-
-        $token = $user->createToken('api-token')->plainTextToken;
-
+    if ($validator->fails()) {
         return response()->json([
-            'user' => $user,
-            'token' => $token,
-            'token_type' => 'Bearer',
-        ], 201);
+            'message' => 'Validation failed.',
+            'errors' => $validator->errors(),
+        ], 422);
     }
+
+    $role = Role::where('name', $request->role)->first();
+
+    if (!$role) {
+        return response()->json([
+            'message' => 'Selected account role is not available.',
+        ], 422);
+    }
+
+    $user = User::create([
+        'name' => $request->name,
+        'email' => $request->email,
+        'password' => Hash::make($request->password),
+        'mobile_number' => $request->mobile_number,
+        'first_name' => $request->first_name,
+        'middle_name' => $request->middle_name,
+        'last_name' => $request->last_name,
+        'sex' => $request->sex,
+        'birthday' => $request->birthday,
+        'age' => $request->age,
+
+        // All newly registered accounts require approval.
+        'status' => User::STATUS_PENDING,
+    ]);
+
+    // Attach the selected role through the role_user pivot table.
+    $user->roles()->attach($role->id);
+
+    return response()->json([
+        'message' => 'Registration submitted successfully. Your account is pending approval.',
+        'user' => $user->load('roles'),
+    ], 201);
+}
 
     public function login(Request $request)
     {
@@ -233,11 +246,11 @@ class AuthController extends Controller
     }
 
     public function user(Request $request)
-    {
-        return response()->json([
-            'user' => $request->user()->load('hub', 'logistic'),
-        ]);
-    }
+{
+    return response()->json([
+        'user' => $request->user()->load('roles', 'hub', 'logistic'),
+    ]);
+}
 
     public function updateProfile(Request $request)
     {
@@ -277,8 +290,9 @@ class AuthController extends Controller
         ]));
 
         return response()->json([
-            'user' => $user->fresh(),
-        ]);
+    'message' => 'Profile updated successfully.',
+    'user' => $user->fresh()->load('roles', 'hub', 'logistic'),
+]);
     }
 
     public function updatePassword(Request $request)

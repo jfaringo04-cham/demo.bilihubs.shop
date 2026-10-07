@@ -34,15 +34,14 @@ Route::post('/auth/register', [AuthController::class, 'register']);
 Route::post('/auth/login', [AuthController::class, 'login']);
 Route::post('/auth/social/google', [AuthController::class, 'googleLogin']);
 Route::post('/auth/social/facebook', [AuthController::class, 'facebookLogin']);
-Route::post('/auth/refresh', [AuthController::class, 'refresh']);
 Route::post('/auth/forgot-password', [AuthController::class, 'forgotPassword']);
 Route::post('/auth/reset-password', [AuthController::class, 'resetPassword']);
 
 // Public product browsing
 Route::get('/products', [ProductController::class, 'index']);
+Route::get('/products/categories', [ProductController::class, 'categories']);
+Route::get('/products/sizes', [ProductController::class, 'sizes']);
 Route::get('/products/{product}', [ProductController::class, 'show']);
-Route::get('/categories', [ProductController::class, 'categories']);
-Route::get('/sizes', [ProductController::class, 'sizes']);
 
 // Public address API (Philippine geographic data)
 Route::prefix('addresses')->name('api.addresses.')->group(function () {
@@ -70,13 +69,14 @@ Route::prefix('addresses')->name('api.addresses.')->group(function () {
 
 // Protected routes (require authentication)
 Route::middleware('auth:sanctum')->group(function () {
-    // Auth
-    Route::post('/auth/logout', [AuthController::class, 'logout']);
-    Route::post('/auth/logout-all', [AuthController::class, 'logoutAll']);
-    Route::get('/auth/user', [AuthController::class, 'user']);
-    Route::put('/auth/profile', [AuthController::class, 'updateProfile']);
-    Route::put('/auth/password', [AuthController::class, 'updatePassword']);
-    Route::post('/auth/device', [AuthController::class, 'registerDevice']);
+   // Auth
+Route::post('/auth/logout', [AuthController::class, 'logout']);
+Route::post('/auth/logout-all', [AuthController::class, 'logoutAll']);
+Route::post('/auth/refresh', [AuthController::class, 'refresh']);
+Route::get('/auth/user', [AuthController::class, 'user']);
+Route::put('/auth/profile', [AuthController::class, 'updateProfile']);
+Route::put('/auth/password', [AuthController::class, 'updatePassword']);
+Route::post('/auth/device', [AuthController::class, 'registerDevice']);
 
     // Addresses (user's saved addresses)
     Route::apiResource('addresses', AddressController::class)->only(['index', 'store', 'show', 'update', 'destroy']);

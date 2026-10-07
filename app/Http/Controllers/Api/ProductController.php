@@ -14,9 +14,8 @@ class ProductController extends Controller
     public function index(Request $request)
     {
         $query = Product::with(['category', 'images', 'variations', 'seller'])
-            ->where('status', 'active')
-            ->where('compliance_status', 'approved')
-            ->where('is_approved', true);
+    ->where('status', 'published')
+    ->where('compliance_status', 'approved');
 
         if ($request->filled('search')) {
             $query->where(function ($q) use ($request) {
@@ -78,14 +77,13 @@ class ProductController extends Controller
     public function show(Product $product)
     {
         if (
-            $product->status !== 'active' ||
-            $product->compliance_status !== 'approved' ||
-            !$product->is_approved
-        ) {
-            return response()->json([
-                'message' => 'Product not found',
-            ], 404);
-        }
+    $product->status !== 'published' ||
+    $product->compliance_status !== 'approved'
+) {
+    return response()->json([
+        'message' => 'Product not found',
+    ], 404);
+}
 
         $product->load([
             'category',
@@ -95,9 +93,9 @@ class ProductController extends Controller
         ]);
 
         $sizes = $product->sizes()
-            ->wherePivot('stock', '>', 0)
-            ->select('sizes.id', 'sizes.name', 'sizes.code')
-            ->get();
+    ->wherePivot('stock', '>', 0)
+    ->select('sizes.id', 'sizes.name')
+    ->get();
 
         $variations = $product->variations()
             ->where('stock', '>', 0)
@@ -143,24 +141,23 @@ class ProductController extends Controller
         ]);
     }
 
-    public function categories()
-    {
-        $categories = Category::where('is_active', true)
-            ->orderBy('name')
-            ->get(['id', 'name', 'slug', 'icon', 'image']);
+   public function categories()
+{
+    $categories = Category::orderBy('name')
+        ->get(['id', 'name', 'slug', 'description', 'image', 'parent_id']);
 
-        return response()->json([
-            'data' => $categories,
-        ]);
-    }
+    return response()->json([
+        'data' => $categories,
+    ]);
+}
 
     public function sizes()
-    {
-        $sizes = Size::orderBy('sort_order')
-            ->get(['id', 'name', 'code']);
+{
+    $sizes = Size::orderBy('name')
+        ->get(['id', 'name', 'slug']);
 
-        return response()->json([
-            'data' => $sizes,
-        ]);
-    }
+    return response()->json([
+        'data' => $sizes,
+    ]);
+}
 }

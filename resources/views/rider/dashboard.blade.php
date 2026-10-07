@@ -110,11 +110,23 @@
         );
     }
 
-    $shippingData = json_decode($order->shipping_address, true);
+    $shippingData = is_array($order->shipping_address)
+    ? $order->shipping_address
+    : json_decode($order->shipping_address, true);
 
-    $displayAddress = is_array($shippingData)
-        ? ($shippingData['address'] ?? $order->shipping_address)
-        : $order->shipping_address;
+if (is_array($shippingData)) {
+    $displayAddress = $shippingData['address']
+        ?? implode(', ', array_filter([
+            $shippingData['address_line1'] ?? null,
+            $shippingData['address_line2'] ?? null,
+            $shippingData['city'] ?? null,
+            $shippingData['province'] ?? null,
+            $shippingData['postal_code'] ?? null,
+            $shippingData['country'] ?? null,
+        ]));
+} else {
+    $displayAddress = $order->shipping_address;
+}
 @endphp
               <tr>
                 <td>{{ $order->order_number }}</td>
@@ -194,12 +206,26 @@
 
 @php
     $dashboardOrders = $assignedOrders->map(function ($order) {
-        $shippingData = json_decode($order->shipping_address, true);
+    $shippingData = is_array($order->shipping_address)
+        ? $order->shipping_address
+        : json_decode($order->shipping_address, true);
 
-        return [
-            'address' => is_array($shippingData)
-                ? ($shippingData['address'] ?? $order->shipping_address)
-                : $order->shipping_address,
+    if (is_array($shippingData)) {
+        $displayAddress = $shippingData['address']
+            ?? implode(', ', array_filter([
+                $shippingData['address_line1'] ?? null,
+                $shippingData['address_line2'] ?? null,
+                $shippingData['city'] ?? null,
+                $shippingData['province'] ?? null,
+                $shippingData['postal_code'] ?? null,
+                $shippingData['country'] ?? null,
+            ]));
+    } else {
+        $displayAddress = $order->shipping_address;
+    }
+
+    return [
+        'address' => $displayAddress,
 
             'customerName' => $order->user->name ?? 'Customer',
 

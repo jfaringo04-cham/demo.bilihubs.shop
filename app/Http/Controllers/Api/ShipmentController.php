@@ -34,7 +34,7 @@ class ShipmentController extends Controller
         $shipment->load([
             'rider:id,name,phone,vehicle_type,latitude,longitude,current_load,max_capacity',
             'hub:id,name,address,latitude,longitude',
-            'logistic:id,business_name,logo',
+            'logistic:id,company_name,logo',
         ]);
 
         return response()->json([
@@ -85,7 +85,7 @@ class ShipmentController extends Controller
                 ] : null,
                 'logistic' => $shipment->logistic ? [
                     'id' => $shipment->logistic->id,
-                    'name' => $shipment->logistic->business_name,
+                    'name' => $shipment->logistic->company_name,
                     'logo' => $shipment->logistic->logo,
                 ] : null,
                 'order' => [
