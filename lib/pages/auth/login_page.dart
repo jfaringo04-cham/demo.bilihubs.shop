@@ -290,30 +290,10 @@ class _LoginPageState extends State<LoginPage> {
                               // --------------------------------
 
                               Center(
-                                child: Column(
-                                  children: [
-                                    Container(
-                                      height: 62,
-                                      width: 62,
-
-                                      decoration: LoginStyle.logoContainer,
-
-                                      child: const Icon(
-                                        Icons.shopping_bag_outlined,
-
-                                        color: LoginColors.primary,
-
-                                        size: 32,
-                                      ),
-                                    ),
-
-                                    const SizedBox(height: 12),
-
-                                    const Text(
-                                      "BiliHub",
-                                      style: LoginStyle.logo,
-                                    ),
-                                  ],
+                                child: Image.asset(
+                                  'assets/bilihub_logo.png',
+                                  width: 260,
+                                  fit: BoxFit.contain,
                                 ),
                               ),
 
@@ -458,25 +438,20 @@ class _LoginPageState extends State<LoginPage> {
                               // REMEMBER + FORGOT PASSWORD
                               // --------------------------------
                               Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
                                   Transform.scale(
                                     scale: 0.9,
-
                                     child: Checkbox(
                                       value: rememberMe,
-
                                       activeColor: LoginColors.primary,
-
                                       side: const BorderSide(
                                         color: LoginColors.border,
-
                                         width: 1.4,
                                       ),
-
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(5),
                                       ),
-
                                       onChanged: isLoading
                                           ? null
                                           : (value) {
@@ -486,45 +461,41 @@ class _LoginPageState extends State<LoginPage> {
                                             },
                                     ),
                                   ),
-
-                                  GestureDetector(
-                                    onTap: isLoading
-                                        ? null
-                                        : () {
-                                            setState(() {
-                                              rememberMe = !rememberMe;
-                                            });
-                                          },
-
-                                    child: const Text(
-                                      "Remember me",
-                                      style: LoginStyle.rememberText,
+                                  Expanded(
+                                    child: GestureDetector(
+                                      onTap: isLoading
+                                          ? null
+                                          : () {
+                                              setState(() {
+                                                rememberMe = !rememberMe;
+                                              });
+                                            },
+                                      child: const Text(
+                                        "Remember me",
+                                        style: LoginStyle.rememberText,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
                                   ),
-
-                                  const Spacer(),
-
-                                  TextButton(
-                                    onPressed: isLoading
-                                        ? null
-                                        : forgotPassword,
-
-                                    style: TextButton.styleFrom(
-                                      foregroundColor: LoginColors.primary,
-
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 4,
-                                        vertical: 8,
+                                  Flexible(
+                                    child: TextButton(
+                                      onPressed: isLoading
+                                          ? null
+                                          : forgotPassword,
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: LoginColors.primary,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 4,
+                                          vertical: 8,
+                                        ),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
                                       ),
-
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                    ),
-
-                                    child: const Text(
-                                      "Forgot Password?",
-
-                                      style: LoginStyle.forgotPasswordText,
+                                      child: const Text(
+                                        "Forgot Password?",
+                                        style: LoginStyle.forgotPasswordText,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
                                   ),
                                 ],
