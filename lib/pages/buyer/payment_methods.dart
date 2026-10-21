@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../sevices/auth_storage.dart';
 import '../../styles/buyer_style.dart';
 
 class PaymentMethodsPage extends StatefulWidget {
@@ -12,28 +13,135 @@ class PaymentMethodsPage extends StatefulWidget {
 class _PaymentMethodsPageState extends State<PaymentMethodsPage> {
   String selectedPaymentMethod = "Cash on Delivery";
 
+  bool isLoading = true;
+  bool isSaving = false;
+
   final List<Map<String, dynamic>> paymentMethods = [
     {
       "name": "Cash on Delivery",
       "subtitle": "Pay when your order arrives",
       "icon": Icons.payments_outlined,
+      "enabled": true,
     },
     {
       "name": "GCash",
-      "subtitle": "Pay using your GCash account",
+      "subtitle": "GCash payment is not connected yet",
       "icon": Icons.account_balance_wallet_outlined,
+      "enabled": false,
     },
     {
       "name": "Maya",
-      "subtitle": "Pay using your Maya wallet",
+      "subtitle": "Maya payment is not connected yet",
       "icon": Icons.wallet_outlined,
+      "enabled": false,
     },
     {
       "name": "Credit / Debit Card",
-      "subtitle": "Visa, Mastercard and supported cards",
+      "subtitle": "Card payment is not connected yet",
       "icon": Icons.credit_card_outlined,
+      "enabled": false,
     },
   ];
+
+  @override
+  void initState() {
+    super.initState();
+
+    _loadSavedPaymentMethod();
+  }
+
+  Future<void> _loadSavedPaymentMethod() async {
+    final user = await AuthStorage.getUser();
+
+    if (!mounted) return;
+
+    final savedPaymentMethod = user?['payment_method']?.toString().trim();
+
+    bool paymentExists = false;
+
+    if (savedPaymentMethod != null && savedPaymentMethod.isNotEmpty) {
+      for (final method in paymentMethods) {
+        if (method['name'] == savedPaymentMethod && method['enabled'] == true) {
+          paymentExists = true;
+          break;
+        }
+      }
+    }
+
+    setState(() {
+      if (paymentExists) {
+        selectedPaymentMethod = savedPaymentMethod!;
+      }
+
+      isLoading = false;
+    });
+  }
+
+  Future<void> _savePaymentMethod() async {
+    if (isSaving) return;
+
+    setState(() {
+      isSaving = true;
+    });
+
+    await AuthStorage.updateUser({'payment_method': selectedPaymentMethod});
+
+    if (!mounted) return;
+
+    setState(() {
+      isSaving = false;
+    });
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          backgroundColor: BuyerColors.primaryDark,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_outline, color: Colors.white),
+
+              const SizedBox(width: 10),
+
+              Expanded(
+                child: Text(
+                  "$selectedPaymentMethod saved as your payment method.",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+  }
+
+  void _selectPaymentMethod(Map<String, dynamic> method) {
+    final enabled = method["enabled"] == true;
+
+    if (!enabled) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text("${method["name"]} is not connected yet."),
+          ),
+        );
+
+      return;
+    }
+
+    setState(() {
+      selectedPaymentMethod = method["name"].toString();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -42,18 +150,15 @@ class _PaymentMethodsPageState extends State<PaymentMethodsPage> {
 
       appBar: AppBar(
         backgroundColor: BuyerColors.white,
-
         elevation: 0,
-
         scrolledUnderElevation: 0,
-
         centerTitle: true,
 
         leading: IconButton(
+          tooltip: "Back",
           onPressed: () {
             Navigator.pop(context);
           },
-
           icon: const Icon(
             Icons.arrow_back_ios_new_rounded,
             color: BuyerColors.textDark,
@@ -66,191 +171,252 @@ class _PaymentMethodsPageState extends State<PaymentMethodsPage> {
 
       body: SafeArea(
         top: false,
+        child: isLoading
+            ? const Center(
+                child: CircularProgressIndicator(color: BuyerColors.primary),
+              )
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 30),
+                children: [
+                  const Text(
+                    "Choose Payment Method",
+                    style: BuyerStyle.sectionTitle,
+                  ),
 
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 30),
+                  const SizedBox(height: 6),
 
-          children: [
-            const Text("Choose Payment Method", style: BuyerStyle.sectionTitle),
+                  const Text(
+                    "Select the payment method you want to use during checkout.",
+                    style: BuyerStyle.subtitle,
+                  ),
 
-            const SizedBox(height: 6),
+                  const SizedBox(height: 20),
 
-            const Text(
-              "Select the payment method you want to use during checkout.",
-              style: BuyerStyle.subtitle,
-            ),
+                  ...paymentMethods.map((method) {
+                    final name = method["name"].toString();
 
-            const SizedBox(height: 20),
+                    final subtitle = method["subtitle"].toString();
 
-            ...paymentMethods.map((method) {
-              final name = method["name"] as String;
+                    final icon = method["icon"] as IconData;
 
-              final selected = selectedPaymentMethod == name;
+                    final enabled = method["enabled"] == true;
 
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
+                    final selected = selectedPaymentMethod == name;
 
-                child: Material(
-                  color: Colors.transparent,
-
-                  child: InkWell(
-                    onTap: () {
-                      setState(() {
-                        selectedPaymentMethod = name;
-                      });
-                    },
-
-                    borderRadius: BorderRadius.circular(18),
-
-                    child: Ink(
-                      padding: const EdgeInsets.all(16),
-
-                      decoration: BoxDecoration(
-                        color: BuyerColors.white,
-
-                        borderRadius: BorderRadius.circular(18),
-
-                        border: Border.all(
-                          color: selected
-                              ? BuyerColors.primary
-                              : BuyerColors.border,
-
-                          width: selected ? 1.6 : 1,
-                        ),
-                      ),
-
-                      child: Row(
-                        children: [
-                          Container(
-                            height: 48,
-                            width: 48,
-
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () {
+                            _selectPaymentMethod(method);
+                          },
+                          borderRadius: BorderRadius.circular(18),
+                          child: Ink(
+                            padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: BuyerColors.lightPurple,
-
-                              borderRadius: BorderRadius.circular(14),
+                              color: enabled
+                                  ? BuyerColors.white
+                                  : Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: selected
+                                    ? BuyerColors.primary
+                                    : BuyerColors.border,
+                                width: selected ? 1.6 : 1,
+                              ),
                             ),
-
-                            child: Icon(
-                              method["icon"] as IconData,
-
-                              color: BuyerColors.primary,
-                            ),
-                          ),
-
-                          const SizedBox(width: 14),
-
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-
+                            child: Row(
                               children: [
-                                Text(name, style: BuyerStyle.cardTitle),
-
-                                const SizedBox(height: 4),
-
-                                Text(
-                                  method["subtitle"] as String,
-
-                                  style: BuyerStyle.small,
+                                Container(
+                                  height: 48,
+                                  width: 48,
+                                  decoration: BoxDecoration(
+                                    color: enabled
+                                        ? BuyerColors.lightPurple
+                                        : Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: Icon(
+                                    icon,
+                                    color: enabled
+                                        ? BuyerColors.primary
+                                        : Colors.grey,
+                                  ),
                                 ),
+
+                                const SizedBox(width: 14),
+
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              name,
+                                              style: BuyerStyle.cardTitle,
+                                            ),
+                                          ),
+
+                                          if (!enabled)
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 7,
+                                                    vertical: 3,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: BuyerColors.lightPurple,
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: const Text(
+                                                "Soon",
+                                                style: TextStyle(
+                                                  color: BuyerColors.primary,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+
+                                      const SizedBox(height: 4),
+
+                                      Text(subtitle, style: BuyerStyle.small),
+                                    ],
+                                  ),
+                                ),
+
+                                if (enabled)
+                                  Radio<String>(
+                                    value: name,
+                                    groupValue: selectedPaymentMethod,
+                                    activeColor: BuyerColors.primary,
+                                    onChanged: (value) {
+                                      if (value == null) {
+                                        return;
+                                      }
+
+                                      setState(() {
+                                        selectedPaymentMethod = value;
+                                      });
+                                    },
+                                  )
+                                else
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 12),
+                                    child: Icon(
+                                      Icons.lock_outline_rounded,
+                                      color: BuyerColors.textGrey,
+                                      size: 20,
+                                    ),
+                                  ),
                               ],
                             ),
                           ),
-
-                          Radio<String>(
-                            value: name,
-
-                            groupValue: selectedPaymentMethod,
-
-                            activeColor: BuyerColors.primary,
-
-                            onChanged: (value) {
-                              if (value == null) {
-                                return;
-                              }
-
-                              setState(() {
-                                selectedPaymentMethod = value;
-                              });
-                            },
-                          ),
-                        ],
+                        ),
                       ),
+                    );
+                  }),
+
+                  const SizedBox(height: 12),
+
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: BuyerColors.lightPurple,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.info_outline_rounded,
+                          color: BuyerColors.primary,
+                          size: 20,
+                        ),
+
+                        const SizedBox(width: 10),
+
+                        Expanded(
+                          child: Text(
+                            "Selected: $selectedPaymentMethod",
+                            style: const TextStyle(
+                              fontSize: 12,
+                              height: 1.4,
+                              color: BuyerColors.textDark,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-              );
-            }),
 
-            const SizedBox(height: 12),
+                  const SizedBox(height: 12),
 
-            Container(
-              padding: const EdgeInsets.all(14),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: BuyerColors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: BuyerColors.border),
+                    ),
+                    child: const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.security_outlined,
+                          color: BuyerColors.primary,
+                          size: 20,
+                        ),
 
-              decoration: BoxDecoration(
-                color: BuyerColors.lightPurple,
+                        SizedBox(width: 10),
 
-                borderRadius: BorderRadius.circular(14),
-              ),
-
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-
-                children: [
-                  const Icon(
-                    Icons.info_outline_rounded,
-                    color: BuyerColors.primary,
-                    size: 20,
+                        Expanded(
+                          child: Text(
+                            "Only Cash on Delivery is available for now. "
+                            "GCash, Maya, and card payments will be enabled "
+                            "after their payment integrations are connected.",
+                            style: BuyerStyle.small,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
 
-                  const SizedBox(width: 10),
+                  const SizedBox(height: 24),
 
-                  Expanded(
-                    child: Text(
-                      "Selected: $selectedPaymentMethod",
-                      style: const TextStyle(
-                        fontSize: 12,
-                        height: 1.4,
-                        color: BuyerColors.textDark,
-                        fontWeight: FontWeight.w600,
-                      ),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      style: BuyerStyle.primaryButton,
+
+                      onPressed: isSaving ? null : _savePaymentMethod,
+
+                      child: isSaving
+                          ? const SizedBox(
+                              height: 22,
+                              width: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text(
+                              "Save Payment Method",
+                              style: BuyerStyle.buttonText,
+                            ),
                     ),
                   ),
                 ],
               ),
-            ),
-
-            const SizedBox(height: 24),
-
-            SizedBox(
-              width: double.infinity,
-
-              child: ElevatedButton(
-                style: BuyerStyle.primaryButton,
-
-                onPressed: () {
-                  ScaffoldMessenger.of(context)
-                    ..hideCurrentSnackBar()
-                    ..showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          "$selectedPaymentMethod selected as your payment method.",
-                        ),
-
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                },
-
-                child: const Text(
-                  "Save Payment Method",
-                  style: BuyerStyle.buttonText,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

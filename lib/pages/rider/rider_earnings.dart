@@ -1,63 +1,250 @@
 import 'package:flutter/material.dart';
 
+import '../../sevices/api_services.dart';
 import '../../styles/rider_style.dart';
 
-class Earnings extends StatelessWidget {
+class Earnings extends StatefulWidget {
   const Earnings({super.key});
 
   @override
+  State<Earnings> createState() => _EarningsState();
+}
+
+class _EarningsState extends State<Earnings> {
+  bool _isLoading = true;
+
+  String? _errorMessage;
+
+  Map<String, dynamic> _earnings = <String, dynamic>{};
+
+  List<Map<String, dynamic>> _recentDeliveries = <Map<String, dynamic>>[];
+
+  DateTime? _fromDate;
+  DateTime? _toDate;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _loadEarnings();
+  }
+
+  // ============================================================
+  // LOAD EARNINGS
+  // ============================================================
+
+  Future<void> _loadEarnings() async {
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
+
+    final result = await ApiService.getRiderEarnings();
+
+    if (!mounted) return;
+
+    if (result['success'] == true) {
+      final data = result['data'];
+
+      Map<String, dynamic> earningsData = <String, dynamic>{};
+
+      if (data is Map<String, dynamic>) {
+        earningsData = data;
+      } else if (data is Map) {
+        earningsData = Map<String, dynamic>.from(data);
+      }
+
+      final recentData = earningsData['recent_deliveries'];
+
+      final List<Map<String, dynamic>> parsedRecent = <Map<String, dynamic>>[];
+
+      if (recentData is List) {
+        for (final item in recentData) {
+          if (item is Map<String, dynamic>) {
+            parsedRecent.add(item);
+          } else if (item is Map) {
+            parsedRecent.add(Map<String, dynamic>.from(item));
+          }
+        }
+      }
+
+      setState(() {
+        _earnings = earningsData;
+
+        _recentDeliveries = parsedRecent;
+
+        _isLoading = false;
+
+        _errorMessage = null;
+      });
+
+      return;
+    }
+
+    setState(() {
+      _earnings = {};
+
+      _recentDeliveries = [];
+
+      _isLoading = false;
+
+      _errorMessage =
+          result['message']?.toString() ?? 'Unable to load rider earnings.';
+    });
+  }
+
+  // ============================================================
+  // HELPERS
+  // ============================================================
+
+  double? _toDouble(dynamic value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  int _toInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  String _money(dynamic value) {
+    final amount = _toDouble(value);
+
+    if (amount == null) {
+      return '—';
+    }
+
+    return '₱${amount.toStringAsFixed(2)}';
+  }
+
+  String _dateText(DateTime? date) {
+    if (date == null) {
+      return 'Select date';
+    }
+
+    final month = date.month.toString().padLeft(2, '0');
+
+    final day = date.day.toString().padLeft(2, '0');
+
+    return '$month/$day/${date.year}';
+  }
+
+  String _formatStatus(String status) {
+    final cleaned = status.trim().replaceAll('_', ' ');
+
+    if (cleaned.isEmpty) {
+      return 'Unknown';
+    }
+
+    return cleaned
+        .split(RegExp(r'\s+'))
+        .map(
+          (word) => word.isEmpty
+              ? word
+              : '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
+        )
+        .join(' ');
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+
+  @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+
+    final horizontalPadding = width < 380 ? 14.0 : 18.0;
+
     return Scaffold(
       backgroundColor: RiderColors.background,
 
-      // ----------------------------------------------------------
-      // APP BAR
-      // ----------------------------------------------------------
       appBar: AppBar(
         backgroundColor: RiderColors.white,
+
         elevation: 0,
+
         surfaceTintColor: Colors.transparent,
+
         centerTitle: false,
-        title: const Text('Earnings', style: RiderStyle.appBarTitle),
-        leading: IconButton(
-          onPressed: () => Navigator.pop(context),
-          icon: const Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: RiderColors.textDark,
-            size: 20,
-          ),
+
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+
+          children: [
+            Text('Rider Earnings', style: RiderStyle.title),
+
+            SizedBox(height: 2),
+
+            Text('Delivery income summary', style: RiderStyle.small),
+          ],
         ),
+
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+
+            onPressed: _isLoading ? null : _loadEarnings,
+
+            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
+          ),
+
+          const SizedBox(width: 5),
+        ],
       ),
 
-      // ----------------------------------------------------------
-      // BODY
-      // ----------------------------------------------------------
       body: SafeArea(
         top: false,
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 30),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _totalEarningsCard(),
 
-              const SizedBox(height: 22),
+        child: RefreshIndicator(
+          onRefresh: _loadEarnings,
 
-              const Text('Income Overview', style: RiderStyle.sectionTitle),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
 
-              const SizedBox(height: 12),
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              14,
+              horizontalPadding,
+              30,
+            ),
 
-              _incomeGrid(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
 
-              const SizedBox(height: 24),
+              children: [
+                if (_isLoading) _loadingCard(),
 
-              _earningsActivity(),
+                if (!_isLoading && _errorMessage != null) _errorCard(),
 
-              const SizedBox(height: 24),
+                if (_isLoading || _errorMessage != null)
+                  const SizedBox(height: 18),
 
-              _recentDeliveries(),
-            ],
+                _dateFilterCard(),
+
+                const SizedBox(height: 18),
+
+                _summaryCards(),
+
+                const SizedBox(height: 22),
+
+                _earningsTrendCard(),
+
+                const SizedBox(height: 22),
+
+                _collectionDetails(),
+              ],
+            ),
           ),
         ),
       ),
@@ -65,240 +252,352 @@ class Earnings extends StatelessWidget {
   }
 
   // ============================================================
-  // TOTAL EARNINGS
+  // DATE FILTER
   // ============================================================
 
-  Widget _totalEarningsCard() {
+  Widget _dateFilterCard() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [RiderColors.primary, RiderColors.primaryDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: RiderColors.primary.withValues(alpha: 0.20),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Stack(
+
+      padding: const EdgeInsets.all(16),
+
+      decoration: RiderStyle.card,
+
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+
         children: [
-          // Decorative circle
-          Positioned(
-            right: -45,
-            top: -55,
-            child: Container(
-              height: 145,
-              width: 145,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.07),
-              ),
-            ),
-          ),
+          const Text('Earnings Period', style: RiderStyle.sectionTitle),
 
-          // Decorative circle
-          Positioned(
-            right: 30,
-            bottom: -70,
-            child: Container(
-              height: 110,
-              width: 110,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.05),
-              ),
-            ),
-          ),
+          const SizedBox(height: 14),
 
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    height: 46,
-                    width: 46,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(
-                      Icons.account_balance_wallet_outlined,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                  ),
+              Expanded(
+                child: _dateField(
+                  label: 'From Date',
 
-                  const SizedBox(width: 12),
+                  date: _fromDate,
 
-                  const Expanded(
-                    child: Text(
-                      'Total Earnings',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.trending_up_rounded,
-                          color: Colors.white,
-                          size: 14,
-                        ),
-                        SizedBox(width: 4),
-                        Text(
-                          'Active',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 18),
-
-              const Text(
-                '₱75,000.00',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 30,
-                  fontWeight: FontWeight.w800,
-                  height: 1.1,
+                  onTap: () => _pickDate(true),
                 ),
               ),
 
-              const SizedBox(height: 5),
+              const SizedBox(width: 10),
 
-              const Text(
-                'Your total earnings from deliveries',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
+              Expanded(
+                child: _dateField(
+                  label: 'To Date',
+
+                  date: _toDate,
+
+                  onTap: () => _pickDate(false),
+                ),
               ),
             ],
+          ),
+
+          const SizedBox(height: 12),
+
+          SizedBox(
+            width: double.infinity,
+
+            height: 46,
+
+            child: ElevatedButton.icon(
+              onPressed: _applyFilter,
+
+              icon: const Icon(Icons.filter_alt_outlined, size: 18),
+
+              label: const Text('Apply Filter'),
+
+              style: RiderStyle.primaryButton,
+            ),
           ),
         ],
       ),
     );
   }
 
+  Widget _dateField({
+    required String label,
+    required DateTime? date,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+
+      borderRadius: BorderRadius.circular(12),
+
+      child: Container(
+        padding: const EdgeInsets.all(12),
+
+        decoration: BoxDecoration(
+          color: RiderColors.background,
+
+          borderRadius: BorderRadius.circular(12),
+
+          border: Border.all(color: RiderColors.border),
+        ),
+
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+
+          children: [
+            Text(label, style: RiderStyle.small),
+
+            const SizedBox(height: 6),
+
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _dateText(date),
+
+                    maxLines: 1,
+
+                    overflow: TextOverflow.ellipsis,
+
+                    style: const TextStyle(
+                      color: RiderColors.textDark,
+
+                      fontSize: 12,
+
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 5),
+
+                const Icon(
+                  Icons.calendar_today_outlined,
+
+                  color: RiderColors.primary,
+
+                  size: 17,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickDate(bool from) async {
+    final initial = from
+        ? (_fromDate ?? DateTime.now())
+        : (_toDate ?? DateTime.now());
+
+    final selected = await showDatePicker(
+      context: context,
+
+      initialDate: initial,
+
+      firstDate: DateTime(2020),
+
+      lastDate: DateTime.now(),
+    );
+
+    if (selected == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      if (from) {
+        _fromDate = selected;
+      } else {
+        _toDate = selected;
+      }
+    });
+  }
+
+  void _applyFilter() {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        behavior: SnackBarBehavior.floating,
+
+        content: Text(
+          'Date filtering will be connected once the earnings API supports date parameters.',
+        ),
+      ),
+    );
+  }
+
   // ============================================================
-  // INCOME GRID
+  // SUMMARY
   // ============================================================
 
-  Widget _incomeGrid() {
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
-      crossAxisSpacing: 12,
-      mainAxisSpacing: 12,
-
-      // Slightly taller cards for mobile screens.
-      childAspectRatio: 1.22,
+  Widget _summaryCards() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
 
       children: [
-        _incomeCard(
-          title: 'Today',
-          value: '₱850',
-          icon: Icons.today_outlined,
-          iconBackground: RiderColors.lightPurple,
-          iconColor: RiderColors.primary,
+        const Text('Earnings Summary', style: RiderStyle.sectionTitle),
+
+        const SizedBox(height: 12),
+
+        GridView.count(
+          shrinkWrap: true,
+
+          physics: const NeverScrollableScrollPhysics(),
+
+          crossAxisCount: 2,
+
+          crossAxisSpacing: 10,
+
+          mainAxisSpacing: 10,
+
+          childAspectRatio: 1.25,
+
+          children: [
+            _summaryCard(
+              title: 'Today',
+
+              value: _money(_earnings['today_earnings']),
+
+              subtitle: 'Today\'s earnings',
+
+              icon: Icons.today_outlined,
+
+              iconBackground: RiderColors.lightPurple,
+            ),
+
+            _summaryCard(
+              title: 'This Week',
+
+              value: _money(_earnings['week_earnings']),
+
+              subtitle: 'Weekly earnings',
+
+              icon: Icons.date_range_outlined,
+
+              iconBackground: RiderColors.lightBlue,
+            ),
+
+            _summaryCard(
+              title: 'This Month',
+
+              value: _money(_earnings['month_earnings']),
+
+              subtitle: 'Monthly earnings',
+
+              icon: Icons.calendar_month_outlined,
+
+              iconBackground: RiderColors.lightOrange,
+            ),
+
+            _summaryCard(
+              title: 'Total',
+
+              value: _money(_earnings['total_earnings']),
+
+              subtitle: 'Total earnings',
+
+              icon: Icons.account_balance_wallet_outlined,
+
+              iconBackground: RiderColors.lightGreen,
+            ),
+          ],
         ),
 
-        _incomeCard(
-          title: 'This Week',
-          value: '₱4,200',
-          icon: Icons.date_range_outlined,
-          iconBackground: RiderColors.lightBlue,
-          iconColor: RiderColors.delivering,
-        ),
+        const SizedBox(height: 10),
 
-        _incomeCard(
-          title: 'This Month',
-          value: '₱18,000',
-          icon: Icons.calendar_month_outlined,
-          iconBackground: RiderColors.lightOrange,
-          iconColor: RiderColors.warning,
-        ),
+        Row(
+          children: [
+            Expanded(
+              child: _smallSummaryCard(
+                title: 'Deliveries',
 
-        _incomeCard(
-          title: 'Total Earnings',
-          value: '₱75,000',
-          icon: Icons.account_balance_wallet_outlined,
-          iconBackground: RiderColors.lightGreen,
-          iconColor: RiderColors.success,
+                value: _earnings.containsKey('week_deliveries')
+                    ? _toInt(_earnings['week_deliveries']).toString()
+                    : '—',
+
+                icon: Icons.local_shipping_outlined,
+              ),
+            ),
+
+            const SizedBox(width: 10),
+
+            Expanded(
+              child: _smallSummaryCard(
+                title: 'Average',
+
+                value: _money(_earnings['average_earning']),
+
+                icon: Icons.trending_up_rounded,
+              ),
+            ),
+          ],
         ),
       ],
     );
   }
 
-  Widget _incomeCard({
+  Widget _summaryCard({
     required String title,
     required String value,
+    required String subtitle,
     required IconData icon,
     required Color iconBackground,
-    required Color iconColor,
   }) {
     return Container(
-      padding: const EdgeInsets.all(15),
+      padding: const EdgeInsets.all(14),
+
       decoration: RiderStyle.card,
+
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+
         children: [
           Container(
-            height: 42,
-            width: 42,
+            height: 38,
+
+            width: 38,
+
             decoration: BoxDecoration(
               color: iconBackground,
-              borderRadius: BorderRadius.circular(13),
+
+              borderRadius: BorderRadius.circular(11),
             ),
-            child: Icon(icon, color: iconColor, size: 21),
+
+            child: Icon(icon, color: RiderColors.primary, size: 20),
           ),
 
           const Spacer(),
 
           Text(
             value,
+
             maxLines: 1,
+
             overflow: TextOverflow.ellipsis,
+
             style: const TextStyle(
               color: RiderColors.textDark,
-              fontSize: 19,
+
+              fontSize: 18,
+
               fontWeight: FontWeight.w800,
             ),
           ),
 
-          const SizedBox(height: 3),
+          const SizedBox(height: 2),
+
+          Text(title, style: RiderStyle.cardTitle),
+
+          const SizedBox(height: 2),
 
           Text(
-            title,
+            subtitle,
+
             maxLines: 1,
+
             overflow: TextOverflow.ellipsis,
+
             style: RiderStyle.small,
           ),
         ],
@@ -306,159 +605,52 @@ class Earnings extends StatelessWidget {
     );
   }
 
-  // ============================================================
-  // EARNINGS ACTIVITY
-  // ============================================================
-
-  Widget _earningsActivity() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: RiderStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Earnings Activity', style: RiderStyle.sectionTitle),
-                    SizedBox(height: 3),
-                    Text(
-                      'Your recent earnings activity',
-                      style: RiderStyle.small,
-                    ),
-                  ],
-                ),
-              ),
-
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: RiderColors.lightPurple,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  'This Week',
-                  style: TextStyle(
-                    color: RiderColors.primary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 20),
-
-          // Visual earnings placeholder.
-          // This can later be replaced with real API chart data.
-          Container(
-            height: 150,
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: RiderColors.background,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: RiderColors.border),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  height: 50,
-                  width: 50,
-                  decoration: BoxDecoration(
-                    color: RiderColors.lightPurple,
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                  child: const Icon(
-                    Icons.bar_chart_rounded,
-                    color: RiderColors.primary,
-                    size: 28,
-                  ),
-                ),
-
-                const SizedBox(height: 10),
-
-                const Text('Earnings Graph', style: RiderStyle.cardTitle),
-
-                const SizedBox(height: 3),
-
-                const Text(
-                  'Chart data will be connected to the API',
-                  textAlign: TextAlign.center,
-                  style: RiderStyle.small,
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          Row(
-            children: [
-              Expanded(
-                child: _activitySummary(
-                  title: 'Deliveries',
-                  value: '28',
-                  icon: Icons.local_shipping_outlined,
-                ),
-              ),
-
-              const SizedBox(width: 10),
-
-              Expanded(
-                child: _activitySummary(
-                  title: 'Average',
-                  value: '₱150',
-                  icon: Icons.trending_up_rounded,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _activitySummary({
+  Widget _smallSummaryCard({
     required String title,
     required String value,
     required IconData icon,
   }) {
     return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: RiderColors.lightPurple,
-        borderRadius: BorderRadius.circular(14),
-      ),
+      padding: const EdgeInsets.all(13),
+
+      decoration: RiderStyle.card,
+
       child: Row(
         children: [
           Container(
-            height: 34,
-            width: 34,
+            height: 38,
+
+            width: 38,
+
             decoration: BoxDecoration(
-              color: RiderColors.white,
-              borderRadius: BorderRadius.circular(10),
+              color: RiderColors.lightPurple,
+
+              borderRadius: BorderRadius.circular(11),
             ),
-            child: Icon(icon, color: RiderColors.primary, size: 18),
+
+            child: Icon(icon, color: RiderColors.primary, size: 20),
           ),
 
-          const SizedBox(width: 9),
+          const SizedBox(width: 10),
 
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+
               children: [
                 Text(title, style: RiderStyle.small),
+
                 const SizedBox(height: 2),
-                Text(value, style: RiderStyle.cardTitle),
+
+                Text(
+                  value,
+
+                  maxLines: 1,
+
+                  overflow: TextOverflow.ellipsis,
+
+                  style: RiderStyle.cardTitle,
+                ),
               ],
             ),
           ),
@@ -468,156 +660,312 @@ class Earnings extends StatelessWidget {
   }
 
   // ============================================================
-  // RECENT DELIVERIES
+  // TREND
   // ============================================================
 
-  Widget _recentDeliveries() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text('Recent Deliveries', style: RiderStyle.sectionTitle),
-            ),
-
-            InkWell(
-              onTap: () {},
-              borderRadius: BorderRadius.circular(10),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 5, vertical: 5),
-                child: Row(
-                  children: [
-                    Text(
-                      'View All',
-                      style: TextStyle(
-                        color: RiderColors.primary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    SizedBox(width: 4),
-                    Icon(
-                      Icons.arrow_forward_ios_rounded,
-                      color: RiderColors.primary,
-                      size: 11,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 12),
-
-        _earningItem(
-          tracking: 'BH-2026-001245',
-          amount: '₱70',
-          status: 'Delivered',
-        ),
-
-        _earningItem(
-          tracking: 'BH-2026-001246',
-          amount: '₱80',
-          status: 'Delivered',
-        ),
-
-        _earningItem(
-          tracking: 'BH-2026-001247',
-          amount: '₱100',
-          status: 'Delivered',
-        ),
-      ],
-    );
-  }
-
-  Widget _earningItem({
-    required String tracking,
-    required String amount,
-    required String status,
-  }) {
+  Widget _earningsTrendCard() {
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(15),
+
+      padding: const EdgeInsets.all(18),
+
       decoration: RiderStyle.card,
-      child: Row(
+
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+
         children: [
-          // Delivery icon
-          Container(
-            height: 46,
-            width: 46,
-            decoration: BoxDecoration(
-              color: RiderColors.lightGreen,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(
-              Icons.local_shipping_outlined,
-              color: RiderColors.success,
-              size: 22,
-            ),
+          const Text('Daily Earnings Trend', style: RiderStyle.sectionTitle),
+
+          const SizedBox(height: 4),
+
+          const Text(
+            'Your delivery earnings activity',
+
+            style: RiderStyle.small,
           ),
 
-          const SizedBox(width: 12),
+          const SizedBox(height: 18),
 
-          // Tracking information
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Container(
+            height: 145,
+
+            width: double.infinity,
+
+            decoration: BoxDecoration(
+              color: RiderColors.background,
+
+              borderRadius: BorderRadius.circular(16),
+
+              border: Border.all(color: RiderColors.border),
+            ),
+
+            child: const Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+
               children: [
-                Text(
-                  tracking,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: RiderStyle.cardTitle,
+                Icon(
+                  Icons.bar_chart_rounded,
+
+                  color: RiderColors.primary,
+
+                  size: 35,
                 ),
 
-                const SizedBox(height: 4),
+                SizedBox(height: 8),
 
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.check_circle_outline_rounded,
-                      color: RiderColors.success,
-                      size: 14,
-                    ),
+                Text('Earnings Trend', style: RiderStyle.cardTitle),
 
-                    const SizedBox(width: 4),
+                SizedBox(height: 4),
 
-                    Text(
-                      status,
-                      style: const TextStyle(
-                        color: RiderColors.success,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20),
+
+                  child: Text(
+                    'Daily chart will appear when the API provides dated earnings records.',
+
+                    textAlign: TextAlign.center,
+
+                    style: RiderStyle.small,
+                  ),
                 ),
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
 
-          const SizedBox(width: 10),
+  // ============================================================
+  // COLLECTION / EARNING DETAILS
+  // ============================================================
 
-          // Earnings amount
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+  Widget _collectionDetails() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+
+      children: [
+        const Text('Earning Details', style: RiderStyle.sectionTitle),
+
+        const SizedBox(height: 12),
+
+        if (_recentDeliveries.isEmpty)
+          Container(
+            width: double.infinity,
+
+            padding: const EdgeInsets.all(22),
+
+            decoration: RiderStyle.card,
+
+            child: const Column(
+              children: [
+                Icon(
+                  Icons.receipt_long_outlined,
+
+                  color: RiderColors.textGrey,
+
+                  size: 34,
+                ),
+
+                SizedBox(height: 8),
+
+                Text(
+                  'No earnings activity available yet.',
+
+                  textAlign: TextAlign.center,
+
+                  style: RiderStyle.small,
+                ),
+              ],
+            ),
+          )
+        else
+          ..._recentDeliveries.map((item) => _earningItem(item)),
+      ],
+    );
+  }
+
+  Widget _earningItem(Map<String, dynamic> item) {
+    final tracking = item['tracking_number']?.toString().trim() ?? '';
+
+    final status = item['status']?.toString().trim() ?? '';
+
+    final customer = item['customer_name']?.toString().trim() ?? '';
+
+    final amount = _money(item['earnings']);
+
+    return Container(
+      width: double.infinity,
+
+      margin: const EdgeInsets.only(bottom: 12),
+
+      padding: const EdgeInsets.all(15),
+
+      decoration: RiderStyle.card,
+
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+
+        children: [
+          Row(
             children: [
-              const Text('Earned', style: RiderStyle.small),
+              Container(
+                height: 42,
 
-              const SizedBox(height: 2),
+                width: 42,
+
+                decoration: BoxDecoration(
+                  color: RiderColors.lightGreen,
+
+                  borderRadius: BorderRadius.circular(12),
+                ),
+
+                child: const Icon(
+                  Icons.local_shipping_outlined,
+
+                  color: RiderColors.success,
+
+                  size: 21,
+                ),
+              ),
+
+              const SizedBox(width: 11),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+
+                  children: [
+                    Text(
+                      tracking.isEmpty ? 'Tracking unavailable' : tracking,
+
+                      maxLines: 1,
+
+                      overflow: TextOverflow.ellipsis,
+
+                      style: RiderStyle.cardTitle,
+                    ),
+
+                    if (customer.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+
+                      Text(
+                        customer,
+
+                        maxLines: 1,
+
+                        overflow: TextOverflow.ellipsis,
+
+                        style: RiderStyle.small,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 8),
 
               Text(
                 amount,
+
                 style: const TextStyle(
                   color: RiderColors.primary,
-                  fontSize: 17,
+
+                  fontSize: 16,
+
                   fontWeight: FontWeight.w800,
                 ),
               ),
             ],
+          ),
+
+          const SizedBox(height: 12),
+
+          Row(
+            children: [
+              const Text('Status', style: RiderStyle.small),
+
+              const Spacer(),
+
+              Text(
+                _formatStatus(status),
+
+                style: const TextStyle(
+                  color: RiderColors.success,
+
+                  fontSize: 11,
+
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // LOADING / ERROR
+  // ============================================================
+
+  Widget _loadingCard() {
+    return Container(
+      width: double.infinity,
+
+      padding: const EdgeInsets.all(16),
+
+      decoration: RiderStyle.card,
+
+      child: const Row(
+        children: [
+          SizedBox(
+            height: 22,
+
+            width: 22,
+
+            child: CircularProgressIndicator(
+              strokeWidth: 2.2,
+
+              color: RiderColors.primary,
+            ),
+          ),
+
+          SizedBox(width: 12),
+
+          Expanded(child: Text('Loading earnings...', style: RiderStyle.small)),
+        ],
+      ),
+    );
+  }
+
+  Widget _errorCard() {
+    return Container(
+      width: double.infinity,
+
+      padding: const EdgeInsets.all(16),
+
+      decoration: RiderStyle.card,
+
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline_rounded, color: RiderColors.warning),
+
+          const SizedBox(width: 10),
+
+          Expanded(
+            child: Text(
+              _errorMessage ?? 'Unable to load earnings.',
+
+              style: RiderStyle.small,
+            ),
+          ),
+
+          IconButton(
+            onPressed: _loadEarnings,
+
+            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
           ),
         ],
       ),

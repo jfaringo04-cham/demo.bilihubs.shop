@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../sevices/cart_service.dart';
 import '../../widgets/bottom_nav.dart';
 
 import 'buyer_home.dart';
@@ -9,7 +10,9 @@ import 'order_history.dart';
 import 'buyer_profile.dart';
 
 class BuyerNavigation extends StatefulWidget {
-  const BuyerNavigation({super.key});
+  final Map<String, dynamic> user;
+
+  const BuyerNavigation({super.key, required this.user});
 
   @override
   State<BuyerNavigation> createState() => _BuyerNavigationState();
@@ -18,46 +21,58 @@ class BuyerNavigation extends StatefulWidget {
 class _BuyerNavigationState extends State<BuyerNavigation> {
   int currentIndex = 0;
 
-  final List<BottomNavItem> items = [
-    BottomNavItem(icon: Icons.home_outlined, label: "Home"),
+  late final List<Widget> pages;
 
-    BottomNavItem(icon: Icons.shopping_bag_outlined, label: "Products"),
+  @override
+  void initState() {
+    super.initState();
 
-    BottomNavItem(icon: Icons.shopping_cart_outlined, label: "Cart"),
+    pages = [
+      const BuyerHome(),
+      const ProductList(),
+      const CartPage(),
+      const OrderHistory(),
+      BuyerProfile(user: widget.user),
+    ];
+  }
 
-    BottomNavItem(icon: Icons.receipt_long_outlined, label: "Orders"),
+  List<BottomNavItem> _buildItems(int cartCount) {
+    return [
+      const BottomNavItem(icon: Icons.home_outlined, label: "Home"),
 
-    BottomNavItem(icon: Icons.person_outline, label: "Profile"),
-  ];
+      const BottomNavItem(icon: Icons.shopping_bag_outlined, label: "Products"),
 
-  final List<Widget> pages = [
-    const BuyerHome(),
+      BottomNavItem(
+        icon: Icons.shopping_cart_outlined,
+        label: "Cart",
+        badgeCount: cartCount,
+      ),
 
-    const ProductList(),
+      const BottomNavItem(icon: Icons.receipt_long_outlined, label: "Orders"),
 
-    const CartPage(),
-
-    const OrderHistory(),
-
-    const BuyerProfile(),
-  ];
+      const BottomNavItem(icon: Icons.person_outline, label: "Profile"),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(index: currentIndex, children: pages),
+    return ValueListenableBuilder<int>(
+      valueListenable: CartService.itemCountNotifier,
+      builder: (context, cartCount, child) {
+        return Scaffold(
+          body: IndexedStack(index: currentIndex, children: pages),
 
-      bottomNavigationBar: BottomNav(
-        currentIndex: currentIndex,
-
-        items: items,
-
-        onTap: (index) {
-          setState(() {
-            currentIndex = index;
-          });
-        },
-      ),
+          bottomNavigationBar: BottomNav(
+            currentIndex: currentIndex,
+            items: _buildItems(cartCount),
+            onTap: (index) {
+              setState(() {
+                currentIndex = index;
+              });
+            },
+          ),
+        );
+      },
     );
   }
 }

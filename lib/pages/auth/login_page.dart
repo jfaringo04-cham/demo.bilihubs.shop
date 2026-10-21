@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../sevices/api_services.dart';
+import '../../sevices/auth_storage.dart';
+
 import '../buyer/buyer_navigation.dart';
 import '../rider/rider_navigation.dart';
 import '../logistics/logistics_navigation.dart';
@@ -64,51 +67,13 @@ class _LoginPageState extends State<LoginPage> {
 
     final email = emailController.text.trim().toLowerCase();
 
-    // Do not trim passwords automatically.
     final password = passwordController.text;
 
     setState(() {
       isLoading = true;
     });
 
-    // ----------------------------------------------------------
-    // TEMPORARY DEMO LOGIN
-    //
-    // Replace this section with your API authentication later.
-    // ----------------------------------------------------------
-
-    await Future.delayed(const Duration(milliseconds: 800));
-
-    if (!mounted) return;
-
-    if (password != "123456") {
-      setState(() {
-        isLoading = false;
-      });
-
-      showMessage("Incorrect password");
-
-      return;
-    }
-
-    Widget? destination;
-
-    switch (email) {
-      case "buyer@test.com":
-        destination = const BuyerNavigation();
-        break;
-
-      case "rider@test.com":
-        destination = const RiderNavigation();
-        break;
-
-      case "logistics@test.com":
-        destination = const LogisticsNavigation();
-        break;
-
-      default:
-        destination = null;
-    }
+    final result = await ApiService.login(email: email, password: password);
 
     if (!mounted) return;
 
@@ -116,8 +81,66 @@ class _LoginPageState extends State<LoginPage> {
       isLoading = false;
     });
 
+    if (result['success'] != true) {
+      showMessage(result['message']?.toString() ?? 'Unable to login.');
+
+      return;
+    }
+
+    final user = result['user'];
+    final token = result['token'];
+
+    if (user is! Map || token == null || token.toString().isEmpty) {
+      showMessage('Invalid login data received from server.');
+
+      return;
+    }
+
+    final authenticatedUser = Map<String, dynamic>.from(user);
+
+    await AuthStorage.saveToken(token.toString());
+
+    await AuthStorage.saveUser(authenticatedUser);
+
+    final roles = user['roles'];
+
+    if (roles is! List || roles.isEmpty) {
+      showMessage('No account role found.');
+
+      return;
+    }
+
+    final firstRole = roles.first;
+
+    if (firstRole is! Map) {
+      showMessage('Invalid account role.');
+
+      return;
+    }
+
+    final role = firstRole['name']?.toString().toLowerCase();
+
+    Widget? destination;
+
+    switch (role) {
+      case 'buyer':
+        destination = BuyerNavigation(user: authenticatedUser);
+        break;
+
+      case 'rider':
+        destination = const RiderNavigation();
+        break;
+
+      case 'logistics':
+        destination = const LogisticsNavigation();
+        break;
+
+      default:
+        destination = null;
+    }
+
     if (destination == null) {
-      showMessage("Account not found");
+      showMessage('This account role is not available in the mobile app.');
 
       return;
     }
@@ -212,13 +235,9 @@ class _LoginPageState extends State<LoginPage> {
       ..showSnackBar(
         SnackBar(
           content: Text(message),
-
           behavior: SnackBarBehavior.floating,
-
           backgroundColor: LoginColors.textDark,
-
           margin: const EdgeInsets.all(16),
-
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -260,7 +279,9 @@ class _LoginPageState extends State<LoginPage> {
 
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight - 48,
+                    minHeight: constraints.maxHeight > 48
+                        ? constraints.maxHeight - 48
+                        : 0,
                   ),
 
                   child: Center(
@@ -271,7 +292,6 @@ class _LoginPageState extends State<LoginPage> {
 
                       padding: EdgeInsets.symmetric(
                         horizontal: screenSize.width < 360 ? 18 : 24,
-
                         vertical: 28,
                       ),
 
@@ -328,33 +348,22 @@ class _LoginPageState extends State<LoginPage> {
 
                               TextFormField(
                                 controller: emailController,
-
                                 focusNode: emailFocusNode,
-
                                 enabled: !isLoading,
-
                                 keyboardType: TextInputType.emailAddress,
-
                                 textInputAction: TextInputAction.next,
-
                                 autofillHints: const [
                                   AutofillHints.email,
                                   AutofillHints.username,
                                 ],
-
                                 autocorrect: false,
-
                                 style: LoginStyle.inputText,
-
                                 validator: validateEmail,
-
                                 onFieldSubmitted: (_) {
                                   passwordFocusNode.requestFocus();
                                 },
-
                                 decoration: LoginStyle.inputDecoration(
                                   hint: "Enter your email address",
-
                                   icon: Icons.mail_outline_rounded,
                                 ),
                               ),
@@ -373,54 +382,36 @@ class _LoginPageState extends State<LoginPage> {
 
                               TextFormField(
                                 controller: passwordController,
-
                                 focusNode: passwordFocusNode,
-
                                 enabled: !isLoading,
-
                                 obscureText: hidePassword,
-
                                 keyboardType: TextInputType.visiblePassword,
-
                                 textInputAction: TextInputAction.done,
-
                                 autofillHints: const [AutofillHints.password],
-
                                 autocorrect: false,
-
                                 enableSuggestions: false,
-
                                 style: LoginStyle.inputText,
-
                                 validator: validatePassword,
-
                                 onFieldSubmitted: (_) {
                                   login();
                                 },
-
                                 decoration:
                                     LoginStyle.inputDecoration(
                                       hint: "Enter your password",
-
                                       icon: Icons.lock_outline_rounded,
                                     ).copyWith(
                                       suffixIcon: IconButton(
                                         tooltip: hidePassword
                                             ? "Show password"
                                             : "Hide password",
-
                                         splashRadius: 20,
-
                                         icon: Icon(
                                           hidePassword
                                               ? Icons.visibility_off_outlined
                                               : Icons.visibility_outlined,
-
                                           color: LoginColors.textGrey,
-
                                           size: 21,
                                         ),
-
                                         onPressed: isLoading
                                             ? null
                                             : () {
@@ -461,6 +452,7 @@ class _LoginPageState extends State<LoginPage> {
                                             },
                                     ),
                                   ),
+
                                   Expanded(
                                     child: GestureDetector(
                                       onTap: isLoading
@@ -477,6 +469,7 @@ class _LoginPageState extends State<LoginPage> {
                                       ),
                                     ),
                                   ),
+
                                   Flexible(
                                     child: TextButton(
                                       onPressed: isLoading
@@ -508,36 +501,25 @@ class _LoginPageState extends State<LoginPage> {
                               // --------------------------------
                               SizedBox(
                                 width: double.infinity,
-
                                 height: 52,
-
                                 child: ElevatedButton(
                                   onPressed: isLoading ? null : login,
-
                                   style: LoginStyle.primaryButton,
-
                                   child: AnimatedSwitcher(
                                     duration: const Duration(milliseconds: 200),
-
                                     child: isLoading
                                         ? const SizedBox(
                                             key: ValueKey("loading"),
-
                                             width: 22,
-
                                             height: 22,
-
                                             child: CircularProgressIndicator(
                                               strokeWidth: 2.2,
-
                                               color: Colors.white,
                                             ),
                                           )
                                         : const Text(
                                             "Login",
-
                                             key: ValueKey("login-text"),
-
                                             style: LoginStyle.buttonText,
                                           ),
                                   ),
@@ -559,7 +541,6 @@ class _LoginPageState extends State<LoginPage> {
                                     padding: EdgeInsets.symmetric(
                                       horizontal: 12,
                                     ),
-
                                     child: Text(
                                       "OR",
                                       style: LoginStyle.dividerText,
@@ -579,17 +560,12 @@ class _LoginPageState extends State<LoginPage> {
                               // --------------------------------
                               SizedBox(
                                 width: double.infinity,
-
                                 height: 52,
-
                                 child: OutlinedButton(
                                   onPressed: isLoading ? null : openRegister,
-
                                   style: LoginStyle.secondaryButton,
-
                                   child: const Text(
                                     "Create an Account",
-
                                     style: LoginStyle.registerText,
                                   ),
                                 ),
@@ -603,9 +579,7 @@ class _LoginPageState extends State<LoginPage> {
                               const Center(
                                 child: Text(
                                   "Shop smart. Shop with BiliHub.",
-
                                   textAlign: TextAlign.center,
-
                                   style: LoginStyle.footerText,
                                 ),
                               ),
@@ -631,11 +605,9 @@ class _LoginPageState extends State<LoginPage> {
   @override
   void dispose() {
     emailController.dispose();
-
     passwordController.dispose();
 
     emailFocusNode.dispose();
-
     passwordFocusNode.dispose();
 
     super.dispose();

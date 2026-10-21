@@ -18,66 +18,58 @@ class RiderNavigation extends StatefulWidget {
 class _RiderNavigationState extends State<RiderNavigation> {
   int currentIndex = 0;
 
-  final List<BottomNavItem> items = [
-    BottomNavItem(icon: Icons.home_outlined, label: "Home"),
-
-    BottomNavItem(icon: Icons.local_shipping_outlined, label: "Deliveries"),
-
-    BottomNavItem(icon: Icons.qr_code_scanner, label: "Scanner"),
-
+  final List<BottomNavItem> items = const [
+    BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
+    BottomNavItem(icon: Icons.local_shipping_outlined, label: 'Deliveries'),
+    BottomNavItem(icon: Icons.qr_code_scanner, label: 'Scanner'),
     BottomNavItem(
       icon: Icons.account_balance_wallet_outlined,
-
-      label: "Earnings",
+      label: 'Earnings',
     ),
-
-    BottomNavItem(icon: Icons.person_outline, label: "Profile"),
+    BottomNavItem(icon: Icons.person_outline, label: 'Profile'),
   ];
 
-  late final List<Widget> pages;
+  void _changeTab(int index) {
+    if (index == currentIndex) {
+      return;
+    }
 
-  @override
-  void initState() {
-    super.initState();
+    setState(() {
+      currentIndex = index;
+    });
+  }
 
-    pages = [
-      const RiderHome(),
+  Widget _buildCurrentPage() {
+    switch (currentIndex) {
+      case 0:
+        return RiderHome(onNavigateTab: _changeTab);
 
-      const RiderDeliveries(),
+      case 1:
+        return const RiderDeliveries();
 
-      const RiderScanner(),
+      case 2:
+        return const RiderScanner();
 
-      const Earnings(),
+      case 3:
+        return const Earnings();
 
-      const RiderProfile(
-        name: "Rider Name",
+      case 4:
+        return const RiderProfile();
 
-        email: "rider@email.com",
-
-        phone: "09123456789",
-
-        riderId: "RID-001",
-
-        vehicle: "Motorcycle",
-      ),
-    ];
+      default:
+        return RiderHome(onNavigateTab: _changeTab);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: currentIndex, children: pages),
+      body: _buildCurrentPage(),
 
       bottomNavigationBar: BottomNav(
         currentIndex: currentIndex,
-
         items: items,
-
-        onTap: (index) {
-          setState(() {
-            currentIndex = index;
-          });
-        },
+        onTap: _changeTab,
       ),
     );
   }

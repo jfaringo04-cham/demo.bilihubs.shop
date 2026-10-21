@@ -1,16 +1,109 @@
 import 'package:flutter/material.dart';
 
 import '../../models/product_model.dart';
+import '../../sevices/cart_service.dart';
 import '../../styles/buyer_style.dart';
+
+import 'checkout.dart';
 
 class ProductDetails extends StatelessWidget {
   final ProductModel product;
 
   const ProductDetails({super.key, required this.product});
 
+  bool get isOutOfStock => product.stock <= 0;
+
+  void _addToCart(BuildContext context) {
+    if (isOutOfStock) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text("This product is currently out of stock."),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+
+      return;
+    }
+
+    final currentQuantity = CartService.getQuantity(product);
+
+    if (currentQuantity >= product.stock) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text("Maximum available stock reached."),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+
+      return;
+    }
+
+    CartService.addToCart(product);
+
+    final updatedQuantity = CartService.getQuantity(product);
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          backgroundColor: BuyerColors.primaryDark,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_outline, color: Colors.white),
+
+              const SizedBox(width: 10),
+
+              Expanded(
+                child: Text(
+                  updatedQuantity > 1
+                      ? "Cart quantity updated to $updatedQuantity"
+                      : "Added to cart",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+  }
+
+  void _buyNow(BuildContext context) {
+    if (isOutOfStock) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text("This product is currently out of stock."),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+
+      return;
+    }
+
+    final buyNowItem = CartItem(product: product, quantity: 1);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => Checkout(items: [buyNowItem])),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
+
     final height = MediaQuery.of(context).size.height;
 
     return Scaffold(
@@ -21,13 +114,9 @@ class ProductDetails extends StatelessWidget {
       // ============================================================
       appBar: AppBar(
         backgroundColor: BuyerColors.white,
-
         elevation: 0,
-
         centerTitle: false,
-
         iconTheme: const IconThemeData(color: BuyerColors.textDark),
-
         title: const Text("Product Details", style: BuyerStyle.title),
       ),
 
@@ -37,15 +126,12 @@ class ProductDetails extends StatelessWidget {
       body: SafeArea(
         child: SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
-
           padding: EdgeInsets.symmetric(
             horizontal: width * 0.045,
             vertical: 16,
           ),
-
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
               // ========================================================
               // PRODUCT IMAGE
@@ -53,37 +139,26 @@ class ProductDetails extends StatelessWidget {
 
               Container(
                 height: height * 0.30,
-
                 width: double.infinity,
-
                 decoration: BoxDecoration(
                   color: BuyerColors.lightPurple,
-
                   borderRadius: BorderRadius.circular(20),
-
                   border: Border.all(color: BuyerColors.border),
                 ),
-
                 child: product.imageUrl.isEmpty
                     ? Column(
                         mainAxisAlignment: MainAxisAlignment.center,
-
                         children: [
                           Container(
                             height: 75,
                             width: 75,
-
                             decoration: BoxDecoration(
                               color: BuyerColors.softPurple,
-
                               borderRadius: BorderRadius.circular(20),
                             ),
-
                             child: const Icon(
                               Icons.image_outlined,
-
                               size: 42,
-
                               color: BuyerColors.primary,
                             ),
                           ),
@@ -95,34 +170,24 @@ class ProductDetails extends StatelessWidget {
                       )
                     : ClipRRect(
                         borderRadius: BorderRadius.circular(20),
-
                         child: Image.network(
                           product.imageUrl,
-
                           fit: BoxFit.cover,
-
                           width: double.infinity,
-
                           errorBuilder: (context, error, stackTrace) {
                             return Column(
                               mainAxisAlignment: MainAxisAlignment.center,
-
                               children: [
                                 Container(
                                   height: 75,
                                   width: 75,
-
                                   decoration: BoxDecoration(
                                     color: BuyerColors.softPurple,
-
                                     borderRadius: BorderRadius.circular(20),
                                   ),
-
                                   child: const Icon(
                                     Icons.broken_image_outlined,
-
                                     size: 42,
-
                                     color: BuyerColors.primary,
                                   ),
                                 ),
@@ -146,12 +211,9 @@ class ProductDetails extends StatelessWidget {
               // PRODUCT NAME
               // ========================================================
               Text(
-                product.name,
-
+                product.name.isEmpty ? "Unnamed Product" : product.name,
                 style: BuyerStyle.largeTitle,
-
                 maxLines: 2,
-
                 overflow: TextOverflow.ellipsis,
               ),
 
@@ -161,13 +223,10 @@ class ProductDetails extends StatelessWidget {
               // PRICE
               // ========================================================
               Text(
-                "₱${product.price}",
-
+                "₱${product.price.toStringAsFixed(2)}",
                 style: const TextStyle(
                   fontSize: 24,
-
                   fontWeight: FontWeight.w800,
-
                   color: BuyerColors.primary,
                 ),
               ),
@@ -184,33 +243,25 @@ class ProductDetails extends StatelessWidget {
                       horizontal: 9,
                       vertical: 6,
                     ),
-
                     decoration: BoxDecoration(
                       color: BuyerColors.lightPurple,
-
                       borderRadius: BorderRadius.circular(10),
                     ),
-
                     child: Row(
                       children: [
                         const Icon(
                           Icons.star_rounded,
-
                           size: 18,
-
                           color: BuyerColors.primary,
                         ),
 
                         const SizedBox(width: 4),
 
                         Text(
-                          "${product.rating}",
-
+                          product.rating.toStringAsFixed(1),
                           style: const TextStyle(
                             fontSize: 12,
-
                             fontWeight: FontWeight.w700,
-
                             color: BuyerColors.textDark,
                           ),
                         ),
@@ -235,34 +286,26 @@ class ProductDetails extends StatelessWidget {
               // ========================================================
               Container(
                 width: double.infinity,
-
                 padding: const EdgeInsets.all(16),
-
                 decoration: BoxDecoration(
                   color: BuyerColors.lightPurple,
-
                   borderRadius: BorderRadius.circular(16),
-
                   border: Border.all(color: BuyerColors.border),
                 ),
-
                 child: Row(
                   children: [
                     Container(
                       height: 40,
                       width: 40,
-
                       decoration: BoxDecoration(
                         color: BuyerColors.white,
-
                         borderRadius: BorderRadius.circular(12),
                       ),
-
-                      child: const Icon(
+                      child: Icon(
                         Icons.inventory_2_outlined,
-
-                        color: BuyerColors.primary,
-
+                        color: isOutOfStock
+                            ? BuyerColors.danger
+                            : BuyerColors.primary,
                         size: 21,
                       ),
                     ),
@@ -272,14 +315,11 @@ class ProductDetails extends StatelessWidget {
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-
                         children: [
                           const Text(
                             "Available Stock",
-
                             style: TextStyle(
                               fontSize: 11,
-
                               color: BuyerColors.textGrey,
                             ),
                           ),
@@ -287,25 +327,28 @@ class ProductDetails extends StatelessWidget {
                           const SizedBox(height: 3),
 
                           Text(
-                            "${product.stock} items available",
-
-                            style: const TextStyle(
+                            isOutOfStock
+                                ? "Out of stock"
+                                : "${product.stock} items available",
+                            style: TextStyle(
                               fontSize: 13,
-
                               fontWeight: FontWeight.w700,
-
-                              color: BuyerColors.textDark,
+                              color: isOutOfStock
+                                  ? BuyerColors.danger
+                                  : BuyerColors.textDark,
                             ),
                           ),
                         ],
                       ),
                     ),
 
-                    const Icon(
-                      Icons.check_circle_outline,
-
-                      color: BuyerColors.success,
-
+                    Icon(
+                      isOutOfStock
+                          ? Icons.cancel_outlined
+                          : Icons.check_circle_outline,
+                      color: isOutOfStock
+                          ? BuyerColors.danger
+                          : BuyerColors.success,
                       size: 21,
                     ),
                   ],
@@ -319,32 +362,23 @@ class ProductDetails extends StatelessWidget {
               // ========================================================
               Container(
                 width: double.infinity,
-
                 padding: const EdgeInsets.all(18),
-
                 decoration: BuyerStyle.card,
-
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     Row(
                       children: [
                         Container(
                           height: 38,
                           width: 38,
-
                           decoration: BoxDecoration(
                             color: BuyerColors.lightPurple,
-
                             borderRadius: BorderRadius.circular(11),
                           ),
-
                           child: const Icon(
                             Icons.description_outlined,
-
                             color: BuyerColors.primary,
-
                             size: 20,
                           ),
                         ),
@@ -353,7 +387,6 @@ class ProductDetails extends StatelessWidget {
 
                         const Text(
                           "Description",
-
                           style: BuyerStyle.sectionTitle,
                         ),
                       ],
@@ -362,13 +395,12 @@ class ProductDetails extends StatelessWidget {
                     const SizedBox(height: 14),
 
                     Text(
-                      product.description,
-
+                      product.description.trim().isEmpty
+                          ? "No description available for this product."
+                          : product.description,
                       style: const TextStyle(
                         fontSize: 13,
-
                         height: 1.5,
-
                         color: BuyerColors.textGrey,
                       ),
                     ),
@@ -383,18 +415,13 @@ class ProductDetails extends StatelessWidget {
               // ========================================================
               Container(
                 width: double.infinity,
-
                 padding: const EdgeInsets.all(18),
-
                 decoration: BuyerStyle.card,
-
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     const Text(
                       "Delivery Information",
-
                       style: BuyerStyle.sectionTitle,
                     ),
 
@@ -402,9 +429,7 @@ class ProductDetails extends StatelessWidget {
 
                     _deliveryItem(
                       icon: Icons.local_shipping_outlined,
-
                       title: "Fast Delivery",
-
                       subtitle: "Get your order delivered to your address.",
                     ),
 
@@ -412,9 +437,7 @@ class ProductDetails extends StatelessWidget {
 
                     _deliveryItem(
                       icon: Icons.verified_outlined,
-
                       title: "Verified Seller",
-
                       subtitle: "Products are listed by verified sellers.",
                     ),
 
@@ -422,9 +445,7 @@ class ProductDetails extends StatelessWidget {
 
                     _deliveryItem(
                       icon: Icons.lock_outline,
-
                       title: "Secure Checkout",
-
                       subtitle: "Your checkout information is protected.",
                     ),
                   ],
@@ -438,48 +459,15 @@ class ProductDetails extends StatelessWidget {
               // ========================================================
               SizedBox(
                 width: double.infinity,
-
                 height: 54,
-
                 child: ElevatedButton.icon(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        backgroundColor: BuyerColors.primaryDark,
-
-                        behavior: SnackBarBehavior.floating,
-
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-
-                        content: const Row(
-                          children: [
-                            Icon(
-                              Icons.check_circle_outline,
-
-                              color: Colors.white,
-                            ),
-
-                            SizedBox(width: 10),
-
-                            Text(
-                              "Added to cart",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-
+                  onPressed: isOutOfStock
+                      ? null
+                      : () {
+                          _addToCart(context);
+                        },
                   icon: const Icon(Icons.shopping_cart_outlined, size: 20),
-
-                  label: const Text("Add to Cart"),
-
+                  label: Text(isOutOfStock ? "Out of Stock" : "Add to Cart"),
                   style: BuyerStyle.primaryButton,
                 ),
               ),
@@ -491,20 +479,15 @@ class ProductDetails extends StatelessWidget {
               // ========================================================
               SizedBox(
                 width: double.infinity,
-
                 height: 54,
-
                 child: OutlinedButton.icon(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Buy Now selected")),
-                    );
-                  },
-
+                  onPressed: isOutOfStock
+                      ? null
+                      : () {
+                          _buyNow(context);
+                        },
                   icon: const Icon(Icons.flash_on_outlined, size: 20),
-
                   label: const Text("Buy Now"),
-
                   style: BuyerStyle.outlinedButton,
                 ),
               ),
@@ -528,18 +511,14 @@ class ProductDetails extends StatelessWidget {
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
-
       children: [
         Container(
           height: 40,
           width: 40,
-
           decoration: BoxDecoration(
             color: BuyerColors.lightPurple,
-
             borderRadius: BorderRadius.circular(12),
           ),
-
           child: Icon(icon, color: BuyerColors.primary, size: 20),
         ),
 
@@ -548,7 +527,6 @@ class ProductDetails extends StatelessWidget {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
               Text(title, style: BuyerStyle.cardTitle),
 

@@ -1,128 +1,199 @@
 import 'package:flutter/material.dart';
 
 import '../models/product_model.dart';
-
 import '../styles/buyer_style.dart';
 
 class ProductCard extends StatelessWidget {
   final ProductModel product;
-
   final VoidCallback onTap;
 
   const ProductCard({super.key, required this.product, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-
     return GestureDetector(
       onTap: onTap,
-
       child: Container(
-        width: width * 0.42,
-
         decoration: BuyerStyle.card,
-
+        clipBehavior: Clip.antiAlias,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-
           children: [
-            SizedBox(
-              height: 130,
+            // ============================================================
+            // PRODUCT IMAGE
+            // ============================================================
 
-              width: double.infinity,
+            AspectRatio(aspectRatio: 1.25, child: _buildProductImage()),
 
-              child: Container(
-                decoration: const BoxDecoration(
-                  color: Color(0xffEEEEEE),
-
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-                ),
-
-                child: product.imageUrl.isEmpty
-                    ? const Center(
-                        child: Icon(
-                          Icons.image_outlined,
-
-                          size: 55,
-
-                          color: Colors.grey,
-                        ),
-                      )
-                    : ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(18),
-                        ),
-
-                        child: Image.network(
-                          product.imageUrl,
-
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-              ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.all(12),
-
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-
-                children: [
-                  Text(
-                    product.name,
-
-                    maxLines: 1,
-
-                    overflow: TextOverflow.ellipsis,
-
-                    style: BuyerStyle.cardTitle,
-                  ),
-
-                  const SizedBox(height: 6),
-
-                  Text(
-                    "₱${product.price}",
-
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-
-                      fontSize: 16,
-
-                      color: Colors.blue,
+            // ============================================================
+            // PRODUCT INFORMATION
+            // ============================================================
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.name.trim().isEmpty
+                          ? 'Unnamed Product'
+                          : product.name.trim(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: BuyerStyle.cardTitle,
                     ),
-                  ),
 
-                  const SizedBox(height: 6),
+                    const SizedBox(height: 4),
 
-                  Row(
-                    children: [
-                      const Icon(Icons.star, size: 16, color: Colors.orange),
+                    Text(
+                      '₱${product.effectivePrice.toStringAsFixed(2)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: BuyerColors.primary,
+                      ),
+                    ),
 
-                      const SizedBox(width: 4),
+                    const SizedBox(height: 4),
 
-                      Text("${product.rating}", style: BuyerStyle.small),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.star_rounded,
+                          size: 15,
+                          color: Colors.orange,
+                        ),
 
-                      const SizedBox(width: 8),
+                        const SizedBox(width: 3),
 
-                      Expanded(
-                        child: Text(
-                          "${product.soldCount} sold",
-
-                          overflow: TextOverflow.ellipsis,
-
+                        Text(
+                          product.rating.toStringAsFixed(1),
                           style: BuyerStyle.small,
                         ),
+
+                        const SizedBox(width: 7),
+
+                        Expanded(
+                          child: Text(
+                            '${product.soldCount} sold',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: BuyerStyle.small,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const Spacer(),
+
+                    Text(
+                      product.stock > 0
+                          ? '${product.stock} in stock'
+                          : 'Out of stock',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                        color: product.stock > 0
+                            ? BuyerColors.textGrey
+                            : BuyerColors.danger,
                       ),
-                    ],
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  // ============================================================
+  // PRODUCT IMAGE
+  // ============================================================
+
+  Widget _buildProductImage() {
+    final imageUrl = product.imageUrl.trim();
+
+    if (!_isValidNetworkUrl(imageUrl)) {
+      return _imagePlaceholder();
+    }
+
+    return Container(
+      width: double.infinity,
+      color: const Color(0xffEEEEEE),
+      child: Image.network(
+        imageUrl,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+
+        errorBuilder: (context, error, stackTrace) {
+          return _imagePlaceholder(broken: true);
+        },
+
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) {
+            return child;
+          }
+
+          return const Center(
+            child: SizedBox(
+              height: 22,
+              width: 22,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: BuyerColors.primary,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ============================================================
+  // IMAGE PLACEHOLDER
+  // ============================================================
+
+  Widget _imagePlaceholder({bool broken = false}) {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      color: const Color(0xffEEEEEE),
+      child: Center(
+        child: Icon(
+          broken ? Icons.broken_image_outlined : Icons.image_outlined,
+          size: 48,
+          color: Colors.grey,
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // URL VALIDATION
+  // ============================================================
+
+  bool _isValidNetworkUrl(String value) {
+    if (value.isEmpty) {
+      return false;
+    }
+
+    final uri = Uri.tryParse(value);
+
+    if (uri == null) {
+      return false;
+    }
+
+    if (!uri.hasScheme || !uri.hasAuthority) {
+      return false;
+    }
+
+    return uri.scheme == 'http' || uri.scheme == 'https';
   }
 }

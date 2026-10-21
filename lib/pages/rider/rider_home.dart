@@ -1,85 +1,292 @@
 import 'package:flutter/material.dart';
 
+import '../../sevices/api_services.dart';
+import '../../sevices/auth_storage.dart';
 import '../../styles/rider_style.dart';
 
-class RiderHome extends StatelessWidget {
-  const RiderHome({super.key});
+class RiderHome extends StatefulWidget {
+  final ValueChanged<int>? onNavigateTab;
+
+  const RiderHome({super.key, this.onNavigateTab});
+
+  @override
+  State<RiderHome> createState() => _RiderHomeState();
+}
+
+class _RiderHomeState extends State<RiderHome> {
+  bool _isLoading = true;
+  bool _hasDashboardData = false;
+
+  String? _errorMessage;
+  String _savedUserName = 'Rider';
+
+  Map<String, dynamic> _rider = <String, dynamic>{};
+  Map<String, dynamic> _overview = <String, dynamic>{};
+  List<Map<String, dynamic>> _tasks = <Map<String, dynamic>>[];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboard();
+  }
+
+  // ============================================================
+  // LOAD DASHBOARD
+  // ============================================================
+
+  Future<void> _loadDashboard() async {
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
+
+    try {
+      final savedUser = await AuthStorage.getUser();
+
+      if (savedUser != null) {
+        final savedName = savedUser['name']?.toString().trim();
+
+        if (savedName != null && savedName.isNotEmpty) {
+          _savedUserName = savedName;
+        }
+      }
+
+      final result = await ApiService.getRiderDashboard();
+
+      if (!mounted) return;
+
+      if (result['success'] == true) {
+        final riderData = result['rider'];
+        final overviewData = result['overview'];
+        final taskData = result['tasks'];
+
+        final parsedTasks = <Map<String, dynamic>>[];
+
+        if (taskData is List) {
+          for (final task in taskData) {
+            if (task is Map<String, dynamic>) {
+              parsedTasks.add(task);
+            } else if (task is Map) {
+              parsedTasks.add(Map<String, dynamic>.from(task));
+            }
+          }
+        }
+
+        setState(() {
+          _rider = riderData is Map
+              ? Map<String, dynamic>.from(riderData)
+              : <String, dynamic>{};
+
+          _overview = overviewData is Map
+              ? Map<String, dynamic>.from(overviewData)
+              : <String, dynamic>{};
+
+          _tasks = parsedTasks;
+
+          _hasDashboardData = true;
+          _errorMessage = null;
+          _isLoading = false;
+        });
+
+        return;
+      }
+
+      setState(() {
+        _hasDashboardData = false;
+
+        _errorMessage =
+            result['message']?.toString() ?? 'Unable to load rider dashboard.';
+
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _hasDashboardData = false;
+        _isLoading = false;
+
+        _errorMessage = 'Unable to load rider dashboard: $e';
+      });
+    }
+  }
+
+  // ============================================================
+  // NAVIGATION
+  // ============================================================
+
+  void _goToTab(int index) {
+    widget.onNavigateTab?.call(index);
+  }
+
+  // ============================================================
+  // DATA HELPERS
+  // ============================================================
+
+  String get _riderName {
+    final apiName = _rider['name']?.toString().trim();
+
+    if (apiName != null && apiName.isNotEmpty) {
+      return apiName;
+    }
+
+    return _savedUserName;
+  }
+
+  String get _firstName {
+    final name = _riderName.trim();
+
+    if (name.isEmpty) {
+      return 'Rider';
+    }
+
+    return name.split(RegExp(r'\s+')).first;
+  }
+
+  String get _availabilityStatus {
+    final raw = _rider['availability_status']?.toString().trim();
+
+    if (raw == null || raw.isEmpty) {
+      return 'Unavailable';
+    }
+
+    return _formatStatus(raw);
+  }
+
+  bool get _isOnline {
+    final status = _rider['availability_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+
+    return status == 'online' || status == 'available' || status == 'active';
+  }
+
+  String get _vehicleType {
+    final value = _rider['vehicle_type']?.toString().trim();
+
+    if (value == null || value.isEmpty) {
+      return 'Vehicle not specified';
+    }
+
+    return _formatStatus(value);
+  }
+
+  String _overviewValue(String key) {
+    if (!_hasDashboardData) {
+      return '—';
+    }
+
+    final value = _overview[key];
+
+    if (value == null) {
+      return '—';
+    }
+
+    return value.toString();
+  }
+
+  String _formatStatus(String value) {
+    final cleaned = value.trim().replaceAll('_', ' ');
+
+    if (cleaned.isEmpty) {
+      return 'Unknown';
+    }
+
+    return cleaned
+        .split(RegExp(r'\s+'))
+        .map(
+          (word) => word.isEmpty
+              ? word
+              : '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
+        )
+        .join(' ');
+  }
+
+  Color _statusColor(String status) {
+    final normalized = status.trim().toLowerCase();
+
+    switch (normalized) {
+      case 'delivered':
+      case 'completed':
+        return RiderColors.success;
+
+      case 'cancelled':
+      case 'failed':
+      case 'delivery_failed':
+        return RiderColors.danger;
+
+      case 'pending':
+      case 'assigned':
+      case 'staged':
+      case 'ready_for_pickup':
+        return RiderColors.warning;
+
+      case 'picked_up':
+      case 'in_transit':
+      case 'out_for_delivery':
+      case 'at_sorting_center':
+      case 'sorted':
+        return RiderColors.primary;
+
+      default:
+        return RiderColors.textGrey;
+    }
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    final horizontalPadding = screenWidth < 380 ? 14.0 : 18.0;
+
     return Scaffold(
       backgroundColor: RiderColors.background,
-      appBar: AppBar(
-        backgroundColor: RiderColors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        titleSpacing: 18,
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Rider Dashboard', style: RiderStyle.title),
-            SizedBox(height: 2),
-            Text('Manage your deliveries', style: RiderStyle.small),
-          ],
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 18),
-            child: _notificationButton(),
-          ),
-        ],
-      ),
+
       body: SafeArea(
-        top: false,
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(18, 18, 18, 30),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        child: RefreshIndicator(
+          onRefresh: _loadDashboard,
+
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
+
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              16,
+              horizontalPadding,
+              30,
+            ),
+
             children: [
-              _welcomeCard(),
+              _header(),
 
-              const SizedBox(height: 22),
+              const SizedBox(height: 18),
 
-              const Text('Today\'s Overview', style: RiderStyle.sectionTitle),
+              if (_isLoading) ...[_loadingCard(), const SizedBox(height: 14)],
 
-              const SizedBox(height: 12),
+              if (!_isLoading && _errorMessage != null) ...[
+                _errorCard(),
 
-              _dashboardGrid(),
+                const SizedBox(height: 14),
+              ],
 
-              const SizedBox(height: 22),
+              _riderInfoCard(),
 
-              _earningsCard(),
+              const SizedBox(height: 20),
 
-              const SizedBox(height: 22),
+              _deliveryOverview(screenWidth),
 
-              _sectionHeader(
-                title: 'Today\'s Tasks',
-                action: 'View All',
-                onTap: () {},
-              ),
+              const SizedBox(height: 20),
 
-              const SizedBox(height: 12),
-
-              _taskItem(
-                title: 'Parcel #001',
-                address: 'Deliver to Manila',
-                status: 'Pending',
-                statusColor: RiderColors.warning,
-                icon: Icons.inventory_2_outlined,
-              ),
-
-              _taskItem(
-                title: 'Parcel #002',
-                address: 'Deliver to Quezon City',
-                status: 'Completed',
-                statusColor: RiderColors.success,
-                icon: Icons.inventory_2_outlined,
-              ),
-
-              const SizedBox(height: 10),
-
-              _quickActions(),
+              _assignedShipments(),
             ],
           ),
         ),
@@ -87,118 +294,177 @@ class RiderHome extends StatelessWidget {
     );
   }
 
-  // ------------------------------------------------------------
-  // WELCOME CARD
-  // ------------------------------------------------------------
+  // ============================================================
+  // HEADER
+  // ============================================================
 
-  Widget _welcomeCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [RiderColors.primary, RiderColors.primaryDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+  Widget _header() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+
+            children: [
+              const Text('Rider Dashboard', style: RiderStyle.title),
+
+              const SizedBox(height: 4),
+
+              Text('Welcome, $_firstName', style: RiderStyle.small),
+            ],
+          ),
         ),
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: RiderColors.primary.withValues(alpha: 0.20),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
+
+        const SizedBox(width: 8),
+
+        _statusBadge(),
+
+        const SizedBox(width: 8),
+
+        _notificationButton(),
+      ],
+    );
+  }
+
+  Widget _statusBadge() {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 95),
+
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+
+      decoration: BoxDecoration(
+        color: _isOnline ? RiderColors.lightGreen : RiderColors.lightOrange,
+
+        borderRadius: BorderRadius.circular(20),
+      ),
+
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+
+        children: [
+          Container(
+            height: 7,
+            width: 7,
+
+            decoration: BoxDecoration(
+              color: _isOnline ? RiderColors.success : RiderColors.warning,
+
+              shape: BoxShape.circle,
+            ),
+          ),
+
+          const SizedBox(width: 5),
+
+          Flexible(
+            child: Text(
+              _availabilityStatus,
+
+              maxLines: 1,
+
+              overflow: TextOverflow.ellipsis,
+
+              style: TextStyle(
+                color: _isOnline ? RiderColors.success : RiderColors.warning,
+
+                fontSize: 9,
+
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
         ],
       ),
-      child: Stack(
+    );
+  }
+
+  // ============================================================
+  // RIDER INFORMATION
+  // ============================================================
+
+  Widget _riderInfoCard() {
+    return Container(
+      width: double.infinity,
+
+      padding: const EdgeInsets.all(16),
+
+      decoration: RiderStyle.card,
+
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+
         children: [
-          Positioned(
-            right: -35,
-            top: -35,
-            child: Container(
-              height: 120,
-              width: 120,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.08),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 30,
-            bottom: -65,
-            child: Container(
-              height: 100,
-              width: 100,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.05),
-              ),
-            ),
-          ),
+          const Text('Rider Information', style: RiderStyle.sectionTitle),
+
+          const SizedBox(height: 14),
+
           Row(
             children: [
               Container(
-                height: 54,
-                width: 54,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(16),
+                height: 50,
+                width: 50,
+
+                decoration: const BoxDecoration(
+                  color: RiderColors.primary,
+
+                  shape: BoxShape.circle,
                 ),
+
+                alignment: Alignment.center,
+
                 child: const Icon(
-                  Icons.delivery_dining_rounded,
+                  Icons.two_wheeler_rounded,
+
                   color: Colors.white,
-                  size: 30,
+
+                  size: 26,
                 ),
               ),
-              const SizedBox(width: 14),
-              const Expanded(
+
+              const SizedBox(width: 13),
+
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+
                   children: [
                     Text(
-                      'Good Morning, Rider',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
+                      _riderName,
+
+                      maxLines: 1,
+
+                      overflow: TextOverflow.ellipsis,
+
+                      style: RiderStyle.cardTitle,
                     ),
-                    SizedBox(height: 5),
-                    Text(
-                      'Ready for today\'s deliveries?',
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      height: 7,
-                      width: 7,
-                      decoration: const BoxDecoration(
-                        color: Colors.greenAccent,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    const Text(
-                      'Online',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                      ),
+
+                    const SizedBox(height: 5),
+
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.directions_bike_outlined,
+
+                          size: 14,
+
+                          color: RiderColors.textGrey,
+                        ),
+
+                        const SizedBox(width: 5),
+
+                        Expanded(
+                          child: Text(
+                            _vehicleType,
+
+                            maxLines: 1,
+
+                            overflow: TextOverflow.ellipsis,
+
+                            style: RiderStyle.small,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -210,152 +476,156 @@ class RiderHome extends StatelessWidget {
     );
   }
 
-  // ------------------------------------------------------------
-  // DASHBOARD GRID
-  // ------------------------------------------------------------
+  // ============================================================
+  // DELIVERY OVERVIEW
+  // ============================================================
 
-  Widget _dashboardGrid() {
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
-      crossAxisSpacing: 12,
-      mainAxisSpacing: 12,
+  Widget _deliveryOverview(double screenWidth) {
+    final compact = screenWidth < 380;
 
-      // Increased from 1.35 to give the cards more vertical space.
-      // This prevents the 3.4 pixel bottom overflow.
-      childAspectRatio: 1.25,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
 
       children: [
-        _dashboardCard(
-          title: 'Today\'s Delivery',
-          value: '12',
-          icon: Icons.local_shipping_outlined,
-          iconBackground: RiderColors.lightBlue,
+        const Text('Delivery Overview', style: RiderStyle.sectionTitle),
+
+        const SizedBox(height: 12),
+
+        Row(
+          children: [
+            Expanded(
+              child: _overviewCard(
+                title: 'Assigned',
+                value: _overviewValue('today_delivery'),
+                icon: Icons.inventory_2_outlined,
+                background: RiderColors.lightBlue,
+                compact: compact,
+              ),
+            ),
+
+            const SizedBox(width: 10),
+
+            Expanded(
+              child: _overviewCard(
+                title: 'Completed',
+                value: _overviewValue('completed'),
+                icon: Icons.check_circle_outline_rounded,
+                background: RiderColors.lightGreen,
+                compact: compact,
+              ),
+            ),
+          ],
         ),
-        _dashboardCard(
-          title: 'Completed',
-          value: '8',
-          icon: Icons.check_circle_outline_rounded,
-          iconBackground: RiderColors.lightGreen,
-        ),
-        _dashboardCard(
-          title: 'Pending',
-          value: '4',
-          icon: Icons.pending_actions_rounded,
-          iconBackground: RiderColors.lightOrange,
-        ),
-        _dashboardCard(
-          title: 'Earnings',
-          value: '₱850',
-          icon: Icons.payments_outlined,
-          iconBackground: RiderColors.lightPurple,
+
+        const SizedBox(height: 10),
+
+        _wideOverviewCard(
+          title: 'Pending Deliveries',
+          value: _overviewValue('pending'),
+          icon: Icons.pending_actions_outlined,
+          background: RiderColors.lightOrange,
         ),
       ],
     );
   }
 
-  Widget _dashboardCard({
+  Widget _overviewCard({
     required String title,
     required String value,
     required IconData icon,
-    required Color iconBackground,
+    required Color background,
+    required bool compact,
   }) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: EdgeInsets.all(compact ? 12 : 14),
+
       decoration: RiderStyle.card,
+
       child: Column(
+        mainAxisSize: MainAxisSize.min,
+
         crossAxisAlignment: CrossAxisAlignment.start,
+
         children: [
-          Container(
-            height: 40,
-            width: 40,
-            decoration: BoxDecoration(
-              color: iconBackground,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: RiderColors.primary, size: 21),
-          ),
+          _statIcon(icon, background),
 
-          const Spacer(),
-
-          Text(value, style: RiderStyle.title),
-
-          const SizedBox(height: 2),
+          const SizedBox(height: 12),
 
           Text(
             title,
+
             maxLines: 1,
+
             overflow: TextOverflow.ellipsis,
+
             style: RiderStyle.small,
           ),
+
+          const SizedBox(height: 4),
+
+          Text(
+            value,
+
+            maxLines: 1,
+
+            overflow: TextOverflow.ellipsis,
+
+            style: const TextStyle(
+              color: RiderColors.textDark,
+
+              fontSize: 21,
+
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ],
       ),
     );
   }
 
-  // ------------------------------------------------------------
-  // EARNINGS
-  // ------------------------------------------------------------
-
-  Widget _earningsCard() {
+  Widget _wideOverviewCard({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color background,
+  }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+
+      padding: const EdgeInsets.all(14),
+
       decoration: RiderStyle.card,
+
       child: Row(
         children: [
-          Container(
-            height: 48,
-            width: 48,
-            decoration: BoxDecoration(
-              color: RiderColors.lightGreen,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(
-              Icons.account_balance_wallet_outlined,
-              color: RiderColors.success,
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 14),
-          const Expanded(
+          _statIcon(icon, background),
+
+          const SizedBox(width: 12),
+
+          Expanded(
             child: Column(
+              mainAxisSize: MainAxisSize.min,
+
               crossAxisAlignment: CrossAxisAlignment.start,
+
               children: [
-                Text('Today\'s Earnings', style: RiderStyle.small),
-                SizedBox(height: 3),
+                Text(title, style: RiderStyle.small),
+
+                const SizedBox(height: 4),
+
                 Text(
-                  '₱850.00',
-                  style: TextStyle(
-                    fontSize: 21,
-                    fontWeight: FontWeight.w800,
+                  value,
+
+                  maxLines: 1,
+
+                  overflow: TextOverflow.ellipsis,
+
+                  style: const TextStyle(
                     color: RiderColors.textDark,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-            decoration: BoxDecoration(
-              color: RiderColors.lightGreen,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Row(
-              children: [
-                Icon(
-                  Icons.trending_up_rounded,
-                  color: RiderColors.success,
-                  size: 15,
-                ),
-                SizedBox(width: 4),
-                Text(
-                  'Today',
-                  style: TextStyle(
-                    color: RiderColors.success,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
+
+                    fontSize: 22,
+
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ],
@@ -366,228 +636,396 @@ class RiderHome extends StatelessWidget {
     );
   }
 
-  // ------------------------------------------------------------
-  // TASKS
-  // ------------------------------------------------------------
+  Widget _statIcon(IconData icon, Color background) {
+    return Container(
+      height: 38,
+      width: 38,
 
-  Widget _sectionHeader({
-    required String title,
-    required String action,
-    required VoidCallback onTap,
-  }) {
-    return Row(
-      children: [
-        Expanded(child: Text(title, style: RiderStyle.sectionTitle)),
-        InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
-            child: Row(
-              children: [
-                Text(
-                  action,
-                  style: const TextStyle(
-                    color: RiderColors.primary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                const Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  color: RiderColors.primary,
-                  size: 11,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
+      decoration: BoxDecoration(
+        color: background,
+
+        borderRadius: BorderRadius.circular(11),
+      ),
+
+      alignment: Alignment.center,
+
+      child: Icon(icon, color: RiderColors.primary, size: 20),
     );
   }
 
-  Widget _taskItem({
-    required String title,
-    required String address,
-    required String status,
-    required Color statusColor,
-    required IconData icon,
-  }) {
+  // ============================================================
+  // ASSIGNED SHIPMENTS
+  // ============================================================
+
+  Widget _assignedShipments() {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(15),
+      width: double.infinity,
+
+      padding: const EdgeInsets.all(16),
+
       decoration: RiderStyle.card,
-      child: Row(
+
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+
         children: [
-          Container(
-            height: 45,
-            width: 45,
-            decoration: BoxDecoration(
-              color: RiderColors.lightPurple,
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: Icon(icon, color: RiderColors.primary, size: 22),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Assigned Shipments',
+
+                  style: RiderStyle.sectionTitle,
+                ),
+              ),
+
+              TextButton(
+                onPressed: () => _goToTab(1),
+
+                child: const Text('View All'),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
+
+          const SizedBox(height: 10),
+
+          if (_isLoading && !_hasDashboardData)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+
+              child: Center(
+                child: CircularProgressIndicator(color: RiderColors.primary),
+              ),
+            )
+          else if (!_hasDashboardData)
+            _emptyShipmentState('Shipment data is unavailable.')
+          else if (_tasks.isEmpty)
+            _emptyShipmentState('No assigned shipments.')
+          else
+            ..._tasks.take(4).map((task) => _shipmentItem(task)),
+        ],
+      ),
+    );
+  }
+
+  Widget _shipmentItem(Map<String, dynamic> task) {
+    final tracking = task['tracking_number']?.toString().trim();
+
+    final customer = task['customer_name']?.toString().trim();
+
+    final address = task['delivery_address']?.toString().trim();
+
+    final rawStatus = task['status']?.toString().trim() ?? '';
+
+    final status = _formatStatus(rawStatus);
+
+    final statusColor = _statusColor(rawStatus);
+
+    return Container(
+      width: double.infinity,
+
+      margin: const EdgeInsets.only(bottom: 10),
+
+      padding: const EdgeInsets.all(13),
+
+      decoration: BoxDecoration(
+        color: RiderColors.background,
+
+        borderRadius: BorderRadius.circular(14),
+
+        border: Border.all(color: RiderColors.border),
+      ),
+
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+
+            children: [
+              Container(
+                height: 40,
+                width: 40,
+
+                decoration: BoxDecoration(
+                  color: RiderColors.lightPurple,
+
+                  borderRadius: BorderRadius.circular(11),
+                ),
+
+                alignment: Alignment.center,
+
+                child: const Icon(
+                  Icons.inventory_2_outlined,
+
+                  color: RiderColors.primary,
+
+                  size: 20,
+                ),
+              ),
+
+              const SizedBox(width: 10),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+
+                  children: [
+                    Text(
+                      tracking == null || tracking.isEmpty
+                          ? 'Tracking unavailable'
+                          : tracking,
+
+                      maxLines: 1,
+
+                      overflow: TextOverflow.ellipsis,
+
+                      style: RiderStyle.cardTitle,
+                    ),
+
+                    if (customer != null && customer.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+
+                      Text(
+                        customer,
+
+                        maxLines: 1,
+
+                        overflow: TextOverflow.ellipsis,
+
+                        style: RiderStyle.small,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 8),
+
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.10),
+
+                  borderRadius: BorderRadius.circular(18),
+                ),
+
+                child: Text(
+                  status,
+
+                  style: TextStyle(
+                    color: statusColor,
+
+                    fontSize: 9,
+
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 10),
+
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+
+            children: [
+              const Icon(
+                Icons.location_on_outlined,
+
+                color: RiderColors.textGrey,
+
+                size: 15,
+              ),
+
+              const SizedBox(width: 5),
+
+              Expanded(
+                child: Text(
+                  address == null || address.isEmpty
+                      ? 'Delivery address unavailable'
+                      : address,
+
+                  maxLines: 2,
+
+                  overflow: TextOverflow.ellipsis,
+
+                  style: RiderStyle.small,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyShipmentState(String message) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 22),
+
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+
+          children: [
+            const Icon(
+              Icons.inventory_2_outlined,
+
+              color: RiderColors.textGrey,
+
+              size: 34,
+            ),
+
+            const SizedBox(height: 8),
+
+            Text(message, textAlign: TextAlign.center, style: RiderStyle.small),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // LOADING
+  // ============================================================
+
+  Widget _loadingCard() {
+    return Container(
+      width: double.infinity,
+
+      padding: const EdgeInsets.all(15),
+
+      decoration: RiderStyle.card,
+
+      child: const Row(
+        children: [
+          SizedBox(
+            height: 21,
+            width: 21,
+
+            child: CircularProgressIndicator(
+              strokeWidth: 2.2,
+
+              color: RiderColors.primary,
+            ),
+          ),
+
+          SizedBox(width: 11),
+
+          Expanded(
+            child: Text('Loading rider dashboard...', style: RiderStyle.small),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // ERROR
+  // ============================================================
+
+  Widget _errorCard() {
+    return Container(
+      width: double.infinity,
+
+      padding: const EdgeInsets.all(15),
+
+      decoration: RiderStyle.card,
+
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+
+            color: RiderColors.warning,
+
+            size: 21,
+          ),
+
+          const SizedBox(width: 10),
+
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+
               children: [
-                Text(title, style: RiderStyle.cardTitle),
+                const Text(
+                  'Dashboard data unavailable',
+
+                  style: RiderStyle.cardTitle,
+                ),
+
                 const SizedBox(height: 4),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.location_on_outlined,
-                      color: RiderColors.textGrey,
-                      size: 14,
-                    ),
-                    const SizedBox(width: 3),
-                    Expanded(
-                      child: Text(
-                        address,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: RiderStyle.small,
-                      ),
-                    ),
-                  ],
+
+                Text(
+                  _errorMessage ?? 'Unable to load rider dashboard.',
+
+                  style: RiderStyle.small,
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              status,
-              style: TextStyle(
-                color: statusColor,
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+
+          IconButton(
+            onPressed: _loadDashboard,
+
+            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
           ),
         ],
       ),
     );
   }
 
-  // ------------------------------------------------------------
-  // QUICK ACTIONS
-  // ------------------------------------------------------------
-
-  Widget _quickActions() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: RiderStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Quick Actions', style: RiderStyle.sectionTitle),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: _quickAction(
-                  icon: Icons.qr_code_scanner_rounded,
-                  title: 'Scan Parcel',
-                  onTap: () {},
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _quickAction(
-                  icon: Icons.inventory_2_outlined,
-                  title: 'My Deliveries',
-                  onTap: () {},
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _quickAction({
-    required IconData icon,
-    required String title,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: RiderColors.lightPurple,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-          child: Column(
-            children: [
-              Icon(icon, color: RiderColors.primary, size: 23),
-              const SizedBox(height: 7),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: RiderColors.textDark,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ------------------------------------------------------------
+  // ============================================================
   // NOTIFICATION
-  // ------------------------------------------------------------
+  // ============================================================
 
   Widget _notificationButton() {
     return Material(
       color: Colors.transparent,
+
       child: InkWell(
-        onTap: () {},
+        onTap: () {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              behavior: SnackBarBehavior.floating,
+
+              content: Text('Rider notifications are not available yet.'),
+            ),
+          );
+        },
+
         borderRadius: BorderRadius.circular(13),
-        child: Stack(
-          children: [
-            Container(
-              height: 42,
-              width: 42,
-              decoration: BoxDecoration(
-                color: RiderColors.background,
-                borderRadius: BorderRadius.circular(13),
-                border: Border.all(color: RiderColors.border),
-              ),
-              child: const Icon(
-                Icons.notifications_none_rounded,
-                color: RiderColors.textDark,
-                size: 21,
-              ),
-            ),
-            Positioned(
-              top: 7,
-              right: 7,
-              child: Container(
-                height: 7,
-                width: 7,
-                decoration: const BoxDecoration(
-                  color: RiderColors.danger,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-          ],
+
+        child: Container(
+          height: 40,
+          width: 40,
+
+          decoration: BoxDecoration(
+            color: RiderColors.white,
+
+            borderRadius: BorderRadius.circular(13),
+
+            border: Border.all(color: RiderColors.border),
+          ),
+
+          alignment: Alignment.center,
+
+          child: const Icon(
+            Icons.notifications_none_rounded,
+
+            color: RiderColors.textDark,
+
+            size: 20,
+          ),
         ),
       ),
     );

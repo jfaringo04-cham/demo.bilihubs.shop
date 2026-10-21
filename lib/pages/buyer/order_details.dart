@@ -9,7 +9,65 @@ class OrderDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final status = order["status"]?.toString() ?? "Unknown";
+    final status = _getString(['status', 'order_status'], fallback: 'Unknown');
+
+    final orderNumber = _getString([
+      'order_number',
+      'order_no',
+      'id',
+    ], fallback: 'Order');
+
+    final productName = _getString([
+      'product',
+      'product_name',
+      'name',
+    ], fallback: 'Product');
+
+    final shopName = _getString([
+      'shop',
+      'shop_name',
+      'seller_name',
+      'seller',
+    ], fallback: 'Shop not available');
+
+    final riderName = _getString([
+      'rider',
+      'rider_name',
+    ], fallback: 'Rider not assigned');
+
+    final imageUrl = _getString([
+      'image',
+      'image_url',
+      'product_image',
+    ], fallback: '');
+
+    final quantity = _getInt(['quantity', 'qty'], fallback: 1);
+
+    final price = _getDouble(['price', 'unit_price', 'product_price']);
+
+    final providedTotal = _getDouble([
+      'total',
+      'total_price',
+      'subtotal',
+      'grand_total',
+    ], fallback: -1);
+
+    final total = providedTotal >= 0 ? providedTotal : price * quantity;
+
+    final dateOrdered = _getString([
+      'dateOrdered',
+      'date_ordered',
+      'created_at',
+      'date',
+    ], fallback: 'Not available');
+
+    final arrivalDate = _getString([
+      'arrivalDate',
+      'arrival_date',
+      'delivered_at',
+      'expected_delivery',
+      'estimated_delivery',
+    ], fallback: 'Not available');
 
     return Scaffold(
       backgroundColor: BuyerColors.background,
@@ -39,32 +97,26 @@ class OrderDetails extends StatelessWidget {
         top: false,
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(16, 18, 16, 30),
-
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
-              // ------------------------------------------------------------
+              // ============================================================
               // ORDER HEADER
-              // ------------------------------------------------------------
+              // ============================================================
 
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(18),
                 decoration: BuyerStyle.elevatedCard,
-
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     Row(
                       children: [
                         Container(
                           height: 54,
                           width: 54,
-
                           decoration: BuyerStyle.iconContainer(),
-
                           child: const Icon(
                             Icons.receipt_long_outlined,
                             color: BuyerColors.primary,
@@ -77,7 +129,6 @@ class OrderDetails extends StatelessWidget {
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
-
                             children: [
                               const Text(
                                 "Order Number",
@@ -86,10 +137,7 @@ class OrderDetails extends StatelessWidget {
 
                               const SizedBox(height: 4),
 
-                              Text(
-                                order["id"]?.toString() ?? "Order",
-                                style: BuyerStyle.cardTitle,
-                              ),
+                              Text(orderNumber, style: BuyerStyle.cardTitle),
                             ],
                           ),
                         ),
@@ -106,12 +154,10 @@ class OrderDetails extends StatelessWidget {
                         horizontal: 14,
                         vertical: 12,
                       ),
-
                       decoration: BoxDecoration(
                         color: BuyerColors.lightPurple,
                         borderRadius: BorderRadius.circular(14),
                       ),
-
                       child: Row(
                         children: [
                           const Icon(
@@ -142,9 +188,9 @@ class OrderDetails extends StatelessWidget {
 
               const SizedBox(height: 24),
 
-              // ------------------------------------------------------------
+              // ============================================================
               // PRODUCT INFORMATION
-              // ------------------------------------------------------------
+              // ============================================================
               const Text("Product Information", style: BuyerStyle.sectionTitle),
 
               const SizedBox(height: 12),
@@ -152,21 +198,32 @@ class OrderDetails extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BuyerStyle.card,
-
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
-
                   children: [
-                    Container(
-                      height: 68,
-                      width: 68,
-
-                      decoration: BuyerStyle.iconContainer(),
-
-                      child: const Icon(
-                        Icons.shopping_bag_outlined,
-                        color: BuyerColors.primary,
-                        size: 31,
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Container(
+                        height: 68,
+                        width: 68,
+                        color: BuyerColors.lightPurple,
+                        child: imageUrl.isEmpty
+                            ? const Icon(
+                                Icons.shopping_bag_outlined,
+                                color: BuyerColors.primary,
+                                size: 31,
+                              )
+                            : Image.network(
+                                imageUrl,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return const Icon(
+                                    Icons.broken_image_outlined,
+                                    color: BuyerColors.primary,
+                                    size: 31,
+                                  );
+                                },
+                              ),
                       ),
                     ),
 
@@ -175,10 +232,9 @@ class OrderDetails extends StatelessWidget {
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-
                         children: [
                           Text(
-                            order["product"]?.toString() ?? "Product",
+                            productName,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: BuyerStyle.productTitle,
@@ -198,8 +254,7 @@ class OrderDetails extends StatelessWidget {
 
                               Expanded(
                                 child: Text(
-                                  order["shop"]?.toString() ??
-                                      "Shop not available",
+                                  shopName,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: BuyerStyle.body,
@@ -210,10 +265,7 @@ class OrderDetails extends StatelessWidget {
 
                           const SizedBox(height: 5),
 
-                          Text(
-                            "Quantity: ${order["quantity"] ?? 1}",
-                            style: BuyerStyle.small,
-                          ),
+                          Text("Quantity: $quantity", style: BuyerStyle.small),
                         ],
                       ),
                     ),
@@ -221,7 +273,7 @@ class OrderDetails extends StatelessWidget {
                     const SizedBox(width: 10),
 
                     Text(
-                      "₱${order["price"] ?? 0}",
+                      "₱${price.toStringAsFixed(2)}",
                       style: BuyerStyle.largePrice,
                     ),
                   ],
@@ -230,9 +282,9 @@ class OrderDetails extends StatelessWidget {
 
               const SizedBox(height: 24),
 
-              // ------------------------------------------------------------
+              // ============================================================
               // DELIVERY INFORMATION
-              // ------------------------------------------------------------
+              // ============================================================
               const Text(
                 "Delivery Information",
                 style: BuyerStyle.sectionTitle,
@@ -243,16 +295,12 @@ class OrderDetails extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BuyerStyle.card,
-
                 child: Column(
                   children: [
                     _detailRow(
                       icon: Icons.shopping_cart_checkout_rounded,
                       title: "Date Ordered",
-                      value:
-                          order["dateOrdered"]?.toString() ??
-                          order["date"]?.toString() ??
-                          "Not available",
+                      value: dateOrdered,
                     ),
 
                     const Divider(height: 30, color: BuyerColors.border),
@@ -260,8 +308,7 @@ class OrderDetails extends StatelessWidget {
                     _detailRow(
                       icon: Icons.event_available_outlined,
                       title: _arrivalTitle(status),
-                      value:
-                          order["arrivalDate"]?.toString() ?? "Not available",
+                      value: arrivalDate,
                     ),
 
                     const Divider(height: 30, color: BuyerColors.border),
@@ -269,7 +316,7 @@ class OrderDetails extends StatelessWidget {
                     _detailRow(
                       icon: Icons.delivery_dining_rounded,
                       title: "Rider",
-                      value: order["rider"]?.toString() ?? "Rider not assigned",
+                      value: riderName,
                     ),
 
                     const Divider(height: 30, color: BuyerColors.border),
@@ -277,7 +324,7 @@ class OrderDetails extends StatelessWidget {
                     _detailRow(
                       icon: Icons.storefront_outlined,
                       title: "Shop",
-                      value: order["shop"]?.toString() ?? "Not available",
+                      value: shopName,
                     ),
                   ],
                 ),
@@ -285,9 +332,9 @@ class OrderDetails extends StatelessWidget {
 
               const SizedBox(height: 24),
 
-              // ------------------------------------------------------------
+              // ============================================================
               // ORDER SUMMARY
-              // ------------------------------------------------------------
+              // ============================================================
               const Text("Order Summary", style: BuyerStyle.sectionTitle),
 
               const SizedBox(height: 12),
@@ -295,14 +342,22 @@ class OrderDetails extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BuyerStyle.card,
-
                 child: Column(
                   children: [
-                    _summaryRow("Item subtotal", "₱${order["price"] ?? 0}"),
+                    _summaryRow("Item Price", "₱${price.toStringAsFixed(2)}"),
 
                     const SizedBox(height: 12),
 
-                    _summaryRow("Quantity", "${order["quantity"] ?? 1}"),
+                    _summaryRow("Quantity", "$quantity"),
+
+                    if (quantity > 1) ...[
+                      const SizedBox(height: 12),
+
+                      _summaryRow(
+                        "Items Subtotal",
+                        "₱${(price * quantity).toStringAsFixed(2)}",
+                      ),
+                    ],
 
                     const SizedBox(height: 14),
 
@@ -312,7 +367,7 @@ class OrderDetails extends StatelessWidget {
 
                     _summaryRow(
                       "Total",
-                      "₱${order["price"] ?? 0}",
+                      "₱${total.toStringAsFixed(2)}",
                       isTotal: true,
                     ),
                   ],
@@ -321,21 +376,18 @@ class OrderDetails extends StatelessWidget {
 
               const SizedBox(height: 24),
 
-              // ------------------------------------------------------------
+              // ============================================================
               // SUPPORT NOTE
-              // ------------------------------------------------------------
+              // ============================================================
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
-
                 decoration: BoxDecoration(
                   color: BuyerColors.lightPurple,
                   borderRadius: BorderRadius.circular(16),
                 ),
-
                 child: const Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     Icon(
                       Icons.support_agent_rounded,
@@ -347,7 +399,9 @@ class OrderDetails extends StatelessWidget {
 
                     Expanded(
                       child: Text(
-                        "If there is an issue with this order, you can contact the shop or customer support once this feature is connected.",
+                        "If there is an issue with this order, "
+                        "you can contact the shop or customer support "
+                        "once this feature is connected.",
                         style: TextStyle(
                           fontSize: 12,
                           height: 1.45,
@@ -365,9 +419,65 @@ class OrderDetails extends StatelessWidget {
     );
   }
 
-  // ------------------------------------------------------------
+  // ================================================================
+  // GET STRING VALUE
+  // ================================================================
+
+  String _getString(List<String> keys, {String fallback = ''}) {
+    for (final key in keys) {
+      final value = order[key];
+
+      if (value != null && value.toString().trim().isNotEmpty) {
+        return value.toString().trim();
+      }
+    }
+
+    return fallback;
+  }
+
+  // ================================================================
+  // GET INT VALUE
+  // ================================================================
+
+  int _getInt(List<String> keys, {int fallback = 0}) {
+    for (final key in keys) {
+      final value = order[key];
+
+      if (value != null) {
+        final parsed = int.tryParse(value.toString());
+
+        if (parsed != null) {
+          return parsed;
+        }
+      }
+    }
+
+    return fallback;
+  }
+
+  // ================================================================
+  // GET DOUBLE VALUE
+  // ================================================================
+
+  double _getDouble(List<String> keys, {double fallback = 0}) {
+    for (final key in keys) {
+      final value = order[key];
+
+      if (value != null) {
+        final parsed = double.tryParse(value.toString());
+
+        if (parsed != null) {
+          return parsed;
+        }
+      }
+    }
+
+    return fallback;
+  }
+
+  // ================================================================
   // DETAIL ROW
-  // ------------------------------------------------------------
+  // ================================================================
 
   Widget _detailRow({
     required IconData icon,
@@ -376,17 +486,14 @@ class OrderDetails extends StatelessWidget {
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
-
       children: [
         Container(
           height: 42,
           width: 42,
-
           decoration: BoxDecoration(
             color: BuyerColors.lightPurple,
             borderRadius: BorderRadius.circular(12),
           ),
-
           child: Icon(icon, color: BuyerColors.primary, size: 20),
         ),
 
@@ -395,7 +502,6 @@ class OrderDetails extends StatelessWidget {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
               Text(title, style: BuyerStyle.small),
 
@@ -409,9 +515,9 @@ class OrderDetails extends StatelessWidget {
     );
   }
 
-  // ------------------------------------------------------------
+  // ================================================================
   // SUMMARY ROW
-  // ------------------------------------------------------------
+  // ================================================================
 
   Widget _summaryRow(String title, String value, {bool isTotal = false}) {
     return Row(
@@ -439,12 +545,12 @@ class OrderDetails extends StatelessWidget {
     );
   }
 
-  // ------------------------------------------------------------
+  // ================================================================
   // STATUS BADGE
-  // ------------------------------------------------------------
+  // ================================================================
 
   Widget _buildStatusBadge(String status) {
-    final normalizedStatus = status.toLowerCase();
+    final normalizedStatus = status.toLowerCase().trim();
 
     Color backgroundColor;
     Color textColor;
@@ -457,19 +563,24 @@ class OrderDetails extends StatelessWidget {
         icon = Icons.check_circle_outline_rounded;
         break;
 
+      case "pending":
       case "processing":
+      case "preparing":
         backgroundColor = BuyerColors.processingBackground;
         textColor = BuyerColors.processingText;
         icon = Icons.schedule_rounded;
         break;
 
       case "shipped":
+      case "out for delivery":
+      case "out_for_delivery":
         backgroundColor = BuyerColors.shippedBackground;
         textColor = BuyerColors.shippedText;
         icon = Icons.local_shipping_outlined;
         break;
 
       case "cancelled":
+      case "canceled":
         backgroundColor = BuyerColors.cancelledBackground;
         textColor = BuyerColors.cancelledText;
         icon = Icons.cancel_outlined;
@@ -483,15 +594,12 @@ class OrderDetails extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-
       decoration: BoxDecoration(
         color: backgroundColor,
         borderRadius: BorderRadius.circular(20),
       ),
-
       child: Row(
         mainAxisSize: MainAxisSize.min,
-
         children: [
           Icon(icon, color: textColor, size: 14),
 
@@ -510,22 +618,29 @@ class OrderDetails extends StatelessWidget {
     );
   }
 
-  // ------------------------------------------------------------
+  // ================================================================
   // STATUS MESSAGE
-  // ------------------------------------------------------------
+  // ================================================================
 
   String _statusMessage(String status) {
-    switch (status.toLowerCase()) {
+    switch (status.toLowerCase().trim()) {
       case "delivered":
         return "This order has been delivered successfully.";
 
       case "shipped":
+      case "out for delivery":
+      case "out_for_delivery":
         return "Your order is on the way to your delivery address.";
 
+      case "pending":
+        return "Your order has been received and is waiting to be processed.";
+
       case "processing":
+      case "preparing":
         return "The shop is currently preparing your order.";
 
       case "cancelled":
+      case "canceled":
         return "This order has been cancelled.";
 
       default:
@@ -533,12 +648,12 @@ class OrderDetails extends StatelessWidget {
     }
   }
 
-  // ------------------------------------------------------------
+  // ================================================================
   // ARRIVAL LABEL
-  // ------------------------------------------------------------
+  // ================================================================
 
   String _arrivalTitle(String status) {
-    if (status.toLowerCase() == "delivered") {
+    if (status.toLowerCase().trim() == "delivered") {
       return "Date Arrived";
     }
 

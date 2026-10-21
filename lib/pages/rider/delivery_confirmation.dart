@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../models/parcel_model.dart';
-
+import '../../sevices/api_services.dart';
 import '../../styles/rider_style.dart';
-
 import '../../widgets/custom_button.dart';
 
 class DeliveryConfirmation extends StatefulWidget {
@@ -18,12 +17,21 @@ class DeliveryConfirmation extends StatefulWidget {
 class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   bool isLoading = false;
 
+  // ============================================================
+  // CONFIRM DELIVERY
+  // ============================================================
+
   Future<void> confirmDelivery() async {
+    if (isLoading) return;
+
     setState(() {
       isLoading = true;
     });
 
-    await Future.delayed(const Duration(seconds: 1));
+    final result = await ApiService.updateRiderDeliveryStatus(
+      orderId: widget.parcel.id,
+      status: 'delivered',
+    );
 
     if (!mounted) return;
 
@@ -31,29 +39,50 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
       isLoading = false;
     });
 
+    if (result['success'] == true) {
+      _showSuccessDialog();
+
+      return;
+    }
+
+    _showErrorMessage(
+      result['message']?.toString() ?? 'Unable to confirm delivery.',
+    );
+  }
+
+  // ============================================================
+  // SUCCESS DIALOG
+  // ============================================================
+
+  void _showSuccessDialog() {
     showDialog(
       context: context,
-
-      builder: (context) {
+      barrierDismissible: false,
+      builder: (dialogContext) {
         return AlertDialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
           ),
 
-          content: Column(
+          content: const Column(
             mainAxisSize: MainAxisSize.min,
-
             children: [
-              const Icon(Icons.check_circle, color: Colors.green, size: 70),
+              Icon(Icons.check_circle, color: Colors.green, size: 70),
 
-              const SizedBox(height: 15),
+              SizedBox(height: 15),
 
-              const Text(
-                "Parcel Delivered Successfully",
-
+              Text(
+                'Parcel Delivered Successfully',
                 textAlign: TextAlign.center,
-
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+
+              SizedBox(height: 8),
+
+              Text(
+                'The parcel status has been updated.',
+                textAlign: TextAlign.center,
+                style: RiderStyle.small,
               ),
             ],
           ),
@@ -61,16 +90,38 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.pop(context);
+                Navigator.pop(dialogContext);
+
+                Navigator.pop(context, true);
               },
 
-              child: const Text("Done"),
+              child: const Text('Done'),
             ),
           ],
         );
       },
     );
   }
+
+  // ============================================================
+  // ERROR
+  // ============================================================
+
+  void _showErrorMessage(String message) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: RiderColors.danger,
+        content: Text(message),
+      ),
+    );
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -81,12 +132,10 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
 
       appBar: AppBar(
         backgroundColor: Colors.white,
-
         elevation: 0,
-
+        surfaceTintColor: Colors.transparent,
         iconTheme: const IconThemeData(color: Colors.black),
-
-        title: const Text("Confirm Delivery", style: RiderStyle.title),
+        title: const Text('Confirm Delivery', style: RiderStyle.title),
       ),
 
       body: SafeArea(
@@ -109,20 +158,27 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
 
                   children: [
                     const Text(
-                      "Parcel Information",
-
+                      'Parcel Information',
                       style: RiderStyle.sectionTitle,
                     ),
 
                     const SizedBox(height: 20),
 
-                    _infoRow("Tracking Number", parcel.trackingNumber),
+                    _infoRow(
+                      'Tracking Number',
+                      _displayValue(parcel.trackingNumber),
+                    ),
 
-                    _infoRow("Customer", parcel.customerName),
+                    _infoRow('Customer', _displayValue(parcel.customerName)),
 
-                    _infoRow("Address", parcel.deliveryAddress),
+                    _infoRow(
+                      'Phone Number',
+                      _displayValue(parcel.customerPhone),
+                    ),
 
-                    _infoRow("Status", parcel.status),
+                    _infoRow('Address', _displayValue(parcel.deliveryAddress)),
+
+                    _infoRow('Status', _formatStatus(parcel.status)),
                   ],
                 ),
               ),
@@ -135,6 +191,8 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
                 decoration: RiderStyle.card,
 
                 child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+
                   children: [
                     Icon(Icons.info_outline, color: Colors.blue),
 
@@ -142,7 +200,7 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
 
                     Expanded(
                       child: Text(
-                        "Make sure the parcel has been received by the customer before confirming.",
+                        'Make sure the parcel has been received by the customer before confirming.',
                       ),
                     ),
                   ],
@@ -152,7 +210,7 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
               const SizedBox(height: 30),
 
               CustomButton(
-                text: "CONFIRM DELIVERY",
+                text: 'CONFIRM DELIVERY',
 
                 icon: Icons.check_circle_outline,
 
@@ -168,6 +226,10 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
       ),
     );
   }
+
+  // ============================================================
+  // INFO ROW
+  // ============================================================
 
   Widget _infoRow(String title, String value) {
     return Padding(
@@ -185,5 +247,34 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
         ],
       ),
     );
+  }
+
+  // ============================================================
+  // HELPERS
+  // ============================================================
+
+  String _displayValue(String value) {
+    if (value.trim().isEmpty) {
+      return 'Not available';
+    }
+
+    return value.trim();
+  }
+
+  String _formatStatus(String status) {
+    if (status.trim().isEmpty) {
+      return 'Not available';
+    }
+
+    final clean = status.replaceAll('_', ' ').trim();
+
+    return clean
+        .split(RegExp(r'\s+'))
+        .map(
+          (word) => word.isEmpty
+              ? word
+              : '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
+        )
+        .join(' ');
   }
 }

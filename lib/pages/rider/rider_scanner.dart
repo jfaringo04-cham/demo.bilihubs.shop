@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../models/parcel_model.dart';
+import '../../sevices/api_services.dart';
 import '../../styles/rider_style.dart';
 
 class RiderScanner extends StatefulWidget {
@@ -17,7 +18,15 @@ class _RiderScannerState extends State<RiderScanner> {
   late final MobileScannerController _scannerController;
 
   String? _scannedCode;
+
   bool _hasScanned = false;
+  bool _isProcessingScan = false;
+
+  String? _scanError;
+  String? _scanMessage;
+  String? _scanType;
+
+  ParcelModel? _foundParcel;
 
   @override
   void initState() {
@@ -27,24 +36,26 @@ class _RiderScannerState extends State<RiderScanner> {
       facing: CameraFacing.back,
       torchEnabled: false,
       detectionSpeed: DetectionSpeed.noDuplicates,
-
-      // QR CODE ONLY
       formats: const [BarcodeFormat.qrCode],
-
       autoZoom: true,
     );
+
+    _foundParcel = widget.scannedParcel;
   }
 
   @override
   void dispose() {
     _scannerController.dispose();
+
     super.dispose();
   }
 
+  // ============================================================
+  // BUILD
+  // ============================================================
+
   @override
   Widget build(BuildContext context) {
-    final parcel = widget.scannedParcel;
-
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: _buildAppBar(),
@@ -56,7 +67,7 @@ class _RiderScannerState extends State<RiderScanner> {
 
             _scannerControls(),
 
-            _bottomPanel(parcel),
+            _bottomPanel(),
           ],
         ),
       ),
@@ -78,21 +89,19 @@ class _RiderScannerState extends State<RiderScanner> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Scan Parcel',
+            'Scan Waybill',
             style: TextStyle(
               color: Colors.white,
               fontSize: 18,
               fontWeight: FontWeight.w800,
             ),
           ),
+
           SizedBox(height: 2),
+
           Text(
-            'Scan the parcel QR code',
-            style: TextStyle(
-              color: Colors.white60,
-              fontSize: 11,
-              fontWeight: FontWeight.w400,
-            ),
+            'Scan the BiliHub parcel waybill QR code',
+            style: TextStyle(color: Colors.white60, fontSize: 11),
           ),
         ],
       ),
@@ -108,14 +117,6 @@ class _RiderScannerState extends State<RiderScanner> {
       builder: (context, constraints) {
         final size = constraints.biggest;
 
-        // ------------------------------------------------------
-        // SQUARE QR SCANNING AREA
-        // ------------------------------------------------------
-        //
-        // Around 64% of the available screen width.
-        // This creates a square frame similar to the physical
-        // proportions of a normal QR code.
-        //
         final scanSize = size.width * 0.64;
 
         final scanWindow = Rect.fromCenter(
@@ -127,10 +128,6 @@ class _RiderScannerState extends State<RiderScanner> {
         return Stack(
           fit: StackFit.expand,
           children: [
-            // --------------------------------------------------
-            // LIVE CAMERA
-            // --------------------------------------------------
-
             MobileScanner(
               controller: _scannerController,
               fit: BoxFit.cover,
@@ -141,9 +138,6 @@ class _RiderScannerState extends State<RiderScanner> {
               },
             ),
 
-            // --------------------------------------------------
-            // SQUARE QR SCAN WINDOW
-            // --------------------------------------------------
             ScanWindowOverlay(
               controller: _scannerController,
               scanWindow: scanWindow,
@@ -153,9 +147,6 @@ class _RiderScannerState extends State<RiderScanner> {
               color: Colors.black.withValues(alpha: 0.58),
             ),
 
-            // --------------------------------------------------
-            // SCAN GUIDE
-            // --------------------------------------------------
             Positioned(
               left: 0,
               right: 0,
@@ -172,11 +163,13 @@ class _RiderScannerState extends State<RiderScanner> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      _hasScanned
-                          ? 'QR code detected'
-                          : 'Place the QR code inside the frame',
+                      _scannerGuideText,
                       style: TextStyle(
-                        color: _hasScanned ? Colors.greenAccent : Colors.white,
+                        color: _foundParcel != null
+                            ? Colors.greenAccent
+                            : _scanError != null
+                            ? Colors.orangeAccent
+                            : Colors.white,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -218,44 +211,158 @@ class _RiderScannerState extends State<RiderScanner> {
     );
   }
 
+  String get _scannerGuideText {
+    if (_isProcessingScan) {
+      return 'Verifying waybill...';
+    }
+
+    if (_foundParcel != null) {
+      return 'Waybill verified';
+    }
+
+    if (_scanError != null) {
+      return 'Unable to verify waybill';
+    }
+
+    if (_hasScanned) {
+      return 'QR code detected';
+    }
+
+    return 'Place the waybill QR code inside the frame';
+  }
+
   // ============================================================
-  // QR CODE DETECTION
+  // QR DETECTION
   // ============================================================
 
-  void _handleDetection(BarcodeCapture capture) {
-    if (_hasScanned || capture.barcodes.isEmpty) {
+  Future<void> _handleDetection(BarcodeCapture capture) async {
+    if (_hasScanned || _isProcessingScan || capture.barcodes.isEmpty) {
       return;
     }
 
     final barcode = capture.barcodes.first;
-    final value = barcode.rawValue;
 
-    // Make sure the detected format is actually QR.
     if (barcode.format != BarcodeFormat.qrCode) {
       return;
     }
+
+    final value = barcode.rawValue;
 
     if (value == null || value.trim().isEmpty) {
       return;
     }
 
+    final qrValue = value.trim();
+
     setState(() {
-      _scannedCode = value;
+      _scannedCode = qrValue;
+
       _hasScanned = true;
+
+      _isProcessingScan = true;
+
+      _scanError = null;
+
+      _scanMessage = null;
+
+      _scanType = null;
+
+      _foundParcel = null;
     });
 
-    // Stop scanning after successful detection.
-    // This prevents the same QR code from being detected repeatedly.
-    _scannerController.stop();
+    await _scannerController.stop();
 
-    _showScanSuccess(value);
+    await _processScannedWaybill(qrValue);
+  }
+
+  // ============================================================
+  // SEND QR TO LARAVEL
+  // ============================================================
+
+  Future<void> _processScannedWaybill(String qrValue) async {
+    final result = await ApiService.scanRiderWaybill(qrPayload: qrValue);
+
+    if (!mounted) {
+      return;
+    }
+
+    if (result['success'] != true) {
+      final message = result['message']?.toString().trim();
+
+      setState(() {
+        _isProcessingScan = false;
+
+        _foundParcel = null;
+
+        _scanError = message != null && message.isNotEmpty
+            ? message
+            : 'Unable to verify the scanned waybill.';
+      });
+
+      _showScanError(_scanError!);
+
+      return;
+    }
+
+    final dynamic rawShipment = result['shipment'];
+
+    if (rawShipment is! Map) {
+      setState(() {
+        _isProcessingScan = false;
+
+        _foundParcel = null;
+
+        _scanError = 'The server verified the QR code but returned invalid shipment data.';
+      });
+
+      _showScanError(_scanError!);
+
+      return;
+    }
+
+    try {
+      final parcel = ParcelModel.fromJson(
+        Map<String, dynamic>.from(rawShipment),
+      );
+
+      final message = result['message']?.toString().trim();
+
+      final scanType = result['scan_type']?.toString().trim();
+
+      setState(() {
+        _foundParcel = parcel;
+
+        _isProcessingScan = false;
+
+        _scanError = null;
+
+        _scanMessage = message != null && message.isNotEmpty
+            ? message
+            : 'Waybill verified successfully.';
+
+        _scanType = scanType != null && scanType.isNotEmpty ? scanType : null;
+      });
+
+      _showScanSuccess(parcel.trackingNumber, _scanMessage!);
+    } catch (e) {
+      setState(() {
+        _isProcessingScan = false;
+
+        _foundParcel = null;
+
+        _scanError =
+            'Unable to read shipment information returned by the server.';
+      });
+
+      _showScanError(_scanError!);
+    }
   }
 
   // ============================================================
   // SUCCESS MESSAGE
   // ============================================================
 
-  void _showScanSuccess(String value) {
+  void _showScanSuccess(String trackingNumber, String message) {
     if (!mounted) {
       return;
     }
@@ -270,20 +377,57 @@ class _RiderScannerState extends State<RiderScanner> {
         content: Row(
           children: [
             const Icon(Icons.check_circle_rounded, color: Colors.white),
+
             const SizedBox(width: 10),
+
             Expanded(
-              child: Text(
-                'QR code detected: $value',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    trackingNumber,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+
+                  const SizedBox(height: 2),
+
+                  Text(
+                    message,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // ERROR MESSAGE
+  // ============================================================
+
+  void _showScanError(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: RiderColors.danger,
+        content: Text(message),
       ),
     );
   }
@@ -336,8 +480,8 @@ class _RiderScannerState extends State<RiderScanner> {
           const SizedBox(height: 20),
 
           ElevatedButton.icon(
-            onPressed: () {
-              _scannerController.start();
+            onPressed: () async {
+              await _scannerController.start();
             },
             icon: const Icon(Icons.refresh_rounded),
             label: const Text('Try Again'),
@@ -386,7 +530,9 @@ class _RiderScannerState extends State<RiderScanner> {
           _scannerControlButton(
             icon: Icons.refresh_rounded,
             label: 'Reset',
-            onTap: _resetScanner,
+            onTap: () {
+              _resetScanner();
+            },
           ),
         ],
       ),
@@ -431,23 +577,38 @@ class _RiderScannerState extends State<RiderScanner> {
   // RESET
   // ============================================================
 
-  void _resetScanner() {
+  Future<void> _resetScanner() async {
+    if (_isProcessingScan) {
+      return;
+    }
+
     setState(() {
       _scannedCode = null;
+
       _hasScanned = false;
+
+      _foundParcel = null;
+
+      _scanError = null;
+
+      _scanMessage = null;
+
+      _scanType = null;
+
+      _isProcessingScan = false;
     });
 
-    _scannerController.start();
+    await _scannerController.start();
   }
 
   // ============================================================
   // BOTTOM PANEL
   // ============================================================
 
-  Widget _bottomPanel(ParcelModel? parcel) {
+  Widget _bottomPanel() {
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(maxHeight: 285),
+      constraints: const BoxConstraints(maxHeight: 335),
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
       decoration: const BoxDecoration(
         color: RiderColors.white,
@@ -455,7 +616,38 @@ class _RiderScannerState extends State<RiderScanner> {
       ),
       child: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
-        child: parcel == null ? _waitingPanel() : _parcelFoundPanel(parcel),
+        child: _isProcessingScan
+            ? _checkingPanel()
+            : _foundParcel != null
+            ? _parcelFoundPanel(_foundParcel!)
+            : _waitingPanel(),
+      ),
+    );
+  }
+
+  // ============================================================
+  // CHECKING
+  // ============================================================
+
+  Widget _checkingPanel() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 18),
+      child: Column(
+        children: [
+          CircularProgressIndicator(color: RiderColors.primary),
+
+          SizedBox(height: 12),
+
+          Text('Verifying Waybill...', style: RiderStyle.cardTitle),
+
+          SizedBox(height: 3),
+
+          Text(
+            'Please wait while BiliHub verifies the QR code and records the shipment.',
+            textAlign: TextAlign.center,
+            style: RiderStyle.small,
+          ),
+        ],
       ),
     );
   }
@@ -485,23 +677,28 @@ class _RiderScannerState extends State<RiderScanner> {
             color: RiderColors.lightPurple,
             borderRadius: BorderRadius.circular(15),
           ),
-          child: const Icon(
-            Icons.qr_code_scanner_rounded,
-            color: RiderColors.primary,
+          child: Icon(
+            _scanError != null
+                ? Icons.error_outline_rounded
+                : Icons.qr_code_scanner_rounded,
+            color: _scanError != null
+                ? RiderColors.danger
+                : RiderColors.primary,
             size: 27,
           ),
         ),
 
         const SizedBox(height: 9),
 
-        const Text('Ready to Scan', style: RiderStyle.cardTitle),
+        Text(
+          _scanError != null ? 'Unable to Scan' : 'Ready to Scan',
+          style: RiderStyle.cardTitle,
+        ),
 
         const SizedBox(height: 3),
 
         Text(
-          _scannedCode == null
-              ? 'Point your camera at the parcel QR code.'
-              : 'QR code scanned successfully.',
+          _scanError ?? 'Point your camera at the QR code printed on the BiliHub waybill.',
           textAlign: TextAlign.center,
           style: RiderStyle.small,
         ),
@@ -513,32 +710,35 @@ class _RiderScannerState extends State<RiderScanner> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: RiderColors.lightGreen,
+              color: RiderColors.background,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.check_circle_rounded,
-                  color: RiderColors.success,
-                  size: 18,
-                ),
+            child: Text(
+              _scannedCode!,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: RiderStyle.small,
+            ),
+          ),
+        ],
 
-                const SizedBox(width: 8),
+        if (_scanError != null) ...[
+          const SizedBox(height: 12),
 
-                Expanded(
-                  child: Text(
-                    _scannedCode!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: RiderColors.success,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: () {
+                _resetScanner();
+              },
+              style: RiderStyle.primaryButton,
+              icon: const Icon(
+                Icons.qr_code_scanner_rounded,
+                color: Colors.white,
+              ),
+              label: const Text('Scan Again', style: RiderStyle.buttonText),
             ),
           ),
         ],
@@ -547,7 +747,7 @@ class _RiderScannerState extends State<RiderScanner> {
   }
 
   // ============================================================
-  // PARCEL FOUND
+  // PARCEL VERIFIED
   // ============================================================
 
   Widget _parcelFoundPanel(ParcelModel parcel) {
@@ -567,32 +767,26 @@ class _RiderScannerState extends State<RiderScanner> {
 
         const SizedBox(height: 14),
 
-        Row(
+        const Row(
           children: [
-            Container(
-              height: 44,
-              width: 44,
-              decoration: BoxDecoration(
-                color: RiderColors.lightGreen,
-                borderRadius: BorderRadius.circular(13),
-              ),
-              child: const Icon(
-                Icons.check_circle_outline_rounded,
-                color: RiderColors.success,
-                size: 23,
-              ),
+            Icon(
+              Icons.check_circle_outline_rounded,
+              color: RiderColors.success,
+              size: 28,
             ),
 
-            const SizedBox(width: 12),
+            SizedBox(width: 10),
 
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Parcel Found', style: RiderStyle.sectionTitle),
+                  Text('Waybill Verified', style: RiderStyle.sectionTitle),
+
                   SizedBox(height: 2),
+
                   Text(
-                    'Delivery information is ready.',
+                    'The shipment has been recorded successfully.',
                     style: RiderStyle.small,
                   ),
                 ],
@@ -601,34 +795,103 @@ class _RiderScannerState extends State<RiderScanner> {
           ],
         ),
 
+        if (_scanMessage != null) ...[
+          const SizedBox(height: 12),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+              color: RiderColors.lightPurple,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(_scanMessage!, style: RiderStyle.small),
+          ),
+        ],
+
         const SizedBox(height: 14),
 
         _infoRow('Tracking Number', parcel.trackingNumber),
 
-        _infoRow('Customer', parcel.customerName),
+        _infoRow(
+          'Customer',
+          parcel.customerName.isNotEmpty
+              ? parcel.customerName
+              : 'Not available',
+        ),
 
-        _infoRow('Address', parcel.deliveryAddress),
+        _infoRow(
+          'Address',
+          parcel.deliveryAddress.isNotEmpty
+              ? parcel.deliveryAddress
+              : 'Not available',
+        ),
 
-        _infoRow('Status', parcel.status),
+        _infoRow('Status', _formatStatus(parcel.status)),
+
+        if (_scanType != null)
+          _infoRow('Scan Type', _formatScanType(_scanType!)),
 
         const SizedBox(height: 8),
 
         SizedBox(
           width: double.infinity,
           height: 50,
-          child: ElevatedButton(
+          child: ElevatedButton.icon(
             onPressed: () {
-              // Navigate to DeliveryConfirmation later.
+              _resetScanner();
             },
             style: RiderStyle.primaryButton,
-            child: const Text(
-              'Continue Delivery',
+            icon: const Icon(
+              Icons.qr_code_scanner_rounded,
+              color: Colors.white,
+            ),
+            label: const Text(
+              'Scan Another Parcel',
               style: RiderStyle.buttonText,
             ),
           ),
         ),
       ],
     );
+  }
+
+  // ============================================================
+  // STATUS FORMATTER
+  // ============================================================
+
+  String _formatStatus(String status) {
+    final value = status.trim();
+
+    if (value.isEmpty) {
+      return 'Not available';
+    }
+
+    return value
+        .split('_')
+        .where((part) => part.trim().isNotEmpty)
+        .map(
+          (part) =>
+              '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
+        )
+        .join(' ');
+  }
+
+  // ============================================================
+  // SCAN TYPE FORMATTER
+  // ============================================================
+
+  String _formatScanType(String type) {
+    switch (type.trim().toLowerCase()) {
+      case 'seller_pickup':
+        return 'Seller Pickup';
+
+      case 'hub_pickup':
+        return 'Hub Pickup';
+
+      default:
+        return _formatStatus(type);
+    }
   }
 
   // ============================================================
@@ -646,7 +909,11 @@ class _RiderScannerState extends State<RiderScanner> {
           const SizedBox(width: 8),
 
           Expanded(
-            child: Text(value, softWrap: true, style: RiderStyle.cardTitle),
+            child: Text(
+              value.trim().isNotEmpty ? value : 'Not available',
+              softWrap: true,
+              style: RiderStyle.cardTitle,
+            ),
           ),
         ],
       ),
