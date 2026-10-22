@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../styles/buyer_style.dart';
+import 'order_tracking.dart';
 
 class OrderDetails extends StatelessWidget {
   final Map<String, dynamic> order;
@@ -9,90 +10,49 @@ class OrderDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final status = _getString(['status', 'order_status'], fallback: 'Unknown');
+    final items = _mapList(order['items']);
+    final firstItem = items.isNotEmpty ? items.first : <String, dynamic>{};
+    final sellerOrders = _mapList(order['seller_orders']);
+    final firstSellerOrder =
+        sellerOrders.isNotEmpty ? sellerOrders.first : <String, dynamic>{};
+    final seller = _map(firstSellerOrder['seller']);
+    final shipment = _map(firstSellerOrder['shipment']);
+    final rider = _map(shipment['rider']);
+    final address = _map(order['address']);
 
-    final orderNumber = _getString([
-      'order_number',
-      'order_no',
-      'id',
-    ], fallback: 'Order');
-
-    final productName = _getString([
-      'product',
-      'product_name',
-      'name',
-    ], fallback: 'Product');
-
-    final shopName = _getString([
-      'shop',
-      'shop_name',
-      'seller_name',
-      'seller',
-    ], fallback: 'Shop not available');
-
-    final riderName = _getString([
-      'rider',
-      'rider_name',
-    ], fallback: 'Rider not assigned');
-
-    final imageUrl = _getString([
-      'image',
-      'image_url',
-      'product_image',
-    ], fallback: '');
-
-    final quantity = _getInt(['quantity', 'qty'], fallback: 1);
-
-    final price = _getDouble(['price', 'unit_price', 'product_price']);
-
-    final providedTotal = _getDouble([
-      'total',
-      'total_price',
-      'subtotal',
-      'grand_total',
-    ], fallback: -1);
-
-    final total = providedTotal >= 0 ? providedTotal : price * quantity;
-
-    final dateOrdered = _getString([
-      'dateOrdered',
-      'date_ordered',
-      'created_at',
-      'date',
-    ], fallback: 'Not available');
-
-    final arrivalDate = _getString([
-      'arrivalDate',
-      'arrival_date',
-      'delivered_at',
-      'expected_delivery',
-      'estimated_delivery',
-    ], fallback: 'Not available');
+    final status = order['delivery_status']?.toString().trim().isNotEmpty == true
+        ? order['delivery_status'].toString()
+        : order['status']?.toString() ?? 'Unknown';
+    final orderNumber =
+        order['order_number']?.toString() ?? 'Order #${order['id'] ?? ''}';
+    final productName =
+        firstItem['product_name']?.toString() ?? 'Order item';
+    final imageUrl = firstItem['product_image']?.toString() ?? '';
+    final quantity =
+        int.tryParse(firstItem['quantity']?.toString() ?? '0') ?? 0;
+    final itemPrice =
+        double.tryParse(firstItem['price']?.toString() ?? '0') ?? 0;
+    final subtotal = double.tryParse(order['subtotal']?.toString() ?? '0') ?? 0;
+    final shipping =
+        double.tryParse(order['shipping_fee']?.toString() ?? '0') ?? 0;
+    final serviceFee =
+        double.tryParse(order['service_fee']?.toString() ?? '0') ?? 0;
+    final total = double.tryParse(order['total']?.toString() ?? '0') ?? 0;
+    final sellerName = seller['name']?.toString() ?? 'BiliHub Seller';
+    final riderName = rider['name']?.toString() ?? 'Rider not assigned';
+    final trackingNumber = shipment['tracking_number']?.toString() ?? '';
+    final fullAddress = address['full_address']?.toString() ?? '';
+    final orderId = int.tryParse(order['id']?.toString() ?? '');
 
     return Scaffold(
       backgroundColor: BuyerColors.background,
-
       appBar: AppBar(
         backgroundColor: BuyerColors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: true,
-
-        leading: IconButton(
-          tooltip: "Back",
-          onPressed: () {
-            Navigator.pop(context);
-          },
-          icon: const Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: BuyerColors.textDark,
-            size: 20,
-          ),
-        ),
-
-        title: const Text("Order Details", style: BuyerStyle.appBarTitle),
+        title: const Text('Order Details', style: BuyerStyle.appBarTitle),
       ),
-
       body: SafeArea(
         top: false,
         child: SingleChildScrollView(
@@ -100,10 +60,6 @@ class OrderDetails extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ============================================================
-              // ORDER HEADER
-              // ============================================================
-
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(18),
@@ -111,95 +67,29 @@ class OrderDetails extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          height: 54,
-                          width: 54,
-                          decoration: BuyerStyle.iconContainer(),
-                          child: const Icon(
-                            Icons.receipt_long_outlined,
-                            color: BuyerColors.primary,
-                            size: 28,
-                          ),
-                        ),
-
-                        const SizedBox(width: 14),
-
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                "Order Number",
-                                style: BuyerStyle.small,
-                              ),
-
-                              const SizedBox(height: 4),
-
-                              Text(orderNumber, style: BuyerStyle.cardTitle),
-                            ],
-                          ),
-                        ),
-
-                        _buildStatusBadge(status),
-                      ],
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: BuyerColors.lightPurple,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.info_outline_rounded,
-                            color: BuyerColors.primary,
-                            size: 19,
-                          ),
-
-                          const SizedBox(width: 9),
-
-                          Expanded(
-                            child: Text(
-                              _statusMessage(status),
-                              style: const TextStyle(
-                                fontSize: 12,
-                                height: 1.4,
-                                color: BuyerColors.textDark,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
+                    Text(orderNumber, style: BuyerStyle.title),
+                    const SizedBox(height: 8),
+                    Text(
+                      _titleCase(status.replaceAll('_', ' ')),
+                      style: const TextStyle(
+                        color: BuyerColors.primary,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
+                    if (trackingNumber.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text('Tracking: $trackingNumber', style: BuyerStyle.small),
+                    ],
                   ],
                 ),
               ),
-
               const SizedBox(height: 24),
-
-              // ============================================================
-              // PRODUCT INFORMATION
-              // ============================================================
-              const Text("Product Information", style: BuyerStyle.sectionTitle),
-
+              const Text('Product Information', style: BuyerStyle.sectionTitle),
               const SizedBox(height: 12),
-
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BuyerStyle.card,
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(14),
@@ -216,202 +106,100 @@ class OrderDetails extends StatelessWidget {
                             : Image.network(
                                 imageUrl,
                                 fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return const Icon(
-                                    Icons.broken_image_outlined,
-                                    color: BuyerColors.primary,
-                                    size: 31,
-                                  );
-                                },
+                                errorBuilder: (_, __, ___) => const Icon(
+                                  Icons.broken_image_outlined,
+                                  color: BuyerColors.primary,
+                                  size: 31,
+                                ),
                               ),
                       ),
                     ),
-
                     const SizedBox(width: 14),
-
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            productName,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: BuyerStyle.productTitle,
-                          ),
-
-                          const SizedBox(height: 6),
-
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.storefront_outlined,
-                                size: 14,
-                                color: BuyerColors.textGrey,
-                              ),
-
-                              const SizedBox(width: 5),
-
-                              Expanded(
-                                child: Text(
-                                  shopName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: BuyerStyle.body,
-                                ),
-                              ),
-                            ],
-                          ),
-
+                          Text(productName, style: BuyerStyle.productTitle),
                           const SizedBox(height: 5),
-
-                          Text("Quantity: $quantity", style: BuyerStyle.small),
+                          Text(sellerName, style: BuyerStyle.small),
+                          const SizedBox(height: 5),
+                          Text('Quantity: $quantity', style: BuyerStyle.small),
                         ],
                       ),
                     ),
-
-                    const SizedBox(width: 10),
-
                     Text(
-                      "₱${price.toStringAsFixed(2)}",
+                      '₱${itemPrice.toStringAsFixed(2)}',
                       style: BuyerStyle.largePrice,
                     ),
                   ],
                 ),
               ),
-
               const SizedBox(height: 24),
-
-              // ============================================================
-              // DELIVERY INFORMATION
-              // ============================================================
-              const Text(
-                "Delivery Information",
-                style: BuyerStyle.sectionTitle,
-              ),
-
+              const Text('Delivery Information', style: BuyerStyle.sectionTitle),
               const SizedBox(height: 12),
-
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BuyerStyle.card,
                 child: Column(
                   children: [
-                    _detailRow(
-                      icon: Icons.shopping_cart_checkout_rounded,
-                      title: "Date Ordered",
-                      value: dateOrdered,
-                    ),
-
+                    _detailRow(Icons.storefront_outlined, 'Seller', sellerName),
                     const Divider(height: 30, color: BuyerColors.border),
-
-                    _detailRow(
-                      icon: Icons.event_available_outlined,
-                      title: _arrivalTitle(status),
-                      value: arrivalDate,
-                    ),
-
-                    const Divider(height: 30, color: BuyerColors.border),
-
-                    _detailRow(
-                      icon: Icons.delivery_dining_rounded,
-                      title: "Rider",
-                      value: riderName,
-                    ),
-
-                    const Divider(height: 30, color: BuyerColors.border),
-
-                    _detailRow(
-                      icon: Icons.storefront_outlined,
-                      title: "Shop",
-                      value: shopName,
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // ============================================================
-              // ORDER SUMMARY
-              // ============================================================
-              const Text("Order Summary", style: BuyerStyle.sectionTitle),
-
-              const SizedBox(height: 12),
-
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BuyerStyle.card,
-                child: Column(
-                  children: [
-                    _summaryRow("Item Price", "₱${price.toStringAsFixed(2)}"),
-
-                    const SizedBox(height: 12),
-
-                    _summaryRow("Quantity", "$quantity"),
-
-                    if (quantity > 1) ...[
-                      const SizedBox(height: 12),
-
-                      _summaryRow(
-                        "Items Subtotal",
-                        "₱${(price * quantity).toStringAsFixed(2)}",
+                    _detailRow(Icons.delivery_dining_rounded, 'Rider', riderName),
+                    if (fullAddress.isNotEmpty) ...[
+                      const Divider(height: 30, color: BuyerColors.border),
+                      _detailRow(
+                        Icons.location_on_outlined,
+                        'Delivery Address',
+                        fullAddress,
                       ),
                     ],
-
-                    const SizedBox(height: 14),
-
-                    const Divider(height: 1, color: BuyerColors.border),
-
-                    const SizedBox(height: 14),
-
-                    _summaryRow(
-                      "Total",
-                      "₱${total.toStringAsFixed(2)}",
-                      isTotal: true,
-                    ),
                   ],
                 ),
               ),
-
               const SizedBox(height: 24),
-
-              // ============================================================
-              // SUPPORT NOTE
-              // ============================================================
+              const Text('Payment Summary', style: BuyerStyle.sectionTitle),
+              const SizedBox(height: 12),
               Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: BuyerColors.lightPurple,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                padding: const EdgeInsets.all(16),
+                decoration: BuyerStyle.card,
+                child: Column(
                   children: [
-                    Icon(
-                      Icons.support_agent_rounded,
-                      color: BuyerColors.primary,
-                      size: 21,
+                    _summaryRow('Subtotal', subtotal),
+                    const SizedBox(height: 12),
+                    _summaryRow('Delivery Fee', shipping),
+                    const SizedBox(height: 12),
+                    _summaryRow('Service Fee', serviceFee),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 14),
+                      child: Divider(height: 1, color: BuyerColors.border),
                     ),
-
-                    SizedBox(width: 10),
-
-                    Expanded(
-                      child: Text(
-                        "If there is an issue with this order, "
-                        "you can contact the shop or customer support "
-                        "once this feature is connected.",
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.45,
-                          color: BuyerColors.textGrey,
-                        ),
-                      ),
-                    ),
+                    _summaryRow('Total', total, isTotal: true),
                   ],
                 ),
               ),
+              if (orderId != null && sellerOrders.isNotEmpty) ...[
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton.icon(
+                    style: BuyerStyle.primaryButton,
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => OrderTracking(
+                            orderId: orderId,
+                            orderNumber: orderNumber,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.local_shipping_outlined),
+                    label: const Text('Track Order'),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -419,94 +207,18 @@ class OrderDetails extends StatelessWidget {
     );
   }
 
-  // ================================================================
-  // GET STRING VALUE
-  // ================================================================
-
-  String _getString(List<String> keys, {String fallback = ''}) {
-    for (final key in keys) {
-      final value = order[key];
-
-      if (value != null && value.toString().trim().isNotEmpty) {
-        return value.toString().trim();
-      }
-    }
-
-    return fallback;
-  }
-
-  // ================================================================
-  // GET INT VALUE
-  // ================================================================
-
-  int _getInt(List<String> keys, {int fallback = 0}) {
-    for (final key in keys) {
-      final value = order[key];
-
-      if (value != null) {
-        final parsed = int.tryParse(value.toString());
-
-        if (parsed != null) {
-          return parsed;
-        }
-      }
-    }
-
-    return fallback;
-  }
-
-  // ================================================================
-  // GET DOUBLE VALUE
-  // ================================================================
-
-  double _getDouble(List<String> keys, {double fallback = 0}) {
-    for (final key in keys) {
-      final value = order[key];
-
-      if (value != null) {
-        final parsed = double.tryParse(value.toString());
-
-        if (parsed != null) {
-          return parsed;
-        }
-      }
-    }
-
-    return fallback;
-  }
-
-  // ================================================================
-  // DETAIL ROW
-  // ================================================================
-
-  Widget _detailRow({
-    required IconData icon,
-    required String title,
-    required String value,
-  }) {
+  Widget _detailRow(IconData icon, String title, String value) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          height: 42,
-          width: 42,
-          decoration: BoxDecoration(
-            color: BuyerColors.lightPurple,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: BuyerColors.primary, size: 20),
-        ),
-
-        const SizedBox(width: 12),
-
+        Icon(icon, color: BuyerColors.primary, size: 21),
+        const SizedBox(width: 11),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(title, style: BuyerStyle.small),
-
               const SizedBox(height: 4),
-
               Text(value, style: BuyerStyle.cardTitle),
             ],
           ),
@@ -515,148 +227,37 @@ class OrderDetails extends StatelessWidget {
     );
   }
 
-  // ================================================================
-  // SUMMARY ROW
-  // ================================================================
-
-  Widget _summaryRow(String title, String value, {bool isTotal = false}) {
+  Widget _summaryRow(String label, double value, {bool isTotal = false}) {
     return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Expanded(
-          child: Text(
-            title,
-            style: TextStyle(
-              fontSize: isTotal ? 15 : 13,
-              fontWeight: isTotal ? FontWeight.w700 : FontWeight.w500,
-              color: isTotal ? BuyerColors.textDark : BuyerColors.textGrey,
-            ),
-          ),
-        ),
-
+        Text(label, style: isTotal ? BuyerStyle.sectionTitle : BuyerStyle.small),
         Text(
-          value,
-          style: TextStyle(
-            fontSize: isTotal ? 18 : 14,
-            fontWeight: isTotal ? FontWeight.w800 : FontWeight.w600,
-            color: isTotal ? BuyerColors.primary : BuyerColors.textDark,
-          ),
+          '₱${value.toStringAsFixed(2)}',
+          style: isTotal ? BuyerStyle.largePrice : BuyerStyle.cardTitle,
         ),
       ],
     );
   }
 
-  // ================================================================
-  // STATUS BADGE
-  // ================================================================
-
-  Widget _buildStatusBadge(String status) {
-    final normalizedStatus = status.toLowerCase().trim();
-
-    Color backgroundColor;
-    Color textColor;
-    IconData icon;
-
-    switch (normalizedStatus) {
-      case "delivered":
-        backgroundColor = BuyerColors.deliveredBackground;
-        textColor = BuyerColors.deliveredText;
-        icon = Icons.check_circle_outline_rounded;
-        break;
-
-      case "pending":
-      case "processing":
-      case "preparing":
-        backgroundColor = BuyerColors.processingBackground;
-        textColor = BuyerColors.processingText;
-        icon = Icons.schedule_rounded;
-        break;
-
-      case "shipped":
-      case "out for delivery":
-      case "out_for_delivery":
-        backgroundColor = BuyerColors.shippedBackground;
-        textColor = BuyerColors.shippedText;
-        icon = Icons.local_shipping_outlined;
-        break;
-
-      case "cancelled":
-      case "canceled":
-        backgroundColor = BuyerColors.cancelledBackground;
-        textColor = BuyerColors.cancelledText;
-        icon = Icons.cancel_outlined;
-        break;
-
-      default:
-        backgroundColor = BuyerColors.lightPurple;
-        textColor = BuyerColors.primary;
-        icon = Icons.info_outline_rounded;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: textColor, size: 14),
-
-          const SizedBox(width: 5),
-
-          Text(
-            status,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: textColor,
-            ),
-          ),
-        ],
-      ),
-    );
+  List<Map<String, dynamic>> _mapList(dynamic value) {
+    if (value is! List) return [];
+    return value
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
   }
 
-  // ================================================================
-  // STATUS MESSAGE
-  // ================================================================
-
-  String _statusMessage(String status) {
-    switch (status.toLowerCase().trim()) {
-      case "delivered":
-        return "This order has been delivered successfully.";
-
-      case "shipped":
-      case "out for delivery":
-      case "out_for_delivery":
-        return "Your order is on the way to your delivery address.";
-
-      case "pending":
-        return "Your order has been received and is waiting to be processed.";
-
-      case "processing":
-      case "preparing":
-        return "The shop is currently preparing your order.";
-
-      case "cancelled":
-      case "canceled":
-        return "This order has been cancelled.";
-
-      default:
-        return "Check this page for the latest information about your order.";
-    }
+  Map<String, dynamic> _map(dynamic value) {
+    return value is Map ? Map<String, dynamic>.from(value) : {};
   }
 
-  // ================================================================
-  // ARRIVAL LABEL
-  // ================================================================
-
-  String _arrivalTitle(String status) {
-    if (status.toLowerCase().trim() == "delivered") {
-      return "Date Arrived";
-    }
-
-    return "Expected Arrival";
+  String _titleCase(String value) {
+    if (value.trim().isEmpty) return 'Unknown';
+    return value
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .map((word) => '${word[0].toUpperCase()}${word.substring(1)}')
+        .join(' ');
   }
 }

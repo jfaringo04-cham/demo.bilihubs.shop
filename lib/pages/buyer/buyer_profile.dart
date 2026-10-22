@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../sevices/auth_storage.dart';
+import '../../sevices/api_services.dart';
 import '../../styles/buyer_style.dart';
 
 import '../auth/login_page.dart';
@@ -21,6 +22,11 @@ class _BuyerProfileState extends State<BuyerProfile> {
   late String buyerEmail;
   late String buyerPhone;
   late String buyerAddress;
+  int? buyerAddressId;
+  String buyerAddressLine1 = '';
+  String buyerCity = '';
+  String buyerProvince = '';
+  String buyerPostalCode = '';
 
   @override
   void initState() {
@@ -40,6 +46,59 @@ class _BuyerProfileState extends State<BuyerProfile> {
     buyerAddress = address.isNotEmpty
         ? address
         : 'No delivery address added yet';
+
+    _refreshProfile();
+  }
+
+  Future<void> _refreshProfile() async {
+    final profileResult = await ApiService.getCurrentUser();
+    final addressResult = await ApiService.getAddresses();
+
+    if (!mounted) return;
+
+    if (profileResult['success'] == true && profileResult['user'] is Map) {
+      final user = Map<String, dynamic>.from(profileResult['user'] as Map);
+      await AuthStorage.saveUser(user);
+
+      buyerName = user['name']?.toString() ?? buyerName;
+      buyerEmail = user['email']?.toString() ?? buyerEmail;
+      buyerPhone =
+          user['mobile_number']?.toString() ??
+          user['phone']?.toString() ??
+          buyerPhone;
+    }
+
+    if (addressResult['success'] == true && addressResult['data'] is List) {
+      final data = addressResult['data'] as List;
+      if (data.isNotEmpty) {
+        Map<String, dynamic>? selected;
+        for (final item in data) {
+          if (item is! Map) continue;
+          final address = Map<String, dynamic>.from(item);
+          selected ??= address;
+          if (address['is_default'] == true ||
+              address['is_default']?.toString() == '1') {
+            selected = address;
+            break;
+          }
+        }
+
+        if (selected != null) {
+          buyerAddressId = int.tryParse(selected['id']?.toString() ?? '');
+          buyerAddressLine1 =
+              selected['address_line1']?.toString().trim() ?? '';
+          buyerCity = selected['city']?.toString().trim() ?? '';
+          buyerProvince = selected['province']?.toString().trim() ?? '';
+          buyerPostalCode = selected['postal_code']?.toString().trim() ?? '';
+
+          final fullAddress =
+              selected['full_address']?.toString().trim() ?? '';
+          if (fullAddress.isNotEmpty) buyerAddress = fullAddress;
+        }
+      }
+    }
+
+    if (mounted) setState(() {});
   }
 
   @override
@@ -380,9 +439,10 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
     final phoneController = TextEditingController(text: buyerPhone);
 
-    final addressController = TextEditingController(
-      text: buyerAddress == "No delivery address added yet" ? "" : buyerAddress,
-    );
+    final addressController = TextEditingController(text: buyerAddressLine1);
+    final cityController = TextEditingController(text: buyerCity);
+    final provinceController = TextEditingController(text: buyerProvince);
+    final postalCodeController = TextEditingController(text: buyerPostalCode);
 
     bool isSaving = false;
 
@@ -395,51 +455,119 @@ class _BuyerProfileState extends State<BuyerProfile> {
           builder: (modalContext, setModalState) {
             Future<void> saveChanges() async {
               final name = nameController.text.trim();
-
-              final email = emailController.text.trim();
-
               final phone = phoneController.text.trim();
-
-              final address = addressController.text.trim();
+              final addressLine1 = addressController.text.trim();
+              final city = cityController.text.trim();
+              final province = provinceController.text.trim();
+              final postalCode = postalCodeController.text.trim();
 
               if (name.isEmpty ||
-                  email.isEmpty ||
                   phone.isEmpty ||
-                  address.isEmpty) {
+                  addressLine1.isEmpty ||
+                  city.isEmpty ||
+                  province.isEmpty) {
                 ScaffoldMessenger.of(modalContext).showSnackBar(
-                  const SnackBar(content: Text("Please complete all fields.")),
+                  const SnackBar(
+                    content: Text(
+                      'Please complete your name, phone, street address, city, and province.',
+                    ),
+                  ),
                 );
-
                 return;
               }
 
-              setModalState(() {
-                isSaving = true;
-              });
+              if (!RegExp(r'^09\d{9}$').hasMatch(phone)) {
+                ScaffoldMessenger.of(modalContext).showSnackBar(
+                  const SnackBar(
+                    content: Text('Use phone format 09XXXXXXXXX.'),
+                  ),
+                );
+                return;
+              }
 
-              // Save the updated buyer information
-              // locally in secure storage.
-              await AuthStorage.updateUser({
-                'name': name,
-                'email': email,
-                'phone': phone,
-                'mobile_number': phone,
-                'address': address,
-              });
+              setModalState(() => isSaving = true);
+
+              final result = await ApiService.updateProfile(
+                name: name,
+                mobileNumber: phone,
+              );
+
+              if (result['success'] != true) {
+                if (!modalContext.mounted || !mounted) return;
+                setModalState(() => isSaving = false);
+                ScaffoldMessenger.of(modalContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      result['message']?.toString() ??
+                          'Unable to update profile.',
+                    ),
+                  ),
+                );
+                return;
+              }
+
+              final addressResult = await ApiService.saveAddress(
+                addressId: buyerAddressId,
+                addressLine1: addressLine1,
+                city: city,
+                province: province,
+                postalCode: postalCode,
+                phone: phone,
+                isDefault: true,
+              );
+
+              if (!modalContext.mounted || !mounted) return;
+
+              setModalState(() => isSaving = false);
+
+              if (addressResult['success'] != true) {
+                ScaffoldMessenger.of(modalContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      addressResult['message']?.toString() ??
+                          'Profile updated, but the delivery address could not be saved.',
+                    ),
+                  ),
+                );
+                return;
+              }
+
+              if (result['user'] is Map) {
+                final user = Map<String, dynamic>.from(result['user'] as Map);
+                await AuthStorage.saveUser(user);
+              } else {
+                await AuthStorage.updateUser({
+                  'name': name,
+                  'mobile_number': phone,
+                  'phone': phone,
+                });
+              }
 
               if (!mounted) return;
+              final savedAddress = addressResult['data'];
 
               setState(() {
                 buyerName = name;
-                buyerEmail = email;
                 buyerPhone = phone;
-                buyerAddress = address;
+                buyerAddressLine1 = addressLine1;
+                buyerCity = city;
+                buyerProvince = province;
+                buyerPostalCode = postalCode;
+
+                if (savedAddress is Map) {
+                  buyerAddressId = int.tryParse(savedAddress['id']?.toString() ?? '');
+                  buyerAddress = savedAddress['full_address']?.toString().trim() ??
+                      [addressLine1, city, province, postalCode, 'Philippines']
+                          .where((value) => value.isNotEmpty)
+                          .join(', ');
+                } else {
+                  buyerAddress = [addressLine1, city, province, postalCode, 'Philippines']
+                      .where((value) => value.isNotEmpty)
+                      .join(', ');
+                }
               });
 
-              if (modalContext.mounted) {
-                Navigator.pop(modalContext);
-              }
-
+              if (modalContext.mounted) Navigator.pop(modalContext);
               if (!mounted) return;
 
               ScaffoldMessenger.of(context)
@@ -457,7 +585,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                         SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            "Profile saved on this device.",
+                            'Profile updated successfully.',
                             style: TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w600,
@@ -503,7 +631,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                       const SizedBox(height: 5),
 
                       const Text(
-                        "Update your personal information.",
+                        "Update your profile and default delivery address. Email cannot be changed here.",
                         style: BuyerStyle.subtitle,
                       ),
 
@@ -532,6 +660,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
                       TextField(
                         controller: emailController,
+                        readOnly: true,
                         keyboardType: TextInputType.emailAddress,
                         decoration: BuyerStyle.inputDecoration(
                           hint: "Enter your email",
@@ -564,11 +693,56 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
                       TextField(
                         controller: addressController,
-                        maxLines: 3,
+                        maxLines: 2,
                         textCapitalization: TextCapitalization.sentences,
                         decoration: BuyerStyle.inputDecoration(
-                          hint: "Enter your delivery address",
+                          hint: "House number and street",
                           icon: Icons.location_on_outlined,
+                        ),
+                      ),
+
+                      const SizedBox(height: 15),
+
+                      const Text("City / Municipality", style: BuyerStyle.label),
+
+                      const SizedBox(height: 7),
+
+                      TextField(
+                        controller: cityController,
+                        textCapitalization: TextCapitalization.words,
+                        decoration: BuyerStyle.inputDecoration(
+                          hint: "Enter city or municipality",
+                          icon: Icons.location_city_outlined,
+                        ),
+                      ),
+
+                      const SizedBox(height: 15),
+
+                      const Text("Province", style: BuyerStyle.label),
+
+                      const SizedBox(height: 7),
+
+                      TextField(
+                        controller: provinceController,
+                        textCapitalization: TextCapitalization.words,
+                        decoration: BuyerStyle.inputDecoration(
+                          hint: "Enter province",
+                          icon: Icons.map_outlined,
+                        ),
+                      ),
+
+                      const SizedBox(height: 15),
+
+                      const Text("Postal Code (optional)", style: BuyerStyle.label),
+
+                      const SizedBox(height: 7),
+
+                      TextField(
+                        controller: postalCodeController,
+                        keyboardType: TextInputType.number,
+                        decoration: BuyerStyle.inputDecoration(
+                          hint: "Enter postal code",
+                          icon: Icons.local_post_office_outlined,
                         ),
                       ),
 
@@ -632,6 +806,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
       emailController.dispose();
       phoneController.dispose();
       addressController.dispose();
+      cityController.dispose();
+      provinceController.dispose();
+      postalCodeController.dispose();
     });
   }
 
@@ -805,6 +982,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
               onPressed: () async {
                 Navigator.pop(dialogContext);
 
+                await ApiService.logout();
                 await AuthStorage.clearSession();
 
                 if (!mounted) return;

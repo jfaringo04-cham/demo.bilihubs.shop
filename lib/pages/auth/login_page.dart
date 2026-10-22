@@ -102,6 +102,8 @@ class _LoginPageState extends State<LoginPage> {
 
     await AuthStorage.saveUser(authenticatedUser);
 
+    await AuthStorage.saveRememberMe(rememberMe);
+
     final roles = user['roles'];
 
     if (roles is! List || roles.isEmpty) {
@@ -132,6 +134,7 @@ class _LoginPageState extends State<LoginPage> {
         break;
 
       case 'logistics':
+      case 'logistic_owner':
         destination = const LogisticsNavigation();
         break;
 
@@ -140,6 +143,9 @@ class _LoginPageState extends State<LoginPage> {
     }
 
     if (destination == null) {
+      await AuthStorage.clearSession();
+
+      if (!mounted) return;
       showMessage('This account role is not available in the mobile app.');
 
       return;

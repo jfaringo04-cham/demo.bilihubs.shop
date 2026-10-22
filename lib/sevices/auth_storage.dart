@@ -7,6 +7,7 @@ class AuthStorage {
 
   static const String _tokenKey = 'auth_token';
   static const String _userKey = 'auth_user';
+  static const String _rememberKey = 'remember_me';
 
   // ============================================================
   // TOKEN
@@ -80,6 +81,20 @@ class AuthStorage {
     await saveUser(updatedUser);
   }
 
+
+  // ============================================================
+  // REMEMBER ME
+  // ============================================================
+
+  static Future<void> saveRememberMe(bool value) async {
+    await _storage.write(key: _rememberKey, value: value ? '1' : '0');
+  }
+
+  static Future<bool> getRememberMe() async {
+    final value = await _storage.read(key: _rememberKey);
+    return value == '1';
+  }
+
   // ============================================================
   // SESSION
   // ============================================================
@@ -96,5 +111,7 @@ class AuthStorage {
     await _storage.delete(key: _tokenKey);
 
     await _storage.delete(key: _userKey);
+
+    await _storage.delete(key: _rememberKey);
   }
 }

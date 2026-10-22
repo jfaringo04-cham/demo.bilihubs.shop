@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../styles/registration_style.dart';
+import '../../sevices/api_services.dart';
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({super.key});
@@ -78,39 +79,22 @@ class _RegistrationPageState extends State<RegistrationPage> {
     }
 
     final firstName = firstNameController.text.trim();
-
     final lastName = lastNameController.text.trim();
-
     final email = emailController.text.trim().toLowerCase();
-
     final phone = phoneController.text.trim();
-
-    final address = addressController.text.trim();
-
-    // Never trim passwords automatically.
     final password = passwordController.text;
 
     setState(() {
       isLoading = true;
     });
 
-    // ----------------------------------------------------------
-    // TEMPORARY REGISTRATION
-    // Replace this block with your API later.
-    //
-    // Example:
-    //
-    // await authService.registerBuyer(
-    //   firstName: firstName,
-    //   lastName: lastName,
-    //   email: email,
-    //   phone: phone,
-    //   address: address,
-    //   password: password,
-    // );
-    // ----------------------------------------------------------
-
-    await Future.delayed(const Duration(milliseconds: 900));
+    final result = await ApiService.registerBuyer(
+      firstName: firstName,
+      lastName: lastName,
+      email: email,
+      phone: phone,
+      password: password,
+    );
 
     if (!mounted) return;
 
@@ -118,23 +102,22 @@ class _RegistrationPageState extends State<RegistrationPage> {
       isLoading = false;
     });
 
-    // Temporary values are referenced here so Dart
-    // doesn't flag them as unused while API is not connected.
-    debugPrint(
-      "Registering buyer: "
-      "$firstName $lastName | "
-      "$email | "
-      "$phone | "
-      "$address | "
-      "Password length: ${password.length}",
+    if (result['success'] != true) {
+      showMessage(
+        result['message']?.toString() ?? 'Unable to submit registration.',
+      );
+      return;
+    }
+
+    showMessage(
+      result['message']?.toString() ??
+          'Registration submitted. Please wait for account approval.',
+      isSuccess: true,
     );
 
-    showMessage("Buyer account created successfully", isSuccess: true);
-
-    await Future.delayed(const Duration(milliseconds: 700));
+    await Future.delayed(const Duration(milliseconds: 900));
 
     if (!mounted) return;
-
     Navigator.pop(context);
   }
 
@@ -207,11 +190,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
   String? validateAddress(String? value) {
     final input = value?.trim() ?? "";
 
-    if (input.isEmpty) {
-      return "Please enter your delivery address";
-    }
-
-    if (input.length < 8) {
+    if (input.isNotEmpty && input.length < 8) {
       return "Please enter a more complete address";
     }
 
@@ -223,8 +202,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
       return "Please create a password";
     }
 
-    if (value.length < 6) {
-      return "Password must contain at least 6 characters";
+    if (value.length < 8) {
+      return "Password must contain at least 8 characters";
     }
 
     return null;
@@ -601,7 +580,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                               // ADDRESS
                               // --------------------------------
                               const Text(
-                                "Delivery Address",
+                                "Delivery Address (optional)",
                                 style: RegistrationStyle.sectionTitle,
                               ),
 
@@ -633,7 +612,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                 validator: validateAddress,
 
                                 decoration: RegistrationStyle.inputDecoration(
-                                  hint: "Enter your complete delivery address",
+                                  hint: "You can complete your delivery address after login",
                                   icon: Icons.location_on_outlined,
                                 ),
                               ),

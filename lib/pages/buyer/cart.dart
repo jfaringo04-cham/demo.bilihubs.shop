@@ -192,7 +192,7 @@ class _CartPageState extends State<CartPage> {
                                       const SizedBox(height: 6),
 
                                       Text(
-                                        "₱${product.price.toStringAsFixed(2)}",
+                                        "₱${product.effectivePrice.toStringAsFixed(2)}",
                                         style: const TextStyle(
                                           color: BuyerColors.primary,
                                           fontSize: 16,
@@ -340,6 +340,7 @@ class _CartPageState extends State<CartPage> {
                                           MaterialPageRoute(
                                             builder: (context) => Checkout(
                                               items: CartService.items,
+                                              clearLocalCartOnSuccess: true,
                                             ),
                                           ),
                                         );

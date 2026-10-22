@@ -86,6 +86,488 @@ class ApiService {
   }
 
   // ============================================================
+  // REGISTER BUYER
+  // ============================================================
+
+  static Future<Map<String, dynamic>> registerBuyer({
+    required String firstName,
+    required String lastName,
+    required String email,
+    required String phone,
+    required String password,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/register'),
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'name': '$firstName $lastName'.trim(),
+          'first_name': firstName,
+          'last_name': lastName,
+          'email': email,
+          'mobile_number': phone,
+          'password': password,
+          'password_confirmation': password,
+          'role': 'buyer',
+        }),
+      );
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if ((response.statusCode == 200 || response.statusCode == 201) &&
+          decoded is Map<String, dynamic>) {
+        return {
+          'success': true,
+          'message': _getMessage(
+            decoded,
+            fallback: 'Registration submitted successfully.',
+          ),
+          'user': decoded['user'],
+        };
+      }
+
+      return {
+        'success': false,
+        'status_code': response.statusCode,
+        'message': _getValidationMessage(
+          decoded,
+          fallback: 'Registration failed.',
+        ),
+        'errors': decoded is Map<String, dynamic> ? decoded['errors'] : null,
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Unable to register account: $e',
+      };
+    }
+  }
+
+  // ============================================================
+  // FORGOT PASSWORD
+  // ============================================================
+
+  static Future<Map<String, dynamic>> forgotPassword({
+    required String email,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/forgot-password'),
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'email': email}),
+      );
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return {
+          'success': true,
+          'message': _getMessage(
+            decoded,
+            fallback: 'Password reset link sent to your email.',
+          ),
+        };
+      }
+
+      return {
+        'success': false,
+        'status_code': response.statusCode,
+        'message': _getValidationMessage(
+          decoded,
+          fallback: 'Unable to send password reset link.',
+        ),
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Unable to send password reset link: $e',
+      };
+    }
+  }
+
+  // ============================================================
+  // CURRENT USER / PROFILE
+  // ============================================================
+
+  static Future<Map<String, dynamic>> getCurrentUser() async {
+    try {
+      final token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return {'success': false, 'message': 'Authentication token not found.'};
+      }
+
+      final response = await http.get(
+        Uri.parse('$baseUrl/auth/user'),
+        headers: _authHeaders(token),
+      );
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
+        final dynamic user = decoded['user'];
+        if (user is Map) {
+          return {
+            'success': true,
+            'user': Map<String, dynamic>.from(user),
+          };
+        }
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'This account cannot access this profile.',
+        notFoundMessage: 'Profile not found.',
+        fallback: 'Unable to load profile.',
+      );
+    } catch (e) {
+      return {'success': false, 'message': 'Unable to load profile: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> updateProfile({
+    required String name,
+    required String mobileNumber,
+  }) async {
+    try {
+      final token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return {'success': false, 'message': 'Authentication token not found.'};
+      }
+
+      final response = await http.put(
+        Uri.parse('$baseUrl/auth/profile'),
+        headers: _authHeaders(token, json: true),
+        body: jsonEncode({
+          'name': name,
+          'mobile_number': mobileNumber,
+        }),
+      );
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode >= 200 &&
+          response.statusCode < 300 &&
+          decoded is Map<String, dynamic>) {
+        final dynamic user = decoded['user'];
+        return {
+          'success': true,
+          'message': _getMessage(decoded, fallback: 'Profile updated.'),
+          if (user is Map) 'user': Map<String, dynamic>.from(user),
+        };
+      }
+
+      return {
+        ..._authApiError(
+          response.statusCode,
+          decoded,
+          forbiddenMessage: 'You cannot update this profile.',
+          notFoundMessage: 'Profile not found.',
+          fallback: 'Unable to update profile.',
+        ),
+        'message': _getValidationMessage(
+          decoded,
+          fallback: 'Unable to update profile.',
+        ),
+      };
+    } catch (e) {
+      return {'success': false, 'message': 'Unable to update profile: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> logout() async {
+    try {
+      final token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return {'success': true, 'message': 'Logged out.'};
+      }
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/logout'),
+        headers: _authHeaders(token),
+      );
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return {
+          'success': true,
+          'message': _getMessage(decoded, fallback: 'Logged out successfully.'),
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'Unable to logout this account.',
+        notFoundMessage: 'Session not found.',
+        fallback: 'Unable to logout.',
+      );
+    } catch (e) {
+      return {'success': false, 'message': 'Unable to logout: $e'};
+    }
+  }
+
+  // ============================================================
+  // BUYER ADDRESSES
+  // ============================================================
+
+  static Future<Map<String, dynamic>> getAddresses() async {
+    try {
+      final token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return {'success': false, 'message': 'Authentication token not found.'};
+      }
+
+      final response = await http.get(
+        Uri.parse('$baseUrl/addresses'),
+        headers: _authHeaders(token),
+      );
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'data': _extractList(decoded, keys: const ['data', 'addresses']),
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'Unable to access your addresses.',
+        notFoundMessage: 'No saved addresses found.',
+        fallback: 'Unable to load addresses.',
+      );
+    } catch (e) {
+      return {'success': false, 'message': 'Unable to load addresses: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> saveAddress({
+    int? addressId,
+    required String addressLine1,
+    required String city,
+    required String province,
+    required String phone,
+    String postalCode = '',
+    String label = 'Home',
+    bool isDefault = true,
+  }) async {
+    try {
+      final token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return {'success': false, 'message': 'Authentication token not found.'};
+      }
+
+      final uri = addressId == null
+          ? Uri.parse('$baseUrl/addresses')
+          : Uri.parse('$baseUrl/addresses/$addressId');
+
+      final body = jsonEncode({
+        'label': label,
+        'address_line1': addressLine1,
+        'city': city,
+        'province': province,
+        if (postalCode.trim().isNotEmpty) 'postal_code': postalCode.trim(),
+        'country': 'Philippines',
+        'phone': phone,
+        'is_default': isDefault,
+      });
+
+      final response = addressId == null
+          ? await http.post(uri, headers: _authHeaders(token, json: true), body: body)
+          : await http.put(uri, headers: _authHeaders(token, json: true), body: body);
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode >= 200 &&
+          response.statusCode < 300 &&
+          decoded is Map<String, dynamic>) {
+        final dynamic data = decoded['data'];
+        return {
+          'success': true,
+          'message': _getMessage(decoded, fallback: 'Address saved.'),
+          if (data is Map) 'data': Map<String, dynamic>.from(data),
+        };
+      }
+
+      return {
+        'success': false,
+        'status_code': response.statusCode,
+        'message': _getValidationMessage(
+          decoded,
+          fallback: 'Unable to save delivery address.',
+        ),
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Unable to save delivery address: $e',
+      };
+    }
+  }
+
+  // ============================================================
+  // BUYER ORDERS
+  // ============================================================
+
+  static Future<Map<String, dynamic>> placeOrder({
+    required int addressId,
+    required List<Map<String, dynamic>> items,
+    String paymentMethod = 'cod',
+    String? notes,
+  }) async {
+    try {
+      final token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return {'success': false, 'message': 'Authentication token not found.'};
+      }
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/orders'),
+        headers: _authHeaders(token, json: true),
+        body: jsonEncode({
+          'address_id': addressId,
+          'payment_method': paymentMethod,
+          'items': items,
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+        }),
+      );
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if ((response.statusCode == 200 || response.statusCode == 201) &&
+          decoded is Map<String, dynamic>) {
+        return {
+          'success': true,
+          'message': _getMessage(decoded, fallback: 'Order placed successfully.'),
+          'data': decoded['data'],
+        };
+      }
+
+      return {
+        'success': false,
+        'status_code': response.statusCode,
+        'message': _getValidationMessage(
+          decoded,
+          fallback: 'Unable to place order.',
+        ),
+      };
+    } catch (e) {
+      return {'success': false, 'message': 'Unable to place order: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> getOrders({
+    String? status,
+    int perPage = 50,
+  }) async {
+    try {
+      final token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return {'success': false, 'message': 'Authentication token not found.'};
+      }
+
+      final query = <String, String>{'per_page': perPage.toString()};
+      if (status != null && status.trim().isNotEmpty) {
+        query['status'] = status.trim();
+      }
+
+      final uri = Uri.parse('$baseUrl/orders').replace(queryParameters: query);
+      final response = await http.get(uri, headers: _authHeaders(token));
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'data': _extractList(decoded, keys: const ['data', 'orders']),
+          if (decoded is Map<String, dynamic>) 'meta': decoded['meta'],
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'Unable to access your orders.',
+        notFoundMessage: 'No orders found.',
+        fallback: 'Unable to load orders.',
+      );
+    } catch (e) {
+      return {'success': false, 'message': 'Unable to load orders: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> getOrder(int orderId) async {
+    try {
+      final token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return {'success': false, 'message': 'Authentication token not found.'};
+      }
+
+      final response = await http.get(
+        Uri.parse('$baseUrl/orders/$orderId'),
+        headers: _authHeaders(token),
+      );
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
+        final dynamic data = decoded['data'];
+        if (data is Map) {
+          return {'success': true, 'data': Map<String, dynamic>.from(data)};
+        }
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'You cannot access this order.',
+        notFoundMessage: 'Order not found.',
+        fallback: 'Unable to load order.',
+      );
+    } catch (e) {
+      return {'success': false, 'message': 'Unable to load order: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> getOrderShipments(int orderId) async {
+    try {
+      final token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return {'success': false, 'message': 'Authentication token not found.'};
+      }
+
+      final response = await http.get(
+        Uri.parse('$baseUrl/orders/$orderId/shipment'),
+        headers: _authHeaders(token),
+      );
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
+        final dynamic data = decoded['data'];
+        if (data is Map) {
+          return {'success': true, 'data': Map<String, dynamic>.from(data)};
+        }
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'You cannot access this shipment.',
+        notFoundMessage: 'No shipment is available for this order yet.',
+        fallback: 'Unable to load shipment tracking.',
+      );
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Unable to load shipment tracking: $e',
+      };
+    }
+  }
+
+  // ============================================================
   // RIDER DASHBOARD
   // ============================================================
 
@@ -740,7 +1222,7 @@ class ApiService {
       final dynamic decoded = _decodeResponse(response.body);
 
       if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
-        final dynamic productData = decoded['data'];
+        final dynamic productData = decoded['data'] ?? decoded;
 
         if (productData is Map<String, dynamic>) {
           return {'success': true, 'data': productData};
@@ -749,7 +1231,6 @@ class ApiService {
         if (productData is Map) {
           return {
             'success': true,
-
             'data': Map<String, dynamic>.from(productData),
           };
         }
@@ -943,6 +1424,34 @@ class ApiService {
     } catch (_) {
       return body;
     }
+  }
+
+  // ============================================================
+  // VALIDATION / ERROR MESSAGE
+  // ============================================================
+
+  static String _getValidationMessage(dynamic data, {required String fallback}) {
+    if (data is Map<String, dynamic>) {
+      final dynamic message = data['message'];
+      if (message != null && message.toString().trim().isNotEmpty &&
+          message.toString().trim().toLowerCase() != 'validation failed.') {
+        return message.toString().trim();
+      }
+
+      final dynamic errors = data['errors'];
+      if (errors is Map) {
+        for (final dynamic value in errors.values) {
+          if (value is List && value.isNotEmpty) {
+            return value.first.toString();
+          }
+          if (value != null && value.toString().trim().isNotEmpty) {
+            return value.toString();
+          }
+        }
+      }
+    }
+
+    return fallback;
   }
 
   // ============================================================

@@ -179,15 +179,6 @@ class _RiderProfileState extends State<RiderProfile> {
 
         title: const Text('My Profile', style: RiderStyle.appBarTitle),
 
-        leading: IconButton(
-          onPressed: () => Navigator.pop(context),
-
-          icon: const Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: RiderColors.textDark,
-            size: 20,
-          ),
-        ),
       ),
 
       body: SafeArea(

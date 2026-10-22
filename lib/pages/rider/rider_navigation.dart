@@ -17,6 +17,7 @@ class RiderNavigation extends StatefulWidget {
 
 class _RiderNavigationState extends State<RiderNavigation> {
   int currentIndex = 0;
+  late final List<Widget> pages;
 
   final List<BottomNavItem> items = const [
     BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
@@ -29,43 +30,27 @@ class _RiderNavigationState extends State<RiderNavigation> {
     BottomNavItem(icon: Icons.person_outline, label: 'Profile'),
   ];
 
-  void _changeTab(int index) {
-    if (index == currentIndex) {
-      return;
-    }
-
-    setState(() {
-      currentIndex = index;
-    });
+  @override
+  void initState() {
+    super.initState();
+    pages = [
+      RiderHome(onNavigateTab: _changeTab),
+      const RiderDeliveries(),
+      const RiderScanner(),
+      const Earnings(),
+      const RiderProfile(),
+    ];
   }
 
-  Widget _buildCurrentPage() {
-    switch (currentIndex) {
-      case 0:
-        return RiderHome(onNavigateTab: _changeTab);
-
-      case 1:
-        return const RiderDeliveries();
-
-      case 2:
-        return const RiderScanner();
-
-      case 3:
-        return const Earnings();
-
-      case 4:
-        return const RiderProfile();
-
-      default:
-        return RiderHome(onNavigateTab: _changeTab);
-    }
+  void _changeTab(int index) {
+    if (index < 0 || index >= items.length || index == currentIndex) return;
+    setState(() => currentIndex = index);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _buildCurrentPage(),
-
+      body: IndexedStack(index: currentIndex, children: pages),
       bottomNavigationBar: BottomNav(
         currentIndex: currentIndex,
         items: items,

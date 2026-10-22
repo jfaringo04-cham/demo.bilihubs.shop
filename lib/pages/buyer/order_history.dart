@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../sevices/api_services.dart';
 import '../../styles/buyer_style.dart';
-
 import 'order_details.dart';
 
 class OrderHistory extends StatefulWidget {
@@ -12,48 +12,60 @@ class OrderHistory extends StatefulWidget {
 }
 
 class _OrderHistoryState extends State<OrderHistory> {
-  final List<Map<String, dynamic>> orders = [];
-
-  bool isLoading = false;
+  List<Map<String, dynamic>> orders = [];
+  bool isLoading = true;
   String? errorMessage;
 
   @override
   void initState() {
     super.initState();
+    _loadOrders();
+  }
 
-    // Kapag meron na tayong Laravel orders API,
-    // dito natin tatawagin ang load orders.
-    //
-    // Example:
-    // _loadOrders();
+  Future<void> _loadOrders() async {
+    if (mounted) {
+      setState(() {
+        isLoading = true;
+        errorMessage = null;
+      });
+    }
+
+    final result = await ApiService.getOrders();
+    if (!mounted) return;
+
+    if (result['success'] == true) {
+      final data = result['data'];
+      final parsed = <Map<String, dynamic>>[];
+      if (data is List) {
+        for (final item in data) {
+          if (item is Map) parsed.add(Map<String, dynamic>.from(item));
+        }
+      }
+
+      setState(() {
+        orders = parsed;
+        isLoading = false;
+      });
+      return;
+    }
+
+    setState(() {
+      isLoading = false;
+      errorMessage = result['message']?.toString() ?? 'Unable to load orders.';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: BuyerColors.background,
-
       appBar: AppBar(
         backgroundColor: BuyerColors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: true,
-
-        leading: IconButton(
-          tooltip: "Back",
-          icon: const Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: BuyerColors.textDark,
-            size: 20,
-          ),
-          onPressed: () {
-            Navigator.pop(context);
-          },
-        ),
-
-        title: const Text("Order History", style: BuyerStyle.appBarTitle),
+        title: const Text('Order History', style: BuyerStyle.appBarTitle),
       ),
-
       body: SafeArea(top: false, child: _buildBody()),
     );
   }
@@ -75,106 +87,78 @@ class _OrderHistoryState extends State<OrderHistory> {
 
     return RefreshIndicator(
       color: BuyerColors.primary,
-      onRefresh: () async {
-        // Kapag connected na ang orders API,
-        // dito natin ire-refresh.
-      },
+      onRefresh: _loadOrders,
       child: ListView.separated(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
         itemCount: orders.length,
-        separatorBuilder: (_, __) {
-          return const SizedBox(height: 14);
-        },
-        itemBuilder: (context, index) {
-          final order = orders[index];
-
-          return _buildOrderCard(context, order);
-        },
+        separatorBuilder: (_, __) => const SizedBox(height: 14),
+        itemBuilder: (context, index) => _buildOrderCard(orders[index]),
       ),
     );
   }
 
-  // ================================================================
-  // OPEN ORDER DETAILS
-  // ================================================================
+  Widget _buildOrderCard(Map<String, dynamic> order) {
+    final status = order['delivery_status']?.toString().trim().isNotEmpty == true
+        ? order['delivery_status'].toString()
+        : order['status']?.toString() ?? 'Unknown';
 
-  void _openOrderDetails(BuildContext context, Map<String, dynamic> order) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => OrderDetails(order: order)),
-    );
-  }
-
-  // ================================================================
-  // ORDER CARD
-  // ================================================================
-
-  Widget _buildOrderCard(BuildContext context, Map<String, dynamic> order) {
-    final status = order["status"]?.toString() ?? "Unknown";
+    final items = _mapList(order['items']);
+    final firstItem = items.isNotEmpty ? items.first : <String, dynamic>{};
+    final sellerOrders = _mapList(order['seller_orders']);
+    final firstSellerOrder =
+        sellerOrders.isNotEmpty ? sellerOrders.first : <String, dynamic>{};
+    final seller = _map(firstSellerOrder['seller']);
 
     final productName =
-        order["product"]?.toString() ??
-        order["product_name"]?.toString() ??
-        "Product";
-
-    final shopName =
-        order["shop"]?.toString() ??
-        order["seller_name"]?.toString() ??
-        "Seller";
-
-    final quantity = int.tryParse((order["quantity"] ?? 1).toString()) ?? 1;
-
-    final price = double.tryParse((order["price"] ?? 0).toString()) ?? 0;
-
-    final date =
-        order["date"]?.toString() ?? order["created_at"]?.toString() ?? "";
-
-    final imageUrl =
-        order["image"]?.toString() ?? order["image_url"]?.toString() ?? "";
+        firstItem['product_name']?.toString() ?? 'Order items';
+    final shopName = seller['name']?.toString() ?? 'BiliHub Seller';
+    final quantity =
+        int.tryParse(firstItem['quantity']?.toString() ?? '0') ?? 0;
+    final total = double.tryParse(order['total']?.toString() ?? '0') ?? 0;
+    final imageUrl = firstItem['product_image']?.toString() ?? '';
+    final createdAt = order['created_at']?.toString() ?? '';
+    final orderNumber =
+        order['order_number']?.toString() ?? 'Order #${order['id'] ?? ''}';
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
+        onTap: () async {
+          final id = int.tryParse(order['id']?.toString() ?? '');
+          Map<String, dynamic> detail = order;
 
-        onTap: () {
-          _openOrderDetails(context, order);
+          if (id != null) {
+            final result = await ApiService.getOrder(id);
+            if (!mounted) return;
+            if (result['success'] == true && result['data'] is Map) {
+              detail = Map<String, dynamic>.from(result['data'] as Map);
+            }
+          }
+
+          if (!mounted) return;
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => OrderDetails(order: detail)),
+          );
         },
-
         child: Ink(
           padding: const EdgeInsets.all(16),
           decoration: BuyerStyle.elevatedCard,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ========================================================
-              // ORDER ID + STATUS
-              // ========================================================
-
               Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
-                    child: Text(
-                      order["id"]?.toString() ??
-                          order["order_number"]?.toString() ??
-                          "Order",
-                      style: BuyerStyle.cardTitle,
-                    ),
+                    child: Text(orderNumber, style: BuyerStyle.cardTitle),
                   ),
-
                   _buildStatusBadge(status),
                 ],
               ),
-
               const SizedBox(height: 15),
-
-              // ========================================================
-              // PRODUCT
-              // ========================================================
               Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(14),
@@ -191,19 +175,15 @@ class _OrderHistoryState extends State<OrderHistory> {
                           : Image.network(
                               imageUrl,
                               fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return const Icon(
-                                  Icons.broken_image_outlined,
-                                  color: BuyerColors.primary,
-                                  size: 29,
-                                );
-                              },
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.broken_image_outlined,
+                                color: BuyerColors.primary,
+                                size: 29,
+                              ),
                             ),
                     ),
                   ),
-
                   const SizedBox(width: 14),
-
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -214,104 +194,26 @@ class _OrderHistoryState extends State<OrderHistory> {
                           overflow: TextOverflow.ellipsis,
                           style: BuyerStyle.productTitle,
                         ),
-
-                        const SizedBox(height: 6),
-
-                        Text(
-                          shopName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: BuyerColors.textGrey,
-                          ),
-                        ),
-
                         const SizedBox(height: 5),
-
-                        Text("Qty: $quantity", style: BuyerStyle.small),
-
-                        if (date.isNotEmpty) ...[
+                        Text(shopName, style: BuyerStyle.small),
+                        if (quantity > 0) ...[
                           const SizedBox(height: 4),
-
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.calendar_today_outlined,
-                                size: 12,
-                                color: BuyerColors.textGrey,
-                              ),
-
-                              const SizedBox(width: 5),
-
-                              Expanded(
-                                child: Text(date, style: BuyerStyle.small),
-                              ),
-                            ],
-                          ),
+                          Text('Qty: $quantity', style: BuyerStyle.small),
                         ],
                       ],
                     ),
                   ),
-
                   const SizedBox(width: 10),
-
                   Text(
-                    "₱${price.toStringAsFixed(2)}",
+                    '₱${total.toStringAsFixed(2)}',
                     style: BuyerStyle.largePrice,
                   ),
                 ],
               ),
-
-              const SizedBox(height: 16),
-
-              const Divider(height: 1, color: BuyerColors.border),
-
-              const SizedBox(height: 6),
-
-              // ========================================================
-              // VIEW DETAILS
-              // ========================================================
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
-
-                onTap: () {
-                  _openOrderDetails(context, order);
-                },
-
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 9, horizontal: 2),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.receipt_long_outlined,
-                        size: 18,
-                        color: BuyerColors.primary,
-                      ),
-
-                      SizedBox(width: 8),
-
-                      Expanded(
-                        child: Text(
-                          "View order details",
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: BuyerColors.primary,
-                          ),
-                        ),
-                      ),
-
-                      Icon(
-                        Icons.arrow_forward_ios_rounded,
-                        size: 14,
-                        color: BuyerColors.primary,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              if (createdAt.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(_friendlyDate(createdAt), style: BuyerStyle.small),
+              ],
             ],
           ),
         ),
@@ -319,82 +221,50 @@ class _OrderHistoryState extends State<OrderHistory> {
     );
   }
 
-  // ================================================================
-  // STATUS BADGE
-  // ================================================================
-
   Widget _buildStatusBadge(String status) {
-    Color backgroundColor;
-    Color textColor;
-    IconData icon;
-
-    switch (status.toLowerCase()) {
-      case "delivered":
-        backgroundColor = BuyerColors.deliveredBackground;
-
-        textColor = BuyerColors.deliveredText;
-
-        icon = Icons.check_circle_outline_rounded;
-
-        break;
-
-      case "processing":
-      case "pending":
-        backgroundColor = BuyerColors.processingBackground;
-
-        textColor = BuyerColors.processingText;
-
-        icon = Icons.schedule_rounded;
-
-        break;
-
-      case "shipped":
-      case "out for delivery":
-        backgroundColor = BuyerColors.shippedBackground;
-
-        textColor = BuyerColors.shippedText;
-
-        icon = Icons.local_shipping_outlined;
-
-        break;
-
-      case "cancelled":
-      case "canceled":
-        backgroundColor = BuyerColors.cancelledBackground;
-
-        textColor = BuyerColors.cancelledText;
-
-        icon = Icons.cancel_outlined;
-
-        break;
-
-      default:
-        backgroundColor = BuyerColors.lightPurple;
-
-        textColor = BuyerColors.primary;
-
-        icon = Icons.info_outline_rounded;
-    }
-
+    final clean = status.replaceAll('_', ' ').trim();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: backgroundColor,
+        color: BuyerColors.lightPurple,
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Text(
+        clean.isEmpty ? 'Unknown' : _titleCase(clean),
+        style: const TextStyle(
+          color: BuyerColors.primary,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return RefreshIndicator(
+      color: BuyerColors.primary,
+      onRefresh: _loadOrders,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          Icon(icon, size: 15, color: textColor),
-
-          const SizedBox(width: 5),
-
+          SizedBox(height: MediaQuery.of(context).size.height * 0.18),
+          const Icon(
+            Icons.cloud_off_outlined,
+            size: 56,
+            color: BuyerColors.textGrey,
+          ),
+          const SizedBox(height: 14),
           Text(
-            status,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: textColor,
+            errorMessage ?? 'Unable to load orders.',
+            textAlign: TextAlign.center,
+            style: BuyerStyle.body,
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: ElevatedButton(
+              style: BuyerStyle.primaryButton,
+              onPressed: _loadOrders,
+              child: const Text('Try Again'),
             ),
           ),
         ],
@@ -402,103 +272,63 @@ class _OrderHistoryState extends State<OrderHistory> {
     );
   }
 
-  // ================================================================
-  // ERROR STATE
-  // ================================================================
-
-  Widget _buildErrorState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(30),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              height: 88,
-              width: 88,
-              decoration: BuyerStyle.iconContainer(),
-              child: const Icon(
-                Icons.error_outline_rounded,
-                color: BuyerColors.danger,
-                size: 42,
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            const Text(
-              "Unable to load orders",
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                color: BuyerColors.textDark,
-              ),
-            ),
-
-            const SizedBox(height: 8),
-
-            Text(
-              errorMessage ?? "Something went wrong.",
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                height: 1.5,
-                color: BuyerColors.textGrey,
-              ),
-            ),
-          ],
-        ),
+  Widget _buildEmptyState() {
+    return RefreshIndicator(
+      color: BuyerColors.primary,
+      onRefresh: _loadOrders,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(height: MediaQuery.of(context).size.height * 0.18),
+          const Icon(
+            Icons.receipt_long_outlined,
+            size: 62,
+            color: BuyerColors.textGrey,
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'No orders yet',
+            textAlign: TextAlign.center,
+            style: BuyerStyle.sectionTitle,
+          ),
+          const SizedBox(height: 7),
+          const Text(
+            'Your BiliHub orders will appear here.',
+            textAlign: TextAlign.center,
+            style: BuyerStyle.small,
+          ),
+        ],
       ),
     );
   }
 
-  // ================================================================
-  // EMPTY STATE
-  // ================================================================
+  List<Map<String, dynamic>> _mapList(dynamic value) {
+    if (value is! List) return [];
+    return value
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(30),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              height: 88,
-              width: 88,
-              decoration: BuyerStyle.iconContainer(),
-              child: const Icon(
-                Icons.receipt_long_outlined,
-                color: BuyerColors.primary,
-                size: 42,
-              ),
-            ),
+  Map<String, dynamic> _map(dynamic value) {
+    return value is Map ? Map<String, dynamic>.from(value) : {};
+  }
 
-            const SizedBox(height: 20),
+  String _titleCase(String value) {
+    return value
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .map((word) => '${word[0].toUpperCase()}${word.substring(1)}')
+        .join(' ');
+  }
 
-            const Text(
-              "No orders yet",
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                color: BuyerColors.textDark,
-              ),
-            ),
-
-            const SizedBox(height: 8),
-
-            const Text(
-              "Your current and completed orders will appear here.",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.5,
-                color: BuyerColors.textGrey,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  String _friendlyDate(String value) {
+    final date = DateTime.tryParse(value)?.toLocal();
+    if (date == null) return value;
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
 }

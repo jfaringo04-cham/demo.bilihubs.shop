@@ -2,16 +2,52 @@ import 'package:flutter/material.dart';
 
 import '../../models/product_model.dart';
 import '../../sevices/cart_service.dart';
+import '../../sevices/api_services.dart';
 import '../../styles/buyer_style.dart';
 
 import 'checkout.dart';
 
-class ProductDetails extends StatelessWidget {
+class ProductDetails extends StatefulWidget {
   final ProductModel product;
 
   const ProductDetails({super.key, required this.product});
 
+  @override
+  State<ProductDetails> createState() => _ProductDetailsState();
+}
+
+class _ProductDetailsState extends State<ProductDetails> {
+  late ProductModel product;
+  bool isRefreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    product = widget.product;
+    _refreshProduct();
+  }
+
   bool get isOutOfStock => product.stock <= 0;
+
+  Future<void> _refreshProduct() async {
+    setState(() => isRefreshing = true);
+
+    final result = await ApiService.getProduct(widget.product.id);
+
+    if (!mounted) return;
+
+    if (result['success'] == true && result['data'] is Map) {
+      try {
+        product = ProductModel.fromJson(
+          Map<String, dynamic>.from(result['data'] as Map),
+        );
+      } catch (_) {
+        // Keep the product passed from the listing if parsing fails.
+      }
+    }
+
+    setState(() => isRefreshing = false);
+  }
 
   void _addToCart(BuildContext context) {
     if (isOutOfStock) {
@@ -133,6 +169,14 @@ class ProductDetails extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (isRefreshing) ...[
+                const LinearProgressIndicator(
+                  minHeight: 2,
+                  color: BuyerColors.primary,
+                  backgroundColor: BuyerColors.lightPurple,
+                ),
+                const SizedBox(height: 12),
+              ],
               // ========================================================
               // PRODUCT IMAGE
               // ========================================================
@@ -223,7 +267,7 @@ class ProductDetails extends StatelessWidget {
               // PRICE
               // ========================================================
               Text(
-                "₱${product.price.toStringAsFixed(2)}",
+                "₱${product.effectivePrice.toStringAsFixed(2)}",
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w800,
