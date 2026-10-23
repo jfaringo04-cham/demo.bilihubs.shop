@@ -2,15 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../sevices/api_services.dart';
 import '../../sevices/auth_storage.dart';
-
-import '../buyer/buyer_navigation.dart';
-import '../rider/rider_navigation.dart';
-import '../logistics/logistics_navigation.dart';
-
 import '../../styles/login_style.dart';
 
-import 'registration_page.dart';
+import '../buyer/buyer_navigation.dart';
+import '../logistics/logistics_navigation.dart';
+import '../rider/rider_navigation.dart';
+
 import 'forgot_password_page.dart';
+import 'registration_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -20,31 +19,31 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  // ------------------------------------------------------------
+  // ============================================================
   // FORM
-  // ------------------------------------------------------------
+  // ============================================================
 
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
-  // ------------------------------------------------------------
+  // ============================================================
   // CONTROLLERS
-  // ------------------------------------------------------------
+  // ============================================================
 
   final TextEditingController emailController = TextEditingController();
 
   final TextEditingController passwordController = TextEditingController();
 
-  // ------------------------------------------------------------
+  // ============================================================
   // FOCUS NODES
-  // ------------------------------------------------------------
+  // ============================================================
 
   final FocusNode emailFocusNode = FocusNode();
 
   final FocusNode passwordFocusNode = FocusNode();
 
-  // ------------------------------------------------------------
+  // ============================================================
   // STATE
-  // ------------------------------------------------------------
+  // ============================================================
 
   bool hidePassword = true;
 
@@ -52,30 +51,131 @@ class _LoginPageState extends State<LoginPage> {
 
   bool isLoading = false;
 
-  // ------------------------------------------------------------
+  bool isCheckingSession = true;
+
+  // ============================================================
+  // INITIALIZE
+  // ============================================================
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreSession();
+  }
+
+  // ============================================================
+  // RESTORE SAVED SESSION
+  // ============================================================
+
+  Future<void> _restoreSession() async {
+    try {
+      final bool shouldRemember = await AuthStorage.getRememberMe();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        rememberMe = shouldRemember;
+      });
+
+      if (!shouldRemember) {
+        setState(() {
+          isCheckingSession = false;
+        });
+
+        return;
+      }
+
+      final String? token = await AuthStorage.getToken();
+
+      final Map<String, dynamic>? user = await AuthStorage.getUser();
+
+      if (!mounted) {
+        return;
+      }
+
+      if (token == null || user == null || user.isEmpty) {
+        await AuthStorage.clearSession();
+
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          rememberMe = false;
+          isCheckingSession = false;
+        });
+
+        return;
+      }
+
+      final Widget? destination = _destinationForUser(user);
+
+      if (destination == null) {
+        await AuthStorage.clearSession();
+
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          rememberMe = false;
+          isCheckingSession = false;
+        });
+
+        return;
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      _openAuthenticatedPage(destination);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        isCheckingSession = false;
+      });
+    }
+  }
+
+  // ============================================================
   // LOGIN
-  // ------------------------------------------------------------
+  // ============================================================
 
   Future<void> login() async {
     FocusScope.of(context).unfocus();
 
-    if (isLoading) return;
+    if (isLoading) {
+      return;
+    }
 
-    final isValid = _formKey.currentState?.validate() ?? false;
+    final bool isValid = _formKey.currentState?.validate() ?? false;
 
-    if (!isValid) return;
+    if (!isValid) {
+      return;
+    }
 
-    final email = emailController.text.trim().toLowerCase();
+    final String email = emailController.text.trim().toLowerCase();
 
-    final password = passwordController.text;
+    final String password = passwordController.text;
 
     setState(() {
       isLoading = true;
     });
 
-    final result = await ApiService.login(email: email, password: password);
+    final Map<String, dynamic> result = await ApiService.login(
+      email: email,
+      password: password,
+    );
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     setState(() {
       isLoading = false;
@@ -87,154 +187,180 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    final user = result['user'];
-    final token = result['token'];
+    final dynamic rawUser = result['user'];
 
-    if (user is! Map || token == null || token.toString().isEmpty) {
+    final dynamic rawToken = result['token'];
+
+    if (rawUser is! Map ||
+        rawToken == null ||
+        rawToken.toString().trim().isEmpty) {
       showMessage('Invalid login data received from server.');
 
       return;
     }
 
-    final authenticatedUser = Map<String, dynamic>.from(user);
+    final Map<String, dynamic> authenticatedUser = Map<String, dynamic>.from(
+      rawUser,
+    );
 
-    await AuthStorage.saveToken(token.toString());
+    final String token = rawToken.toString().trim();
 
-    await AuthStorage.saveUser(authenticatedUser);
-
-    await AuthStorage.saveRememberMe(rememberMe);
-
-    final roles = user['roles'];
-
-    if (roles is! List || roles.isEmpty) {
-      showMessage('No account role found.');
-
-      return;
-    }
-
-    final firstRole = roles.first;
-
-    if (firstRole is! Map) {
-      showMessage('Invalid account role.');
-
-      return;
-    }
-
-    final role = firstRole['name']?.toString().toLowerCase();
-
-    Widget? destination;
-
-    switch (role) {
-      case 'buyer':
-        destination = BuyerNavigation(user: authenticatedUser);
-        break;
-
-      case 'rider':
-        destination = const RiderNavigation();
-        break;
-
-      case 'logistics':
-      case 'logistic_owner':
-        destination = const LogisticsNavigation();
-        break;
-
-      default:
-        destination = null;
-    }
+    final Widget? destination = _destinationForUser(authenticatedUser);
 
     if (destination == null) {
-      await AuthStorage.clearSession();
-
-      if (!mounted) return;
       showMessage('This account role is not available in the mobile app.');
 
       return;
     }
 
-    openPage(destination);
-  }
+    await AuthStorage.saveSession(
+      token: token,
+      user: authenticatedUser,
+      rememberMe: rememberMe,
+    );
 
-  // ------------------------------------------------------------
-  // EMAIL VALIDATOR
-  // ------------------------------------------------------------
-
-  String? validateEmail(String? value) {
-    final input = value?.trim() ?? "";
-
-    if (input.isEmpty) {
-      return "Please enter your email";
+    if (!mounted) {
+      return;
     }
 
-    final emailRegex = RegExp(
+    _openAuthenticatedPage(destination);
+  }
+
+  // ============================================================
+  // DESTINATION BY ROLE
+  // ============================================================
+
+  Widget? _destinationForUser(Map<String, dynamic> user) {
+    final dynamic rawRoles = user['roles'];
+
+    if (rawRoles is! List || rawRoles.isEmpty) {
+      return null;
+    }
+
+    for (final dynamic rawRole in rawRoles) {
+      String role = '';
+
+      if (rawRole is Map) {
+        role = rawRole['name']?.toString().trim().toLowerCase() ?? '';
+      } else {
+        role = rawRole.toString().trim().toLowerCase();
+      }
+
+      switch (role) {
+        case 'buyer':
+          return BuyerNavigation(user: user);
+
+        case 'rider':
+          return const RiderNavigation();
+
+        case 'logistics':
+        case 'logistic':
+        case 'logistic_owner':
+          return const LogisticsNavigation();
+      }
+    }
+
+    return null;
+  }
+
+  // ============================================================
+  // EMAIL VALIDATOR
+  // ============================================================
+
+  String? validateEmail(String? value) {
+    final String input = value?.trim() ?? '';
+
+    if (input.isEmpty) {
+      return 'Please enter your email';
+    }
+
+    final RegExp emailRegex = RegExp(
       r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$',
     );
 
     if (!emailRegex.hasMatch(input)) {
-      return "Please enter a valid email address";
+      return 'Please enter a valid email address';
     }
 
     return null;
   }
 
-  // ------------------------------------------------------------
+  // ============================================================
   // PASSWORD VALIDATOR
-  // ------------------------------------------------------------
+  // ============================================================
 
   String? validatePassword(String? value) {
     if (value == null || value.isEmpty) {
-      return "Please enter your password";
+      return 'Please enter your password';
     }
 
     if (value.length < 6) {
-      return "Password must contain at least 6 characters";
+      return 'Password must contain at least 6 characters';
     }
 
     return null;
   }
 
-  // ------------------------------------------------------------
-  // OPEN PAGE
-  // ------------------------------------------------------------
+  // ============================================================
+  // OPEN AUTHENTICATED PAGE
+  // ============================================================
 
-  void openPage(Widget page) {
-    Navigator.pushReplacement(
+  void _openAuthenticatedPage(Widget page) {
+    Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (context) => page),
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) {
+          return page;
+        },
+      ),
+      (Route<dynamic> route) {
+        return false;
+      },
     );
   }
 
-  // ------------------------------------------------------------
+  // ============================================================
   // OPEN REGISTRATION
-  // ------------------------------------------------------------
+  // ============================================================
 
   void openRegister() {
     FocusScope.of(context).unfocus();
 
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => const RegistrationPage()),
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) {
+          return const RegistrationPage();
+        },
+      ),
     );
   }
 
-  // ------------------------------------------------------------
+  // ============================================================
   // FORGOT PASSWORD
-  // ------------------------------------------------------------
+  // ============================================================
 
   void forgotPassword() {
     FocusScope.of(context).unfocus();
 
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => const ForgotPasswordPage()),
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) {
+          return const ForgotPasswordPage();
+        },
+      ),
     );
   }
 
-  // ------------------------------------------------------------
+  // ============================================================
   // MESSAGE
-  // ------------------------------------------------------------
+  // ============================================================
 
   void showMessage(String message) {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -251,69 +377,66 @@ class _LoginPageState extends State<LoginPage> {
       );
   }
 
-  // ------------------------------------------------------------
+  // ============================================================
   // BUILD
-  // ------------------------------------------------------------
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
+    if (isCheckingSession) {
+      return const Scaffold(
+        backgroundColor: LoginColors.background,
+        body: Center(
+          child: CircularProgressIndicator(color: LoginColors.primary),
+        ),
+      );
+    }
 
-    final horizontalPadding = screenSize.width < 360 ? 16.0 : 22.0;
+    final Size screenSize = MediaQuery.sizeOf(context);
+
+    final double horizontalPadding = screenSize.width < 360 ? 16 : 22;
 
     return Scaffold(
       backgroundColor: LoginColors.background,
-
       body: SafeArea(
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-
           onTap: () {
             FocusScope.of(context).unfocus();
           },
-
           child: LayoutBuilder(
-            builder: (context, constraints) {
+            builder: (BuildContext context, BoxConstraints constraints) {
               return SingleChildScrollView(
                 keyboardDismissBehavior:
                     ScrollViewKeyboardDismissBehavior.onDrag,
-
                 padding: EdgeInsets.symmetric(
                   horizontal: horizontalPadding,
                   vertical: 24,
                 ),
-
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
                     minHeight: constraints.maxHeight > 48
                         ? constraints.maxHeight - 48
                         : 0,
                   ),
-
                   child: Center(
                     child: Container(
                       width: double.infinity,
-
                       constraints: const BoxConstraints(maxWidth: 430),
-
                       padding: EdgeInsets.symmetric(
                         horizontal: screenSize.width < 360 ? 18 : 24,
                         vertical: 28,
                       ),
-
                       decoration: LoginStyle.card,
-
                       child: AutofillGroup(
                         child: Form(
                           key: _formKey,
-
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
-
                             children: [
-                              // --------------------------------
+                              // ==================================================
                               // LOGO
-                              // --------------------------------
+                              // ==================================================
 
                               Center(
                                 child: Image.asset(
@@ -325,28 +448,28 @@ class _LoginPageState extends State<LoginPage> {
 
                               const SizedBox(height: 32),
 
-                              // --------------------------------
+                              // ==================================================
                               // WELCOME
-                              // --------------------------------
+                              // ==================================================
                               const Text(
-                                "Welcome Back",
+                                'Welcome Back',
                                 style: LoginStyle.title,
                               ),
 
                               const SizedBox(height: 7),
 
                               const Text(
-                                "Login to continue to BiliHub",
+                                'Login to continue to BiliHub',
                                 style: LoginStyle.subtitle,
                               ),
 
                               const SizedBox(height: 28),
 
-                              // --------------------------------
+                              // ==================================================
                               // EMAIL
-                              // --------------------------------
+                              // ==================================================
                               const Text(
-                                "Email Address",
+                                'Email Address',
                                 style: LoginStyle.sectionTitle,
                               ),
 
@@ -365,22 +488,22 @@ class _LoginPageState extends State<LoginPage> {
                                 autocorrect: false,
                                 style: LoginStyle.inputText,
                                 validator: validateEmail,
-                                onFieldSubmitted: (_) {
+                                onFieldSubmitted: (String value) {
                                   passwordFocusNode.requestFocus();
                                 },
                                 decoration: LoginStyle.inputDecoration(
-                                  hint: "Enter your email address",
+                                  hint: 'Enter your email address',
                                   icon: Icons.mail_outline_rounded,
                                 ),
                               ),
 
                               const SizedBox(height: 20),
 
-                              // --------------------------------
+                              // ==================================================
                               // PASSWORD
-                              // --------------------------------
+                              // ==================================================
                               const Text(
-                                "Password",
+                                'Password',
                                 style: LoginStyle.sectionTitle,
                               ),
 
@@ -398,18 +521,18 @@ class _LoginPageState extends State<LoginPage> {
                                 enableSuggestions: false,
                                 style: LoginStyle.inputText,
                                 validator: validatePassword,
-                                onFieldSubmitted: (_) {
+                                onFieldSubmitted: (String value) {
                                   login();
                                 },
                                 decoration:
                                     LoginStyle.inputDecoration(
-                                      hint: "Enter your password",
+                                      hint: 'Enter your password',
                                       icon: Icons.lock_outline_rounded,
                                     ).copyWith(
                                       suffixIcon: IconButton(
                                         tooltip: hidePassword
-                                            ? "Show password"
-                                            : "Hide password",
+                                            ? 'Show password'
+                                            : 'Hide password',
                                         splashRadius: 20,
                                         icon: Icon(
                                           hidePassword
@@ -431,9 +554,9 @@ class _LoginPageState extends State<LoginPage> {
 
                               const SizedBox(height: 10),
 
-                              // --------------------------------
+                              // ==================================================
                               // REMEMBER + FORGOT PASSWORD
-                              // --------------------------------
+                              // ==================================================
                               Row(
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
@@ -451,7 +574,7 @@ class _LoginPageState extends State<LoginPage> {
                                       ),
                                       onChanged: isLoading
                                           ? null
-                                          : (value) {
+                                          : (bool? value) {
                                               setState(() {
                                                 rememberMe = value ?? false;
                                               });
@@ -469,7 +592,7 @@ class _LoginPageState extends State<LoginPage> {
                                               });
                                             },
                                       child: const Text(
-                                        "Remember me",
+                                        'Remember me',
                                         style: LoginStyle.rememberText,
                                         overflow: TextOverflow.ellipsis,
                                       ),
@@ -491,7 +614,7 @@ class _LoginPageState extends State<LoginPage> {
                                             MaterialTapTargetSize.shrinkWrap,
                                       ),
                                       child: const Text(
-                                        "Forgot Password?",
+                                        'Forgot Password?',
                                         style: LoginStyle.forgotPasswordText,
                                         overflow: TextOverflow.ellipsis,
                                       ),
@@ -502,9 +625,9 @@ class _LoginPageState extends State<LoginPage> {
 
                               const SizedBox(height: 20),
 
-                              // --------------------------------
+                              // ==================================================
                               // LOGIN BUTTON
-                              // --------------------------------
+                              // ==================================================
                               SizedBox(
                                 width: double.infinity,
                                 height: 52,
@@ -515,7 +638,7 @@ class _LoginPageState extends State<LoginPage> {
                                     duration: const Duration(milliseconds: 200),
                                     child: isLoading
                                         ? const SizedBox(
-                                            key: ValueKey("loading"),
+                                            key: ValueKey<String>('loading'),
                                             width: 22,
                                             height: 22,
                                             child: CircularProgressIndicator(
@@ -524,8 +647,8 @@ class _LoginPageState extends State<LoginPage> {
                                             ),
                                           )
                                         : const Text(
-                                            "Login",
-                                            key: ValueKey("login-text"),
+                                            'Login',
+                                            key: ValueKey<String>('login-text'),
                                             style: LoginStyle.buttonText,
                                           ),
                                   ),
@@ -534,25 +657,23 @@ class _LoginPageState extends State<LoginPage> {
 
                               const SizedBox(height: 22),
 
-                              // --------------------------------
+                              // ==================================================
                               // DIVIDER
-                              // --------------------------------
+                              // ==================================================
                               const Row(
                                 children: [
                                   Expanded(
                                     child: Divider(color: LoginColors.border),
                                   ),
-
                                   Padding(
                                     padding: EdgeInsets.symmetric(
                                       horizontal: 12,
                                     ),
                                     child: Text(
-                                      "OR",
+                                      'OR',
                                       style: LoginStyle.dividerText,
                                     ),
                                   ),
-
                                   Expanded(
                                     child: Divider(color: LoginColors.border),
                                   ),
@@ -561,9 +682,9 @@ class _LoginPageState extends State<LoginPage> {
 
                               const SizedBox(height: 22),
 
-                              // --------------------------------
-                              // REGISTER BUTTON
-                              // --------------------------------
+                              // ==================================================
+                              // REGISTER
+                              // ==================================================
                               SizedBox(
                                 width: double.infinity,
                                 height: 52,
@@ -571,7 +692,7 @@ class _LoginPageState extends State<LoginPage> {
                                   onPressed: isLoading ? null : openRegister,
                                   style: LoginStyle.secondaryButton,
                                   child: const Text(
-                                    "Create an Account",
+                                    'Create an Account',
                                     style: LoginStyle.registerText,
                                   ),
                                 ),
@@ -579,12 +700,12 @@ class _LoginPageState extends State<LoginPage> {
 
                               const SizedBox(height: 24),
 
-                              // --------------------------------
+                              // ==================================================
                               // FOOTER
-                              // --------------------------------
+                              // ==================================================
                               const Center(
                                 child: Text(
-                                  "Shop smart. Shop with BiliHub.",
+                                  'Shop smart. Shop with BiliHub.',
                                   textAlign: TextAlign.center,
                                   style: LoginStyle.footerText,
                                 ),
@@ -604,9 +725,9 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // ------------------------------------------------------------
+  // ============================================================
   // DISPOSE
-  // ------------------------------------------------------------
+  // ============================================================
 
   @override
   void dispose() {

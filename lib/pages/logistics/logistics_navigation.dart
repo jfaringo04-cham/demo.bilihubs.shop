@@ -17,9 +17,8 @@ class LogisticsNavigation extends StatefulWidget {
 
 class _LogisticsNavigationState extends State<LogisticsNavigation> {
   int currentIndex = 0;
-  late final List<Widget> pages;
 
-  final List<BottomNavItem> items = const [
+  final List<BottomNavItem> items = [
     BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
     BottomNavItem(icon: Icons.qr_code_scanner, label: 'Scanner'),
     BottomNavItem(icon: Icons.location_on_outlined, label: 'Tracking'),
@@ -27,27 +26,63 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
     BottomNavItem(icon: Icons.person_outline, label: 'Profile'),
   ];
 
-  @override
-  void initState() {
-    super.initState();
-    pages = [
-      LogisticsHome(onOpenScanner: () => _changeTab(1)),
-      const ParcelScanner(),
-      const TrackingMap(),
-      const ParcelList(),
-      const LogisticsProfile(),
-    ];
-  }
+  // ============================================================
+  // CHANGE TAB
+  // ============================================================
 
   void _changeTab(int index) {
-    if (index < 0 || index >= items.length || index == currentIndex) return;
-    setState(() => currentIndex = index);
+    if (index < 0 || index >= items.length || index == currentIndex) {
+      return;
+    }
+
+    setState(() {
+      currentIndex = index;
+    });
   }
+
+  // ============================================================
+  // BUILD CURRENT PAGE
+  // ============================================================
+
+  Widget _buildCurrentPage() {
+    switch (currentIndex) {
+      case 0:
+        return LogisticsHome(
+          onOpenScanner: () {
+            _changeTab(1);
+          },
+        );
+
+      case 1:
+        return const ParcelScanner();
+
+      case 2:
+        return const TrackingMap();
+
+      case 3:
+        return const ParcelList();
+
+      case 4:
+        return const LogisticsProfile();
+
+      default:
+        return LogisticsHome(
+          onOpenScanner: () {
+            _changeTab(1);
+          },
+        );
+    }
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: currentIndex, children: pages),
+      body: _buildCurrentPage(),
+
       bottomNavigationBar: BottomNav(
         currentIndex: currentIndex,
         items: items,

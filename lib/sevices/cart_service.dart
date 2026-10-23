@@ -8,8 +8,12 @@ class CartItem {
 
   CartItem({required this.product, this.quantity = 1});
 
+  double get unitPrice {
+    return product.sellingPrice;
+  }
+
   double get subtotal {
-    return product.effectivePrice * quantity;
+    return unitPrice * quantity;
   }
 }
 

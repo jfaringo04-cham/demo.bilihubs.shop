@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../styles/registration_style.dart';
-import '../../sevices/api_services.dart';
+
+import 'buyer_registration.dart' as buyer;
+import 'logistics_registration.dart';
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({super.key});
@@ -12,942 +13,485 @@ class RegistrationPage extends StatefulWidget {
 }
 
 class _RegistrationPageState extends State<RegistrationPage> {
-  // ------------------------------------------------------------
-  // FORM
-  // ------------------------------------------------------------
+  late final PageController _pageController;
 
-  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  // 0 = Logistics
+  // 1 = Buyer
+  // 2 = Rider
+  //
+  // Buyer is shown first/default.
+  int _currentPage = 1;
 
-  // ------------------------------------------------------------
-  // CONTROLLERS
-  // ------------------------------------------------------------
+  final List<_RegistrationRole> _roles = const [
+    _RegistrationRole(
+      title: 'Logistics',
+      subtitle: 'Manage parcel operations',
+      description: 'Register your logistics company to manage hubs, riders, parcels, and delivery operations.',
+      icon: Icons.local_shipping_outlined,
+      benefits: [
+        'Manage logistics operations',
+        'Track parcel movement',
+        'Manage riders',
+        'Handle shipment processing',
+      ],
+    ),
+    _RegistrationRole(
+      title: 'Buyer',
+      subtitle: 'Shop with BiliHub',
+      description: 'Create a Buyer account to browse products, place orders, and track your purchases.',
+      icon: Icons.shopping_bag_outlined,
+      benefits: [
+        'Browse available products',
+        'Add products to cart',
+        'Place and track orders',
+        'Manage your Buyer profile',
+      ],
+    ),
+    _RegistrationRole(
+      title: 'Rider',
+      subtitle: 'Deliver with BiliHub',
+      description: 'Rider accounts are created and managed by an approved BiliHub Logistics account.',
+      icon: Icons.delivery_dining_outlined,
+      benefits: [
+        'Manage assigned deliveries',
+        'Scan parcel waybills',
+        'Track delivery earnings',
+        'Update parcel status',
+      ],
+    ),
+  ];
 
-  final TextEditingController firstNameController = TextEditingController();
+  @override
+  void initState() {
+    super.initState();
 
-  final TextEditingController lastNameController = TextEditingController();
-
-  final TextEditingController emailController = TextEditingController();
-
-  final TextEditingController phoneController = TextEditingController();
-
-  final TextEditingController addressController = TextEditingController();
-
-  final TextEditingController passwordController = TextEditingController();
-
-  final TextEditingController confirmPasswordController =
-      TextEditingController();
-
-  // ------------------------------------------------------------
-  // FOCUS NODES
-  // ------------------------------------------------------------
-
-  final FocusNode firstNameFocusNode = FocusNode();
-  final FocusNode lastNameFocusNode = FocusNode();
-  final FocusNode emailFocusNode = FocusNode();
-  final FocusNode phoneFocusNode = FocusNode();
-  final FocusNode addressFocusNode = FocusNode();
-  final FocusNode passwordFocusNode = FocusNode();
-  final FocusNode confirmPasswordFocusNode = FocusNode();
-
-  // ------------------------------------------------------------
-  // STATE
-  // ------------------------------------------------------------
-
-  bool hidePassword = true;
-  bool hideConfirmPassword = true;
-  bool agreeToTerms = false;
-  bool showTermsError = false;
-  bool isLoading = false;
-
-  // ------------------------------------------------------------
-  // REGISTER
-  // ------------------------------------------------------------
-
-  Future<void> registerBuyer() async {
-    FocusScope.of(context).unfocus();
-
-    if (isLoading) return;
-
-    final isFormValid = _formKey.currentState?.validate() ?? false;
-
-    setState(() {
-      showTermsError = !agreeToTerms;
-    });
-
-    if (!isFormValid || !agreeToTerms) {
-      return;
-    }
-
-    final firstName = firstNameController.text.trim();
-    final lastName = lastNameController.text.trim();
-    final email = emailController.text.trim().toLowerCase();
-    final phone = phoneController.text.trim();
-    final password = passwordController.text;
-
-    setState(() {
-      isLoading = true;
-    });
-
-    final result = await ApiService.registerBuyer(
-      firstName: firstName,
-      lastName: lastName,
-      email: email,
-      phone: phone,
-      password: password,
-    );
-
-    if (!mounted) return;
-
-    setState(() {
-      isLoading = false;
-    });
-
-    if (result['success'] != true) {
-      showMessage(
-        result['message']?.toString() ?? 'Unable to submit registration.',
-      );
-      return;
-    }
-
-    showMessage(
-      result['message']?.toString() ??
-          'Registration submitted. Please wait for account approval.',
-      isSuccess: true,
-    );
-
-    await Future.delayed(const Duration(milliseconds: 900));
-
-    if (!mounted) return;
-    Navigator.pop(context);
+    _pageController = PageController(initialPage: 1, viewportFraction: 0.84);
   }
 
-  // ------------------------------------------------------------
-  // VALIDATORS
-  // ------------------------------------------------------------
-
-  String? validateFirstName(String? value) {
-    final input = value?.trim() ?? "";
-
-    if (input.isEmpty) {
-      return "Please enter your first name";
-    }
-
-    if (input.length < 2) {
-      return "First name is too short";
-    }
-
-    return null;
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
   }
 
-  String? validateLastName(String? value) {
-    final input = value?.trim() ?? "";
+  // ============================================================
+  // OPEN SELECTED REGISTRATION
+  // ============================================================
 
-    if (input.isEmpty) {
-      return "Please enter your last name";
+  void _openSelectedRegistration() {
+    switch (_currentPage) {
+      // --------------------------------------------------------
+      // LOGISTICS
+      // --------------------------------------------------------
+
+      case 0:
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const LogisticsRegistrationPage()),
+        );
+        break;
+
+      // --------------------------------------------------------
+      // BUYER
+      // --------------------------------------------------------
+
+      case 1:
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const buyer.RegistrationPage()),
+        );
+        break;
+
+      // --------------------------------------------------------
+      // RIDER
+      //
+      // Rider accounts should not be created publicly.
+      // An approved Logistics account creates Rider accounts.
+      // --------------------------------------------------------
+
+      case 2:
+        _showRiderInformation();
+        break;
     }
-
-    if (input.length < 2) {
-      return "Last name is too short";
-    }
-
-    return null;
   }
 
-  String? validateEmail(String? value) {
-    final input = value?.trim() ?? "";
+  // ============================================================
+  // RIDER INFORMATION
+  // ============================================================
 
-    if (input.isEmpty) {
-      return "Please enter your email address";
-    }
-
-    final emailRegex = RegExp(
-      r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$',
-    );
-
-    if (!emailRegex.hasMatch(input)) {
-      return "Please enter a valid email address";
-    }
-
-    return null;
-  }
-
-  String? validatePhone(String? value) {
-    final input = value?.trim() ?? "";
-
-    if (input.isEmpty) {
-      return "Please enter your phone number";
-    }
-
-    final phoneRegex = RegExp(r'^09\d{9}$');
-
-    if (!phoneRegex.hasMatch(input)) {
-      return "Use format 09XXXXXXXXX";
-    }
-
-    return null;
-  }
-
-  String? validateAddress(String? value) {
-    final input = value?.trim() ?? "";
-
-    if (input.isNotEmpty && input.length < 8) {
-      return "Please enter a more complete address";
-    }
-
-    return null;
-  }
-
-  String? validatePassword(String? value) {
-    if (value == null || value.isEmpty) {
-      return "Please create a password";
-    }
-
-    if (value.length < 8) {
-      return "Password must contain at least 8 characters";
-    }
-
-    return null;
-  }
-
-  String? validateConfirmPassword(String? value) {
-    if (value == null || value.isEmpty) {
-      return "Please confirm your password";
-    }
-
-    if (value != passwordController.text) {
-      return "Passwords do not match";
-    }
-
-    return null;
-  }
-
-  // ------------------------------------------------------------
-  // MESSAGE
-  // ------------------------------------------------------------
-
-  void showMessage(String message, {bool isSuccess = false}) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Row(
+  Future<void> _showRiderInformation() async {
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Row(
             children: [
               Icon(
-                isSuccess
-                    ? Icons.check_circle_outline_rounded
-                    : Icons.info_outline_rounded,
-                color: Colors.white,
-                size: 21,
+                Icons.delivery_dining_outlined,
+                color: RegistrationColors.primary,
               ),
-
-              const SizedBox(width: 10),
-
-              Expanded(child: Text(message)),
+              SizedBox(width: 10),
+              Expanded(child: Text('Rider Registration')),
             ],
           ),
-
-          behavior: SnackBarBehavior.floating,
-
-          backgroundColor: isSuccess
-              ? RegistrationColors.success
-              : RegistrationColors.textDark,
-
-          margin: const EdgeInsets.all(16),
-
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+          content: const Text(
+            'Rider accounts cannot be registered directly from this page.\n\n'
+            'An approved BiliHub Logistics account must create the Rider account. '
+            'After the Rider account is created, the rider will receive an activation link '
+            'to set up their account and password.',
+            style: TextStyle(height: 1.5, color: RegistrationColors.textDark),
           ),
-        ),
-      );
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+              },
+              child: const Text(
+                'Got it',
+                style: TextStyle(
+                  color: RegistrationColors.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
-  // ------------------------------------------------------------
+  // ============================================================
+  // BUTTON TEXT
+  // ============================================================
+
+  String _buttonText() {
+    switch (_currentPage) {
+      case 0:
+        return 'Register as Logistics';
+
+      case 1:
+        return 'Register as Buyer';
+
+      case 2:
+        return 'Rider Account Information';
+
+      default:
+        return 'Continue';
+    }
+  }
+
+  // ============================================================
+  // BUTTON ICON
+  // ============================================================
+
+  IconData _buttonIcon() {
+    switch (_currentPage) {
+      case 0:
+        return Icons.local_shipping_outlined;
+
+      case 1:
+        return Icons.shopping_bag_outlined;
+
+      case 2:
+        return Icons.info_outline_rounded;
+
+      default:
+        return Icons.arrow_forward_rounded;
+    }
+  }
+
+  // ============================================================
   // BUILD
-  // ------------------------------------------------------------
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
-
-    final horizontalPadding = screenSize.width < 360 ? 16.0 : 22.0;
-
     return Scaffold(
       backgroundColor: RegistrationColors.background,
 
       appBar: AppBar(
         backgroundColor: RegistrationColors.background,
-
         elevation: 0,
-
         scrolledUnderElevation: 0,
-
         centerTitle: true,
-
         leading: IconButton(
-          tooltip: "Back",
-
+          tooltip: 'Back',
+          onPressed: () {
+            Navigator.pop(context);
+          },
           icon: const Icon(
             Icons.arrow_back_ios_new_rounded,
             color: RegistrationColors.textDark,
             size: 20,
           ),
-
-          onPressed: isLoading
-              ? null
-              : () {
-                  Navigator.pop(context);
-                },
         ),
-
         title: const Text(
-          "Create Account",
+          'Create Account',
           style: RegistrationStyle.appBarTitle,
         ),
       ),
 
       body: SafeArea(
         top: false,
+        child: Column(
+          children: [
+            const SizedBox(height: 16),
 
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-
-          onTap: () {
-            FocusScope.of(context).unfocus();
-          },
-
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-
-                padding: EdgeInsets.fromLTRB(
-                  horizontalPadding,
-                  10,
-                  horizontalPadding,
-                  24,
-                ),
-
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight - 34,
+            // ==================================================
+            // HEADER
+            // ==================================================
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                children: [
+                  Text(
+                    'Join BiliHub',
+                    textAlign: TextAlign.center,
+                    style: RegistrationStyle.title,
                   ),
-
-                  child: Center(
-                    child: Container(
-                      width: double.infinity,
-
-                      constraints: const BoxConstraints(maxWidth: 430),
-
-                      padding: EdgeInsets.symmetric(
-                        horizontal: screenSize.width < 360 ? 18 : 24,
-                        vertical: 28,
-                      ),
-
-                      decoration: RegistrationStyle.card,
-
-                      child: AutofillGroup(
-                        child: Form(
-                          key: _formKey,
-
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-
-                            children: [
-                              // --------------------------------
-                              // LOGO
-                              // --------------------------------
-
-                              Center(
-                                child: Column(
-                                  children: [
-                                    Container(
-                                      height: 62,
-                                      width: 62,
-
-                                      decoration:
-                                          RegistrationStyle.logoContainer,
-
-                                      child: const Icon(
-                                        Icons.person_add_alt_1_outlined,
-                                        color: RegistrationColors.primary,
-                                        size: 31,
-                                      ),
-                                    ),
-
-                                    const SizedBox(height: 12),
-
-                                    const Text(
-                                      "BiliHub",
-                                      style: RegistrationStyle.logo,
-                                    ),
-                                  ],
-                                ),
-                              ),
-
-                              const SizedBox(height: 28),
-
-                              // --------------------------------
-                              // TITLE
-                              // --------------------------------
-                              const Text(
-                                "Create your account",
-                                style: RegistrationStyle.title,
-                              ),
-
-                              const SizedBox(height: 7),
-
-                              const Text(
-                                "Register as a buyer and start shopping with BiliHub.",
-                                style: RegistrationStyle.subtitle,
-                              ),
-
-                              const SizedBox(height: 28),
-
-                              // --------------------------------
-                              // FIRST NAME
-                              // --------------------------------
-                              const Text(
-                                "First Name",
-                                style: RegistrationStyle.sectionTitle,
-                              ),
-
-                              const SizedBox(height: 8),
-
-                              TextFormField(
-                                controller: firstNameController,
-
-                                focusNode: firstNameFocusNode,
-
-                                enabled: !isLoading,
-
-                                keyboardType: TextInputType.name,
-
-                                textCapitalization: TextCapitalization.words,
-
-                                textInputAction: TextInputAction.next,
-
-                                autofillHints: const [AutofillHints.givenName],
-
-                                style: RegistrationStyle.inputText,
-
-                                validator: validateFirstName,
-
-                                onFieldSubmitted: (_) {
-                                  lastNameFocusNode.requestFocus();
-                                },
-
-                                decoration: RegistrationStyle.inputDecoration(
-                                  hint: "Enter your first name",
-                                  icon: Icons.person_outline_rounded,
-                                ),
-                              ),
-
-                              const SizedBox(height: 18),
-
-                              // --------------------------------
-                              // LAST NAME
-                              // --------------------------------
-                              const Text(
-                                "Last Name",
-                                style: RegistrationStyle.sectionTitle,
-                              ),
-
-                              const SizedBox(height: 8),
-
-                              TextFormField(
-                                controller: lastNameController,
-
-                                focusNode: lastNameFocusNode,
-
-                                enabled: !isLoading,
-
-                                keyboardType: TextInputType.name,
-
-                                textCapitalization: TextCapitalization.words,
-
-                                textInputAction: TextInputAction.next,
-
-                                autofillHints: const [AutofillHints.familyName],
-
-                                style: RegistrationStyle.inputText,
-
-                                validator: validateLastName,
-
-                                onFieldSubmitted: (_) {
-                                  emailFocusNode.requestFocus();
-                                },
-
-                                decoration: RegistrationStyle.inputDecoration(
-                                  hint: "Enter your last name",
-                                  icon: Icons.person_outline_rounded,
-                                ),
-                              ),
-
-                              const SizedBox(height: 18),
-
-                              // --------------------------------
-                              // EMAIL
-                              // --------------------------------
-                              const Text(
-                                "Email Address",
-                                style: RegistrationStyle.sectionTitle,
-                              ),
-
-                              const SizedBox(height: 8),
-
-                              TextFormField(
-                                controller: emailController,
-
-                                focusNode: emailFocusNode,
-
-                                enabled: !isLoading,
-
-                                keyboardType: TextInputType.emailAddress,
-
-                                textInputAction: TextInputAction.next,
-
-                                autofillHints: const [AutofillHints.email],
-
-                                autocorrect: false,
-
-                                style: RegistrationStyle.inputText,
-
-                                validator: validateEmail,
-
-                                onFieldSubmitted: (_) {
-                                  phoneFocusNode.requestFocus();
-                                },
-
-                                decoration: RegistrationStyle.inputDecoration(
-                                  hint: "Enter your email address",
-                                  icon: Icons.mail_outline_rounded,
-                                ),
-                              ),
-
-                              const SizedBox(height: 18),
-
-                              // --------------------------------
-                              // PHONE
-                              // --------------------------------
-                              const Text(
-                                "Phone Number",
-                                style: RegistrationStyle.sectionTitle,
-                              ),
-
-                              const SizedBox(height: 8),
-
-                              TextFormField(
-                                controller: phoneController,
-
-                                focusNode: phoneFocusNode,
-
-                                enabled: !isLoading,
-
-                                keyboardType: TextInputType.phone,
-
-                                textInputAction: TextInputAction.next,
-
-                                autofillHints: const [
-                                  AutofillHints.telephoneNumber,
-                                ],
-
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-
-                                  LengthLimitingTextInputFormatter(11),
-                                ],
-
-                                style: RegistrationStyle.inputText,
-
-                                validator: validatePhone,
-
-                                onFieldSubmitted: (_) {
-                                  addressFocusNode.requestFocus();
-                                },
-
-                                decoration: RegistrationStyle.inputDecoration(
-                                  hint: "09XXXXXXXXX",
-                                  icon: Icons.phone_outlined,
-                                ),
-                              ),
-
-                              const SizedBox(height: 18),
-
-                              // --------------------------------
-                              // ADDRESS
-                              // --------------------------------
-                              const Text(
-                                "Delivery Address (optional)",
-                                style: RegistrationStyle.sectionTitle,
-                              ),
-
-                              const SizedBox(height: 8),
-
-                              TextFormField(
-                                controller: addressController,
-
-                                focusNode: addressFocusNode,
-
-                                enabled: !isLoading,
-
-                                keyboardType: TextInputType.streetAddress,
-
-                                textCapitalization:
-                                    TextCapitalization.sentences,
-
-                                textInputAction: TextInputAction.newline,
-
-                                autofillHints: const [
-                                  AutofillHints.fullStreetAddress,
-                                ],
-
-                                minLines: 2,
-                                maxLines: 3,
-
-                                style: RegistrationStyle.inputText,
-
-                                validator: validateAddress,
-
-                                decoration: RegistrationStyle.inputDecoration(
-                                  hint: "You can complete your delivery address after login",
-                                  icon: Icons.location_on_outlined,
-                                ),
-                              ),
-
-                              const SizedBox(height: 18),
-
-                              // --------------------------------
-                              // PASSWORD
-                              // --------------------------------
-                              const Text(
-                                "Password",
-                                style: RegistrationStyle.sectionTitle,
-                              ),
-
-                              const SizedBox(height: 8),
-
-                              TextFormField(
-                                controller: passwordController,
-
-                                focusNode: passwordFocusNode,
-
-                                enabled: !isLoading,
-
-                                obscureText: hidePassword,
-
-                                keyboardType: TextInputType.visiblePassword,
-
-                                textInputAction: TextInputAction.next,
-
-                                autofillHints: const [
-                                  AutofillHints.newPassword,
-                                ],
-
-                                autocorrect: false,
-                                enableSuggestions: false,
-
-                                style: RegistrationStyle.inputText,
-
-                                validator: validatePassword,
-
-                                onFieldSubmitted: (_) {
-                                  confirmPasswordFocusNode.requestFocus();
-                                },
-
-                                decoration:
-                                    RegistrationStyle.inputDecoration(
-                                      hint: "Create a password",
-                                      icon: Icons.lock_outline_rounded,
-                                    ).copyWith(
-                                      suffixIcon: IconButton(
-                                        tooltip: hidePassword
-                                            ? "Show password"
-                                            : "Hide password",
-
-                                        icon: Icon(
-                                          hidePassword
-                                              ? Icons.visibility_off_outlined
-                                              : Icons.visibility_outlined,
-                                          color: RegistrationColors.textGrey,
-                                          size: 21,
-                                        ),
-
-                                        onPressed: isLoading
-                                            ? null
-                                            : () {
-                                                setState(() {
-                                                  hidePassword = !hidePassword;
-                                                });
-                                              },
-                                      ),
-                                    ),
-                              ),
-
-                              const SizedBox(height: 18),
-
-                              // --------------------------------
-                              // CONFIRM PASSWORD
-                              // --------------------------------
-                              const Text(
-                                "Confirm Password",
-                                style: RegistrationStyle.sectionTitle,
-                              ),
-
-                              const SizedBox(height: 8),
-
-                              TextFormField(
-                                controller: confirmPasswordController,
-
-                                focusNode: confirmPasswordFocusNode,
-
-                                enabled: !isLoading,
-
-                                obscureText: hideConfirmPassword,
-
-                                keyboardType: TextInputType.visiblePassword,
-
-                                textInputAction: TextInputAction.done,
-
-                                autofillHints: const [
-                                  AutofillHints.newPassword,
-                                ],
-
-                                autocorrect: false,
-                                enableSuggestions: false,
-
-                                style: RegistrationStyle.inputText,
-
-                                validator: validateConfirmPassword,
-
-                                onFieldSubmitted: (_) {
-                                  registerBuyer();
-                                },
-
-                                decoration:
-                                    RegistrationStyle.inputDecoration(
-                                      hint: "Re-enter your password",
-                                      icon: Icons.lock_reset_outlined,
-                                    ).copyWith(
-                                      suffixIcon: IconButton(
-                                        tooltip: hideConfirmPassword
-                                            ? "Show password"
-                                            : "Hide password",
-
-                                        icon: Icon(
-                                          hideConfirmPassword
-                                              ? Icons.visibility_off_outlined
-                                              : Icons.visibility_outlined,
-                                          color: RegistrationColors.textGrey,
-                                          size: 21,
-                                        ),
-
-                                        onPressed: isLoading
-                                            ? null
-                                            : () {
-                                                setState(() {
-                                                  hideConfirmPassword =
-                                                      !hideConfirmPassword;
-                                                });
-                                              },
-                                      ),
-                                    ),
-                              ),
-
-                              const SizedBox(height: 14),
-
-                              // --------------------------------
-                              // TERMS
-                              // --------------------------------
-                              InkWell(
-                                borderRadius: BorderRadius.circular(8),
-
-                                onTap: isLoading
-                                    ? null
-                                    : () {
-                                        setState(() {
-                                          agreeToTerms = !agreeToTerms;
-
-                                          if (agreeToTerms) {
-                                            showTermsError = false;
-                                          }
-                                        });
-                                      },
-
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                  ),
-
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-
-                                    children: [
-                                      SizedBox(
-                                        width: 24,
-                                        height: 24,
-
-                                        child: Checkbox(
-                                          value: agreeToTerms,
-
-                                          activeColor:
-                                              RegistrationColors.primary,
-
-                                          side: BorderSide(
-                                            color: showTermsError
-                                                ? RegistrationColors.error
-                                                : RegistrationColors.border,
-
-                                            width: 1.4,
-                                          ),
-
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              5,
-                                            ),
-                                          ),
-
-                                          onChanged: isLoading
-                                              ? null
-                                              : (value) {
-                                                  setState(() {
-                                                    agreeToTerms =
-                                                        value ?? false;
-
-                                                    if (agreeToTerms) {
-                                                      showTermsError = false;
-                                                    }
-                                                  });
-                                                },
-                                        ),
-                                      ),
-
-                                      const SizedBox(width: 10),
-
-                                      const Expanded(
-                                        child: Padding(
-                                          padding: EdgeInsets.only(top: 3),
-
-                                          child: Text(
-                                            "I agree to the Terms and Conditions and Privacy Policy.",
-                                            style: RegistrationStyle.termsText,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-
-                              if (showTermsError)
-                                const Padding(
-                                  padding: EdgeInsets.only(left: 34, top: 4),
-
-                                  child: Text(
-                                    "Please agree before creating your account",
-                                    style: RegistrationStyle.errorText,
-                                  ),
-                                ),
-
-                              const SizedBox(height: 22),
-
-                              // --------------------------------
-                              // CREATE ACCOUNT
-                              // --------------------------------
-                              SizedBox(
-                                width: double.infinity,
-                                height: 52,
-
-                                child: ElevatedButton(
-                                  onPressed: isLoading ? null : registerBuyer,
-
-                                  style: RegistrationStyle.primaryButton,
-
-                                  child: AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 200),
-
-                                    child: isLoading
-                                        ? const SizedBox(
-                                            key: ValueKey("loading"),
-
-                                            width: 22,
-                                            height: 22,
-
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2.2,
-                                              color: Colors.white,
-                                            ),
-                                          )
-                                        : const Text(
-                                            "Create Account",
-                                            key: ValueKey("create-account"),
-                                            style: RegistrationStyle.buttonText,
-                                          ),
-                                  ),
-                                ),
-                              ),
-
-                              const SizedBox(height: 20),
-
-                              // --------------------------------
-                              // BACK TO LOGIN
-                              // --------------------------------
-                              Center(
-                                child: TextButton(
-                                  onPressed: isLoading
-                                      ? null
-                                      : () {
-                                          Navigator.pop(context);
-                                        },
-
-                                  style: RegistrationStyle.textButton,
-
-                                  child: const Text(
-                                    "Already have an account? Login",
-                                    style: RegistrationStyle.loginLinkText,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Choose the type of account you want to create.',
+                    textAlign: TextAlign.center,
+                    style: RegistrationStyle.subtitle,
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // ==================================================
+            // CAROUSEL
+            // ==================================================
+            Expanded(
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: _roles.length,
+                onPageChanged: (int index) {
+                  setState(() {
+                    _currentPage = index;
+                  });
+                },
+                itemBuilder: (BuildContext context, int index) {
+                  final _RegistrationRole role = _roles[index];
+
+                  final bool selected = index == _currentPage;
+
+                  return AnimatedPadding(
+                    duration: const Duration(milliseconds: 220),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: selected ? 8 : 28,
+                    ),
+                    child: AnimatedScale(
+                      duration: const Duration(milliseconds: 220),
+                      scale: selected ? 1 : 0.94,
+                      child: AnimatedOpacity(
+                        duration: const Duration(milliseconds: 220),
+                        opacity: selected ? 1 : 0.68,
+                        child: _buildRoleCard(
+                          role,
+                          isRider: role.title == 'Rider',
                         ),
                       ),
                     ),
+                  );
+                },
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            // ==================================================
+            // PAGE INDICATOR
+            // ==================================================
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(_roles.length, (int index) {
+                final bool selected = index == _currentPage;
+
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: selected ? 24 : 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? RegistrationColors.primary
+                        : RegistrationColors.border,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                );
+              }),
+            ),
+
+            const SizedBox(height: 22),
+
+            // ==================================================
+            // CONTINUE BUTTON
+            // ==================================================
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+              child: SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: _openSelectedRegistration,
+                  style: RegistrationStyle.primaryButton,
+                  icon: Icon(_buttonIcon(), size: 20),
+                  label: Text(
+                    _buttonText(),
+                    style: RegistrationStyle.buttonText,
                   ),
                 ),
-              );
-            },
-          ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  // ------------------------------------------------------------
-  // DISPOSE
-  // ------------------------------------------------------------
+  // ============================================================
+  // ROLE CARD
+  // ============================================================
 
-  @override
-  void dispose() {
-    firstNameController.dispose();
-    lastNameController.dispose();
-    emailController.dispose();
-    phoneController.dispose();
-    addressController.dispose();
-    passwordController.dispose();
-    confirmPasswordController.dispose();
+  Widget _buildRoleCard(_RegistrationRole role, {required bool isRider}) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: RegistrationStyle.card,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // ----------------------------------------------------
+          // ICON
+          // ----------------------------------------------------
 
-    firstNameFocusNode.dispose();
-    lastNameFocusNode.dispose();
-    emailFocusNode.dispose();
-    phoneFocusNode.dispose();
-    addressFocusNode.dispose();
-    passwordFocusNode.dispose();
-    confirmPasswordFocusNode.dispose();
+          Container(
+            height: 82,
+            width: 82,
+            decoration: BoxDecoration(
+              color: RegistrationColors.lightPurple,
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Icon(role.icon, size: 42, color: RegistrationColors.primary),
+          ),
 
-    super.dispose();
+          const SizedBox(height: 22),
+
+          // ----------------------------------------------------
+          // TITLE
+          // ----------------------------------------------------
+          Text(
+            role.title,
+            textAlign: TextAlign.center,
+            style: RegistrationStyle.title,
+          ),
+
+          const SizedBox(height: 6),
+
+          Text(
+            role.subtitle,
+            textAlign: TextAlign.center,
+            style: RegistrationStyle.sectionTitle,
+          ),
+
+          const SizedBox(height: 14),
+
+          Text(
+            role.description,
+            textAlign: TextAlign.center,
+            style: RegistrationStyle.subtitle,
+          ),
+
+          const SizedBox(height: 24),
+
+          // ----------------------------------------------------
+          // BENEFITS
+          // ----------------------------------------------------
+          ...role.benefits.map((String benefit) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.check_circle_outline_rounded,
+                    size: 21,
+                    color: RegistrationColors.success,
+                  ),
+
+                  const SizedBox(width: 10),
+
+                  Expanded(
+                    child: Text(benefit, style: RegistrationStyle.termsText),
+                  ),
+                ],
+              ),
+            );
+          }),
+
+          // ----------------------------------------------------
+          // RIDER INFORMATION
+          // ----------------------------------------------------
+          if (isRider) ...[
+            const SizedBox(height: 8),
+
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: RegistrationColors.lightPurple,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    color: RegistrationColors.primary,
+                    size: 20,
+                  ),
+
+                  SizedBox(width: 8),
+
+                  Expanded(
+                    child: Text(
+                      'Rider accounts are created by an approved Logistics account. '
+                      'Direct public Rider registration is not available.',
+                      style: RegistrationStyle.termsText,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
+}
+
+// ============================================================
+// ROLE MODEL
+// ============================================================
+
+class _RegistrationRole {
+  final String title;
+  final String subtitle;
+  final String description;
+  final IconData icon;
+  final List<String> benefits;
+
+  const _RegistrationRole({
+    required this.title,
+    required this.subtitle,
+    required this.description,
+    required this.icon,
+    required this.benefits,
+  });
 }

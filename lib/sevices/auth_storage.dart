@@ -7,41 +7,53 @@ class AuthStorage {
 
   static const String _tokenKey = 'auth_token';
   static const String _userKey = 'auth_user';
-  static const String _rememberKey = 'remember_me';
+  static const String _rememberMeKey = 'remember_me';
 
   // ============================================================
   // TOKEN
   // ============================================================
 
-  // Save Laravel Sanctum token.
   static Future<void> saveToken(String token) async {
-    await _storage.write(key: _tokenKey, value: token);
+    final String normalizedToken = token.trim();
+
+    if (normalizedToken.isEmpty) {
+      return;
+    }
+
+    await _storage.write(key: _tokenKey, value: normalizedToken);
   }
 
-  // Get saved Laravel Sanctum token.
   static Future<String?> getToken() async {
-    return _storage.read(key: _tokenKey);
+    final String? token = await _storage.read(key: _tokenKey);
+
+    if (token == null || token.trim().isEmpty) {
+      return null;
+    }
+
+    return token.trim();
   }
 
   // ============================================================
   // USER
   // ============================================================
 
-  // Save logged-in user.
   static Future<void> saveUser(Map<String, dynamic> user) async {
+    if (user.isEmpty) {
+      return;
+    }
+
     await _storage.write(key: _userKey, value: jsonEncode(user));
   }
 
-  // Get logged-in user.
   static Future<Map<String, dynamic>?> getUser() async {
-    final userJson = await _storage.read(key: _userKey);
+    final String? userJson = await _storage.read(key: _userKey);
 
-    if (userJson == null || userJson.isEmpty) {
+    if (userJson == null || userJson.trim().isEmpty) {
       return null;
     }
 
     try {
-      final decoded = jsonDecode(userJson);
+      final dynamic decoded = jsonDecode(userJson);
 
       if (decoded is Map<String, dynamic>) {
         return decoded;
@@ -52,7 +64,7 @@ class AuthStorage {
       }
 
       return null;
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   }
@@ -61,57 +73,80 @@ class AuthStorage {
   // UPDATE USER
   // ============================================================
 
-  // Update fields of the saved logged-in user.
-  //
-  // Example:
-  // await AuthStorage.updateUser({
-  //   'name': 'Juan Dela Cruz',
-  //   'phone': '09123456789',
-  //   'address': 'Calamba, Laguna',
-  // });
   static Future<void> updateUser(Map<String, dynamic> updatedData) async {
-    final currentUser = await getUser();
+    if (updatedData.isEmpty) {
+      return;
+    }
+
+    final Map<String, dynamic>? currentUser = await getUser();
 
     if (currentUser == null) {
       return;
     }
 
-    final updatedUser = <String, dynamic>{...currentUser, ...updatedData};
+    final Map<String, dynamic> updatedUser = {...currentUser, ...updatedData};
 
     await saveUser(updatedUser);
   }
-
 
   // ============================================================
   // REMEMBER ME
   // ============================================================
 
-  static Future<void> saveRememberMe(bool value) async {
-    await _storage.write(key: _rememberKey, value: value ? '1' : '0');
+  static Future<void> setRememberMe(bool remember) async {
+    await _storage.write(
+      key: _rememberMeKey,
+      value: remember ? 'true' : 'false',
+    );
   }
 
   static Future<bool> getRememberMe() async {
-    final value = await _storage.read(key: _rememberKey);
-    return value == '1';
+    final String? value = await _storage.read(key: _rememberMeKey);
+
+    return value == 'true';
+  }
+
+  static Future<void> clearRememberMe() async {
+    await _storage.delete(key: _rememberMeKey);
   }
 
   // ============================================================
   // SESSION
   // ============================================================
 
-  // Check if user has a saved login session.
   static Future<bool> isLoggedIn() async {
-    final token = await getToken();
+    final String? token = await getToken();
 
-    return token != null && token.isNotEmpty;
+    final Map<String, dynamic>? user = await getUser();
+
+    return token != null && token.isNotEmpty && user != null && user.isNotEmpty;
   }
 
-  // Remove login session.
-  static Future<void> clearSession() async {
+  // ============================================================
+  // SAVE COMPLETE SESSION
+  // ============================================================
+
+  static Future<void> saveSession({
+    required String token,
+    required Map<String, dynamic> user,
+    required bool rememberMe,
+  }) async {
+    await saveToken(token);
+    await saveUser(user);
+    await setRememberMe(rememberMe);
+  }
+
+  // ============================================================
+  // CLEAR LOGIN SESSION
+  // ============================================================
+
+  static Future<void> clearSession({bool clearRememberMe = true}) async {
     await _storage.delete(key: _tokenKey);
 
     await _storage.delete(key: _userKey);
 
-    await _storage.delete(key: _rememberKey);
+    if (clearRememberMe) {
+      await _storage.delete(key: _rememberMeKey);
+    }
   }
 }

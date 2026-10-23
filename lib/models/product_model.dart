@@ -397,6 +397,28 @@ class ProductModel {
     return effectivePrice > 0 && effectivePrice < price;
   }
 
+  // ============================================================
+  // BUYER / SELLING PRICE
+  // ============================================================
+  //
+  // Ito ang gagamitin natin sa buong buyer flow:
+  // Product Details
+  // Cart
+  // Checkout
+  // Order summary
+  //
+  // Kapag may valid effectivePrice, iyon ang actual selling price.
+  // Kapag walang valid effectivePrice, fallback sa original price.
+  // ============================================================
+
+  double get sellingPrice {
+    if (effectivePrice > 0) {
+      return effectivePrice;
+    }
+
+    return price;
+  }
+
   bool get isInStock {
     return stock > 0;
   }
