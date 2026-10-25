@@ -37,7 +37,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   bool hideNewPassword = true;
   bool hideConfirmPassword = true;
 
-  String generatedCode = "";
+  String generatedCode = '';
 
   Timer? resendTimer;
   int resendSeconds = 0;
@@ -49,19 +49,23 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   Future<void> sendCode() async {
     FocusScope.of(context).unfocus();
 
-    final email = emailController.text.trim();
+    final String email = emailController.text.trim();
 
     if (email.isEmpty) {
-      showMessage("Please enter your email address.");
+      showMessage('Please enter your email address.');
+
       return;
     }
 
     if (!_isValidEmail(email)) {
-      showMessage("Please enter a valid email address.");
+      showMessage('Please enter a valid email address.');
+
       return;
     }
 
-    if (isSendingCode) return;
+    if (isSendingCode) {
+      return;
+    }
 
     setState(() {
       isSendingCode = true;
@@ -74,14 +78,16 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     // The backend will generate the code and send it through email.
     // ----------------------------------------------------------
 
-    final random = Random();
+    final Random random = Random();
 
     generatedCode = (100000 + random.nextInt(900000)).toString();
 
     // Temporary delay to simulate sending email.
     await Future.delayed(const Duration(seconds: 1));
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     setState(() {
       isSendingCode = false;
@@ -101,12 +107,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   void showVerificationDialog() {
     codeController.clear();
 
-    showDialog(
+    showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
+      builder: (BuildContext dialogContext) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (BuildContext context, StateSetter setDialogState) {
             return Dialog(
               backgroundColor: LoginColors.white,
               insetPadding: const EdgeInsets.symmetric(horizontal: 22),
@@ -142,7 +148,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     // TITLE
                     // ------------------------------------------------
                     const Text(
-                      "Verify Your Email",
+                      'Verify Your Email',
                       style: LoginStyle.title,
                       textAlign: TextAlign.center,
                     ),
@@ -154,7 +160,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     // ------------------------------------------------
                     Text(
                       "We've sent a verification code to\n"
-                      "${maskEmail(emailController.text.trim())}",
+                      '${maskEmail(emailController.text.trim())}',
                       textAlign: TextAlign.center,
                       style: LoginStyle.subtitle,
                     ),
@@ -177,8 +183,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                         color: LoginColors.textDark,
                       ),
                       decoration: InputDecoration(
-                        hintText: "000000",
-                        counterText: "",
+                        hintText: '000000',
+                        counterText: '',
                         hintStyle: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.w700,
@@ -211,7 +217,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           ),
                         ),
                       ),
-                      onChanged: (_) {
+                      onChanged: (String value) {
                         setDialogState(() {});
                       },
                     ),
@@ -249,7 +255,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                                 ),
                               )
                             : const Text(
-                                "Verify Code",
+                                'Verify Code',
                                 style: LoginStyle.buttonText,
                               ),
                       ),
@@ -270,8 +276,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                             },
                       child: Text(
                         resendSeconds > 0
-                            ? "Resend code in ${resendSeconds}s"
-                            : "Resend Code",
+                            ? 'Resend code in ${resendSeconds}s'
+                            : 'Resend Code',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
@@ -292,7 +298,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                         Navigator.pop(dialogContext);
                       },
                       child: const Text(
-                        "Cancel",
+                        'Cancel',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
@@ -318,18 +324,20 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     BuildContext dialogContext,
     StateSetter setDialogState,
   ) async {
-    final code = codeController.text.trim();
+    final String code = codeController.text.trim();
 
     if (code.isEmpty) {
-      showDialogMessage(dialogContext, "Please enter the verification code.");
+      showDialogMessage(dialogContext, 'Please enter the verification code.');
+
       return;
     }
 
     if (code.length != 6) {
       showDialogMessage(
         dialogContext,
-        "Please enter the complete 6-digit code.",
+        'Please enter the complete 6-digit code.',
       );
+
       return;
     }
 
@@ -340,7 +348,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     // Temporary delay.
     await Future.delayed(const Duration(milliseconds: 700));
 
-    if (!mounted) return;
+    if (!mounted || !dialogContext.mounted) {
+      return;
+    }
 
     // ----------------------------------------------------------
     // CHECK CODE
@@ -351,7 +361,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         isVerifyingCode = false;
       });
 
-      showDialogMessage(dialogContext, "Incorrect verification code.");
+      showDialogMessage(dialogContext, 'Incorrect verification code.');
 
       return;
     }
@@ -363,6 +373,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     // Close verification popup.
     Navigator.pop(dialogContext);
 
+    if (!mounted) {
+      return;
+    }
+
     // Open reset password popup.
     showResetPasswordDialog();
   }
@@ -373,17 +387,19 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
   void showResetPasswordDialog() {
     newPasswordController.clear();
+
     confirmPasswordController.clear();
 
     hideNewPassword = true;
+
     hideConfirmPassword = true;
 
-    showDialog(
+    showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
+      builder: (BuildContext dialogContext) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (BuildContext context, StateSetter setDialogState) {
             return Dialog(
               backgroundColor: LoginColors.white,
               insetPadding: const EdgeInsets.symmetric(horizontal: 22),
@@ -423,7 +439,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     // ------------------------------------------------
                     const Center(
                       child: Text(
-                        "Create New Password",
+                        'Create New Password',
                         style: LoginStyle.title,
                         textAlign: TextAlign.center,
                       ),
@@ -433,7 +449,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
                     const Center(
                       child: Text(
-                        "Create a new password for your account.",
+                        'Create a new password for your account.',
                         style: LoginStyle.subtitle,
                         textAlign: TextAlign.center,
                       ),
@@ -444,7 +460,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     // ------------------------------------------------
                     // NEW PASSWORD
                     // ------------------------------------------------
-                    const Text("New Password", style: LoginStyle.sectionTitle),
+                    const Text('New Password', style: LoginStyle.sectionTitle),
 
                     const SizedBox(height: 8),
 
@@ -454,7 +470,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                       textInputAction: TextInputAction.next,
                       decoration:
                           LoginStyle.inputDecoration(
-                            hint: "Enter your new password",
+                            hint: 'Enter your new password',
                             icon: Icons.lock_outline,
                           ).copyWith(
                             suffixIcon: IconButton(
@@ -479,7 +495,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     // CONFIRM PASSWORD
                     // ------------------------------------------------
                     const Text(
-                      "Confirm Password",
+                      'Confirm Password',
                       style: LoginStyle.sectionTitle,
                     ),
 
@@ -491,7 +507,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                       textInputAction: TextInputAction.done,
                       decoration:
                           LoginStyle.inputDecoration(
-                            hint: "Confirm your new password",
+                            hint: 'Confirm your new password',
                             icon: Icons.lock_outline,
                           ).copyWith(
                             suffixIcon: IconButton(
@@ -543,7 +559,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                                 ),
                               )
                             : const Text(
-                                "Reset Password",
+                                'Reset Password',
                                 style: LoginStyle.buttonText,
                               ),
                       ),
@@ -561,7 +577,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           Navigator.pop(dialogContext);
                         },
                         child: const Text(
-                          "Cancel",
+                          'Cancel',
                           style: TextStyle(
                             color: LoginColors.textGrey,
                             fontWeight: FontWeight.w600,
@@ -587,29 +603,32 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     BuildContext dialogContext,
     StateSetter setDialogState,
   ) async {
-    final password = newPasswordController.text;
+    final String password = newPasswordController.text;
 
-    final confirmPassword = confirmPasswordController.text;
+    final String confirmPassword = confirmPasswordController.text;
 
     // ----------------------------------------------------------
     // VALIDATION
     // ----------------------------------------------------------
 
     if (password.isEmpty || confirmPassword.isEmpty) {
-      showDialogMessage(dialogContext, "Please complete both password fields.");
+      showDialogMessage(dialogContext, 'Please complete both password fields.');
+
       return;
     }
 
     if (password.length < 6) {
       showDialogMessage(
         dialogContext,
-        "Password must contain at least 6 characters.",
+        'Password must contain at least 6 characters.',
       );
+
       return;
     }
 
     if (password != confirmPassword) {
-      showDialogMessage(dialogContext, "Passwords do not match.");
+      showDialogMessage(dialogContext, 'Passwords do not match.');
+
       return;
     }
 
@@ -620,7 +639,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     // Temporary delay.
     await Future.delayed(const Duration(seconds: 1));
 
-    if (!mounted) return;
+    if (!mounted || !dialogContext.mounted) {
+      return;
+    }
 
     setDialogState(() {
       isResettingPassword = false;
@@ -628,6 +649,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
     // Close reset password popup.
     Navigator.pop(dialogContext);
+
+    if (!mounted) {
+      return;
+    }
 
     // Show success popup.
     showSuccessDialog();
@@ -644,9 +669,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       resendSeconds = 30;
     });
 
-    resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    resendTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
       if (!mounted) {
         timer.cancel();
+
         return;
       }
 
@@ -671,7 +697,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   // ------------------------------------------------------------
 
   bool _isValidEmail(String email) {
-    final regex = RegExp(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$');
+    final RegExp regex = RegExp(
+      r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$',
+    );
 
     return regex.hasMatch(email);
   }
@@ -681,20 +709,21 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   // ------------------------------------------------------------
 
   String maskEmail(String email) {
-    final parts = email.split("@");
+    final List<String> parts = email.split('@');
 
     if (parts.length != 2) {
       return email;
     }
 
-    final username = parts[0];
-    final domain = parts[1];
+    final String username = parts[0];
+
+    final String domain = parts[1];
 
     if (username.length <= 2) {
-      return "***@$domain";
+      return '***@$domain';
     }
 
-    return "${username.substring(0, 2)}***@$domain";
+    return '${username.substring(0, 2)}***@$domain';
   }
 
   // ------------------------------------------------------------
@@ -702,16 +731,16 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   // ------------------------------------------------------------
 
   void showDialogMessage(BuildContext context, String message) {
-    showDialog(
+    showDialog<void>(
       context: context,
-      builder: (messageContext) {
+      builder: (BuildContext messageContext) {
         return AlertDialog(
           backgroundColor: LoginColors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
           ),
           title: const Text(
-            "Notice",
+            'Notice',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w800,
@@ -725,7 +754,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 Navigator.pop(messageContext);
               },
               child: const Text(
-                "OK",
+                'OK',
                 style: TextStyle(
                   fontWeight: FontWeight.w700,
                   color: LoginColors.primary,
@@ -743,10 +772,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   // ------------------------------------------------------------
 
   void showSuccessDialog() {
-    showDialog(
+    showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (successContext) {
+      builder: (BuildContext successContext) {
         return AlertDialog(
           backgroundColor: LoginColors.white,
           shape: RoundedRectangleBorder(
@@ -779,7 +808,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               // TITLE
               // --------------------------------------------------
               const Text(
-                "Password Reset Successful",
+                'Password Reset Successful',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 19,
@@ -794,8 +823,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               // DESCRIPTION
               // --------------------------------------------------
               const Text(
-                "Your password has been updated successfully. "
-                "You can now login with your new password.",
+                'Your password has been updated successfully. '
+                'You can now login with your new password.',
                 textAlign: TextAlign.center,
                 style: LoginStyle.subtitle,
               ),
@@ -824,7 +853,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     ),
                   ),
                   child: const Text(
-                    "Back to Login",
+                    'Back to Login',
                     style: LoginStyle.buttonText,
                   ),
                 ),
@@ -841,7 +870,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   // ------------------------------------------------------------
 
   void showMessage(String message) {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -867,8 +898,11 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     resendTimer?.cancel();
 
     emailController.dispose();
+
     codeController.dispose();
+
     newPasswordController.dispose();
+
     confirmPasswordController.dispose();
 
     super.dispose();
@@ -880,9 +914,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
+    final Size screenSize = MediaQuery.of(context).size;
 
-    final horizontalPadding = screenSize.width < 360 ? 16.0 : 22.0;
+    final double horizontalPadding = screenSize.width < 360 ? 16.0 : 22.0;
 
     return Scaffold(
       backgroundColor: LoginColors.background,
@@ -893,7 +927,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             FocusScope.of(context).unfocus();
           },
           child: LayoutBuilder(
-            builder: (context, constraints) {
+            builder: (BuildContext context, BoxConstraints constraints) {
               return SingleChildScrollView(
                 keyboardDismissBehavior:
                     ScrollViewKeyboardDismissBehavior.onDrag,
@@ -965,7 +999,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           // ------------------------------------------------
                           const Center(
                             child: Text(
-                              "Forgot Password?",
+                              'Forgot Password?',
                               style: LoginStyle.title,
                               textAlign: TextAlign.center,
                             ),
@@ -979,8 +1013,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           const Center(
                             child: Text(
                               "Enter your email address and we'll "
-                              "send you a verification code to reset "
-                              "your password.",
+                              'send you a verification code to reset '
+                              'your password.',
                               style: LoginStyle.subtitle,
                               textAlign: TextAlign.center,
                             ),
@@ -992,7 +1026,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           // EMAIL LABEL
                           // ------------------------------------------------
                           const Text(
-                            "Email Address",
+                            'Email Address',
                             style: LoginStyle.sectionTitle,
                           ),
 
@@ -1007,13 +1041,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                             keyboardType: TextInputType.emailAddress,
                             textInputAction: TextInputAction.done,
                             autocorrect: false,
-                            onSubmitted: (_) {
+                            onSubmitted: (String value) {
                               if (!isSendingCode) {
                                 sendCode();
                               }
                             },
                             decoration: LoginStyle.inputDecoration(
-                              hint: "Enter your email address",
+                              hint: 'Enter your email address',
                               icon: Icons.mail_outline_rounded,
                             ),
                           ),
@@ -1047,7 +1081,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                                       ),
                                     )
                                   : const Text(
-                                      "Send Verification Code",
+                                      'Send Verification Code',
                                       style: LoginStyle.buttonText,
                                     ),
                             ),
@@ -1066,7 +1100,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                                       Navigator.pop(context);
                                     },
                               child: const Text(
-                                "Back to Login",
+                                'Back to Login',
                                 style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w700,

@@ -223,15 +223,13 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                             horizontal: 10,
                             vertical: 5,
                           ),
-
                           decoration: BoxDecoration(
                             color: RiderColors.lightPurple,
                             borderRadius: BorderRadius.circular(20),
                           ),
-
                           child: Text(
-                            '${deliveries.length} ${deliveries.length == 1 ? 'shipment' : 'shipments'}',
-
+                            '${deliveries.length} '
+                            '${deliveries.length == 1 ? 'shipment' : 'shipments'}',
                             style: const TextStyle(
                               color: RiderColors.primary,
                               fontSize: 10,
@@ -245,7 +243,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                   const SizedBox(height: 12),
 
                   DropdownButtonFormField<String>(
-                    value: _selectedStatus,
+                    initialValue: _selectedStatus,
                     isExpanded: true,
 
                     decoration: InputDecoration(
@@ -309,7 +307,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
             Expanded(
               child: RefreshIndicator(
                 onRefresh: _loadDeliveries,
-
                 child: _buildBody(horizontalPadding, deliveries),
               ),
             ),
@@ -390,7 +387,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
               Container(
                 height: 45,
@@ -398,15 +394,12 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                 decoration: BoxDecoration(
                   color: RiderColors.lightPurple,
-
                   borderRadius: BorderRadius.circular(13),
                 ),
 
                 child: const Icon(
                   Icons.local_shipping_outlined,
-
                   color: RiderColors.primary,
-
                   size: 22,
                 ),
               ),
@@ -416,7 +409,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     const Text('Tracking Number', style: RiderStyle.small),
 
@@ -427,11 +419,8 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                         parcel.trackingNumber,
                         fallback: 'Tracking unavailable',
                       ),
-
                       maxLines: 1,
-
                       overflow: TextOverflow.ellipsis,
-
                       style: RiderStyle.cardTitle,
                     ),
                   ],
@@ -442,27 +431,18 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
               Container(
                 constraints: const BoxConstraints(maxWidth: 120),
-
                 padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.10),
-
                   borderRadius: BorderRadius.circular(20),
                 ),
-
                 child: Text(
                   status,
-
                   maxLines: 1,
-
                   overflow: TextOverflow.ellipsis,
-
                   style: TextStyle(
                     color: statusColor,
-
                     fontSize: 9,
-
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -477,34 +457,26 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
           // ====================================================
           _infoRow(
             icon: Icons.person_outline_rounded,
-
             label: 'Customer',
-
             value: _displayValue(parcel.customerName),
           ),
 
           _infoRow(
             icon: Icons.phone_outlined,
-
             label: 'Contact',
-
             value: _displayValue(parcel.customerPhone),
           ),
 
           _infoRow(
             icon: Icons.location_on_outlined,
-
             label: 'Delivery Address',
-
             value: _displayValue(parcel.deliveryAddress),
           ),
 
           if (formattedDate.isNotEmpty)
             _infoRow(
               icon: Icons.calendar_today_outlined,
-
               label: 'Order Date',
-
               value: formattedDate,
             ),
 
@@ -532,15 +504,11 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
               style: OutlinedButton.styleFrom(
                 foregroundColor: RiderColors.primary,
-
                 backgroundColor: RiderColors.white,
-
                 side: const BorderSide(color: RiderColors.primary),
-
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-
                 textStyle: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -567,7 +535,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           Container(
             height: 34,
@@ -575,7 +542,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
             decoration: BoxDecoration(
               color: RiderColors.lightPurple,
-
               borderRadius: BorderRadius.circular(10),
             ),
 
@@ -587,7 +553,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
                 Text(label, style: RiderStyle.small),
 
@@ -595,11 +560,8 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                 Text(
                   value,
-
                   maxLines: label == 'Delivery Address' ? 3 : 2,
-
                   overflow: TextOverflow.ellipsis,
-
                   style: RiderStyle.cardTitle,
                 ),
               ],
@@ -615,14 +577,12 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   // ============================================================
 
   void _showShipmentDetails(ParcelModel parcel) {
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
-
       isScrollControlled: true,
-
       backgroundColor: Colors.transparent,
 
-      builder: (sheetContext) {
+      builder: (BuildContext sheetContext) {
         final statusColor = _statusColor(parcel.status);
 
         final formattedDate = _formatDate(parcel.orderDate);
@@ -637,7 +597,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
             decoration: const BoxDecoration(
               color: RiderColors.white,
-
               borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
             ),
 
@@ -646,7 +605,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-
                 children: [
                   Center(
                     child: Container(
@@ -655,7 +613,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                       decoration: BoxDecoration(
                         color: RiderColors.border,
-
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
@@ -671,13 +628,11 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                         decoration: BoxDecoration(
                           color: RiderColors.lightPurple,
-
                           borderRadius: BorderRadius.circular(13),
                         ),
 
                         child: const Icon(
                           Icons.local_shipping_outlined,
-
                           color: RiderColors.primary,
                         ),
                       ),
@@ -687,11 +642,9 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-
                           children: [
                             const Text(
                               'Shipment Details',
-
                               style: RiderStyle.sectionTitle,
                             ),
 
@@ -700,14 +653,10 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                             Text(
                               _displayValue(
                                 parcel.trackingNumber,
-
                                 fallback: 'Tracking unavailable',
                               ),
-
                               maxLines: 1,
-
                               overflow: TextOverflow.ellipsis,
-
                               style: RiderStyle.small,
                             ),
                           ],
@@ -721,21 +670,15 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                           horizontal: 9,
                           vertical: 6,
                         ),
-
                         decoration: BoxDecoration(
                           color: statusColor.withValues(alpha: 0.10),
-
                           borderRadius: BorderRadius.circular(20),
                         ),
-
                         child: Text(
                           _formatStatus(parcel.status),
-
                           style: TextStyle(
                             color: statusColor,
-
                             fontSize: 9,
-
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -808,15 +751,12 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
       decoration: BoxDecoration(
         color: RiderColors.background,
-
         borderRadius: BorderRadius.circular(12),
-
         border: Border.all(color: RiderColors.border),
       ),
 
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           Text(label, style: RiderStyle.small),
 
@@ -879,7 +819,8 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                 return word;
               }
 
-              return '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}';
+              return '${word[0].toUpperCase()}'
+                  '${word.substring(1).toLowerCase()}';
             })
             .join(' ');
     }
@@ -967,7 +908,8 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
     final meridiem = local.hour >= 12 ? 'PM' : 'AM';
 
-    return '$month ${local.day}, ${local.year} • $hour:$minute $meridiem';
+    return '$month ${local.day}, ${local.year} • '
+        '$hour:$minute $meridiem';
   }
 
   // ============================================================
@@ -1016,15 +958,12 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
             decoration: const BoxDecoration(
               color: RiderColors.lightPurple,
-
               shape: BoxShape.circle,
             ),
 
             child: const Icon(
               Icons.cloud_off_outlined,
-
               size: 40,
-
               color: RiderColors.primary,
             ),
           ),
@@ -1034,14 +973,10 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Text(
           'Unable to Load Deliveries',
-
           textAlign: TextAlign.center,
-
           style: TextStyle(
             fontWeight: FontWeight.w800,
-
             fontSize: 18,
-
             color: RiderColors.textDark,
           ),
         ),
@@ -1050,9 +985,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         Text(
           _errorMessage ?? 'Something went wrong.',
-
           textAlign: TextAlign.center,
-
           style: RiderStyle.small,
         ),
 
@@ -1061,11 +994,8 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
         Center(
           child: ElevatedButton.icon(
             onPressed: _loadDeliveries,
-
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-
             label: const Text('Retry', style: TextStyle(color: Colors.white)),
-
             style: RiderStyle.primaryButton,
           ),
         ),
@@ -1093,15 +1023,12 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
             decoration: const BoxDecoration(
               color: RiderColors.lightPurple,
-
               shape: BoxShape.circle,
             ),
 
             child: const Icon(
               Icons.local_shipping_outlined,
-
               size: 43,
-
               color: RiderColors.primary,
             ),
           ),
@@ -1111,14 +1038,10 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Text(
           'No Deliveries Assigned',
-
           textAlign: TextAlign.center,
-
           style: TextStyle(
             fontWeight: FontWeight.w800,
-
             fontSize: 18,
-
             color: RiderColors.textDark,
           ),
         ),
@@ -1127,9 +1050,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Text(
           'Shipments assigned to your rider account will appear here.',
-
           textAlign: TextAlign.center,
-
           style: RiderStyle.small,
         ),
       ],
@@ -1151,9 +1072,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Icon(
           Icons.filter_alt_off_outlined,
-
           size: 55,
-
           color: RiderColors.textGrey,
         ),
 
@@ -1161,14 +1080,10 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Text(
           'No Deliveries Found',
-
           textAlign: TextAlign.center,
-
           style: TextStyle(
             fontSize: 17,
-
             fontWeight: FontWeight.w800,
-
             color: RiderColors.textDark,
           ),
         ),
@@ -1177,9 +1092,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Text(
           'No assigned shipments match the selected status.',
-
           textAlign: TextAlign.center,
-
           style: RiderStyle.small,
         ),
 
@@ -1192,7 +1105,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                 _selectedStatus = 'all';
               });
             },
-
             child: const Text('Show All Deliveries'),
           ),
         ),

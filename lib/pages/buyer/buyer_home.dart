@@ -73,18 +73,21 @@ class _BuyerHomeState extends State<BuyerHome> {
       isLoadingCategories = true;
     });
 
-    final result = await ApiService.getCategories();
+    final Map<String, dynamic> result = await ApiService.getCategories();
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     if (result['success'] == true) {
       try {
         final dynamic responseData = result['data'];
 
-        final List<Map<String, dynamic>> loadedCategories = [];
+        final List<Map<String, dynamic>> loadedCategories =
+            <Map<String, dynamic>>[];
 
         if (responseData is List) {
-          for (final item in responseData) {
+          for (final dynamic item in responseData) {
             if (item is Map<String, dynamic>) {
               loadedCategories.add(item);
             } else if (item is Map) {
@@ -145,7 +148,7 @@ class _BuyerHomeState extends State<BuyerHome> {
         sortOrder = null;
     }
 
-    final result = await ApiService.getProducts(
+    final Map<String, dynamic> result = await ApiService.getProducts(
       search: searchQuery.trim().isEmpty ? null : searchQuery.trim(),
       categoryId: selectedCategoryId,
       sortBy: sortBy,
@@ -153,16 +156,18 @@ class _BuyerHomeState extends State<BuyerHome> {
       perPage: 100,
     );
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     if (result['success'] == true) {
       try {
         final dynamic responseData = result['data'];
 
-        final List<ProductModel> loadedProducts = [];
+        final List<ProductModel> loadedProducts = <ProductModel>[];
 
         if (responseData is List) {
-          for (final item in responseData) {
+          for (final dynamic item in responseData) {
             if (item is Map<String, dynamic>) {
               loadedProducts.add(ProductModel.fromJson(item));
             } else if (item is Map) {
@@ -176,17 +181,19 @@ class _BuyerHomeState extends State<BuyerHome> {
         // Backend currently does not support "most sold" sorting,
         // so we sort this one locally.
         if (sortMode == 'sold') {
-          loadedProducts.sort((a, b) => b.soldCount.compareTo(a.soldCount));
+          loadedProducts.sort((ProductModel a, ProductModel b) {
+            return b.soldCount.compareTo(a.soldCount);
+          });
         }
 
         setState(() {
           products = loadedProducts;
           isLoadingProducts = false;
         });
-      } catch (e) {
+      } catch (error) {
         setState(() {
           isLoadingProducts = false;
-          productError = 'Invalid product data: $e';
+          productError = 'Invalid product data: $error';
         });
       }
     } else {
@@ -209,7 +216,7 @@ class _BuyerHomeState extends State<BuyerHome> {
     // Laravel currently does not have an in-stock query parameter,
     // so this filter stays local.
     if (inStockOnly) {
-      result = result.where((product) {
+      result = result.where((ProductModel product) {
         return product.stock > 0;
       }).toList();
     }
@@ -288,7 +295,11 @@ class _BuyerHomeState extends State<BuyerHome> {
   void _openProduct(ProductModel product) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => ProductDetails(product: product)),
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) {
+          return ProductDetails(product: product);
+        },
+      ),
     );
   }
 
@@ -299,7 +310,11 @@ class _BuyerHomeState extends State<BuyerHome> {
   void _openCart() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => const CartPage()),
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) {
+          return const CartPage();
+        },
+      ),
     );
   }
 
@@ -310,7 +325,11 @@ class _BuyerHomeState extends State<BuyerHome> {
   void _openProducts() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => const ProductList()),
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) {
+          return const ProductList();
+        },
+      ),
     );
   }
 
@@ -319,7 +338,7 @@ class _BuyerHomeState extends State<BuyerHome> {
   // ================================================================
 
   IconData _categoryIcon(String categoryName) {
-    final name = categoryName.toLowerCase();
+    final String name = categoryName.toLowerCase();
 
     if (name.contains('fashion') || name.contains('clothing')) {
       return Icons.checkroom_outlined;
@@ -365,13 +384,13 @@ class _BuyerHomeState extends State<BuyerHome> {
 
     String temporarySort = sortMode;
 
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (bottomSheetContext) {
+      builder: (BuildContext bottomSheetContext) {
         return StatefulBuilder(
-          builder: (context, setModalState) {
+          builder: (BuildContext context, StateSetter setModalState) {
             return Container(
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 25),
               decoration: const BoxDecoration(
@@ -397,32 +416,32 @@ class _BuyerHomeState extends State<BuyerHome> {
 
                     const SizedBox(height: 20),
 
-                    const Text("Filter Products", style: BuyerStyle.title),
+                    const Text('Filter Products', style: BuyerStyle.title),
 
                     const SizedBox(height: 5),
 
                     const Text(
-                      "Choose how products should be displayed.",
+                      'Choose how products should be displayed.',
                       style: BuyerStyle.subtitle,
                     ),
 
                     const SizedBox(height: 22),
 
-                    const Text("Availability", style: BuyerStyle.sectionTitle),
+                    const Text('Availability', style: BuyerStyle.sectionTitle),
 
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      activeColor: BuyerColors.primary,
+                      activeThumbColor: BuyerColors.primary,
                       title: const Text(
-                        "In-stock products only",
+                        'In-stock products only',
                         style: BuyerStyle.cardTitle,
                       ),
                       subtitle: const Text(
-                        "Hide products that are currently out of stock.",
+                        'Hide products that are currently out of stock.',
                         style: BuyerStyle.small,
                       ),
                       value: temporaryInStock,
-                      onChanged: (value) {
+                      onChanged: (bool value) {
                         setModalState(() {
                           temporaryInStock = value;
                         });
@@ -431,63 +450,36 @@ class _BuyerHomeState extends State<BuyerHome> {
 
                     const SizedBox(height: 10),
 
-                    const Text("Sort By", style: BuyerStyle.sectionTitle),
+                    const Text('Sort By', style: BuyerStyle.sectionTitle),
 
                     const SizedBox(height: 5),
 
-                    _sortOption(
-                      title: "Newest",
-                      value: "default",
-                      selectedValue: temporarySort,
-                      onChanged: (value) {
-                        setModalState(() {
-                          temporarySort = value;
-                        });
-                      },
-                    ),
+                    RadioGroup<String>(
+                      groupValue: temporarySort,
+                      onChanged: (String? value) {
+                        if (value == null) {
+                          return;
+                        }
 
-                    _sortOption(
-                      title: "Price: Low to High",
-                      value: "price_low",
-                      selectedValue: temporarySort,
-                      onChanged: (value) {
                         setModalState(() {
                           temporarySort = value;
                         });
                       },
-                    ),
-
-                    _sortOption(
-                      title: "Price: High to Low",
-                      value: "price_high",
-                      selectedValue: temporarySort,
-                      onChanged: (value) {
-                        setModalState(() {
-                          temporarySort = value;
-                        });
-                      },
-                    ),
-
-                    _sortOption(
-                      title: "Highest Rating",
-                      value: "rating",
-                      selectedValue: temporarySort,
-                      onChanged: (value) {
-                        setModalState(() {
-                          temporarySort = value;
-                        });
-                      },
-                    ),
-
-                    _sortOption(
-                      title: "Most Sold",
-                      value: "sold",
-                      selectedValue: temporarySort,
-                      onChanged: (value) {
-                        setModalState(() {
-                          temporarySort = value;
-                        });
-                      },
+                      child: Column(
+                        children: [
+                          _sortOption(title: 'Newest', value: 'default'),
+                          _sortOption(
+                            title: 'Price: Low to High',
+                            value: 'price_low',
+                          ),
+                          _sortOption(
+                            title: 'Price: High to Low',
+                            value: 'price_high',
+                          ),
+                          _sortOption(title: 'Highest Rating', value: 'rating'),
+                          _sortOption(title: 'Most Sold', value: 'sold'),
+                        ],
+                      ),
                     ),
 
                     const SizedBox(height: 20),
@@ -500,7 +492,6 @@ class _BuyerHomeState extends State<BuyerHome> {
                         onPressed: () {
                           setState(() {
                             inStockOnly = temporaryInStock;
-
                             sortMode = temporarySort;
                           });
 
@@ -508,7 +499,7 @@ class _BuyerHomeState extends State<BuyerHome> {
 
                           _loadProducts();
                         },
-                        child: const Text("Apply Filters"),
+                        child: const Text('Apply Filters'),
                       ),
                     ),
 
@@ -524,7 +515,7 @@ class _BuyerHomeState extends State<BuyerHome> {
 
                           _clearFilters();
                         },
-                        child: const Text("Reset Filters"),
+                        child: const Text('Reset Filters'),
                       ),
                     ),
                   ],
@@ -537,25 +528,12 @@ class _BuyerHomeState extends State<BuyerHome> {
     );
   }
 
-  Widget _sortOption({
-    required String title,
-    required String value,
-    required String selectedValue,
-    required ValueChanged<String> onChanged,
-  }) {
+  Widget _sortOption({required String title, required String value}) {
     return RadioListTile<String>(
       contentPadding: EdgeInsets.zero,
       activeColor: BuyerColors.primary,
       title: Text(title, style: BuyerStyle.cardTitle),
       value: value,
-      groupValue: selectedValue,
-      onChanged: (newValue) {
-        if (newValue == null) {
-          return;
-        }
-
-        onChanged(newValue);
-      },
     );
   }
 
@@ -565,13 +543,13 @@ class _BuyerHomeState extends State<BuyerHome> {
 
   @override
   Widget build(BuildContext context) {
-    final displayedProducts = visibleProducts;
+    final List<ProductModel> displayedProducts = visibleProducts;
 
     return Scaffold(
       backgroundColor: BuyerColors.background,
       body: SafeArea(
         child: LayoutBuilder(
-          builder: (context, constraints) {
+          builder: (BuildContext context, BoxConstraints constraints) {
             return RefreshIndicator(
               color: BuyerColors.primary,
               onRefresh: () async {
@@ -630,7 +608,7 @@ class _BuyerHomeState extends State<BuyerHome> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                "BiliHub",
+                                'BiliHub',
                                 style: TextStyle(
                                   fontSize: 19,
                                   fontWeight: FontWeight.w800,
@@ -638,11 +616,9 @@ class _BuyerHomeState extends State<BuyerHome> {
                                   letterSpacing: -0.3,
                                 ),
                               ),
-
                               SizedBox(height: 2),
-
                               Text(
-                                "Shop smart. Shop easy.",
+                                'Shop smart. Shop easy.',
                                 style: BuyerStyle.small,
                               ),
                             ],
@@ -658,7 +634,7 @@ class _BuyerHomeState extends State<BuyerHome> {
                               ..showSnackBar(
                                 const SnackBar(
                                   content: Text(
-                                    "Notifications are not connected yet.",
+                                    'Notifications are not connected yet.',
                                   ),
                                   behavior: SnackBarBehavior.floating,
                                 ),
@@ -680,20 +656,20 @@ class _BuyerHomeState extends State<BuyerHome> {
                     // ======================================================
                     // HERO
                     // ======================================================
-                    const Text("WELCOME TO BILIHUB", style: BuyerStyle.welcome),
+                    const Text('WELCOME TO BILIHUB', style: BuyerStyle.welcome),
 
                     const SizedBox(height: 6),
 
                     const Text(
-                      "Find something\nworth bringing home.",
+                      'Find something\nworth bringing home.',
                       style: BuyerStyle.largeTitle,
                     ),
 
                     const SizedBox(height: 9),
 
                     const Text(
-                      "Discover products from different sellers "
-                      "and find something made for you.",
+                      'Discover products from different sellers '
+                      'and find something made for you.',
                       style: BuyerStyle.subtitle,
                     ),
 
@@ -719,27 +695,24 @@ class _BuyerHomeState extends State<BuyerHome> {
                       child: Row(
                         children: [
                           const SizedBox(width: 15),
-
                           const Icon(
                             Icons.search_rounded,
                             color: BuyerColors.primary,
                             size: 23,
                           ),
-
                           const SizedBox(width: 10),
-
                           Expanded(
                             child: TextField(
                               controller: searchController,
                               textInputAction: TextInputAction.search,
                               onChanged: _onSearchChanged,
-                              onSubmitted: (_) {
+                              onSubmitted: (String value) {
                                 _searchDebounce?.cancel();
 
                                 _loadProducts();
                               },
                               decoration: InputDecoration(
-                                hintText: "Search products...",
+                                hintText: 'Search products...',
                                 hintStyle: const TextStyle(
                                   color: BuyerColors.textGrey,
                                   fontSize: 13,
@@ -748,7 +721,7 @@ class _BuyerHomeState extends State<BuyerHome> {
                                 isDense: true,
                                 suffixIcon: searchQuery.isNotEmpty
                                     ? IconButton(
-                                        tooltip: "Clear",
+                                        tooltip: 'Clear',
                                         onPressed: _clearSearch,
                                         icon: const Icon(
                                           Icons.close_rounded,
@@ -760,7 +733,6 @@ class _BuyerHomeState extends State<BuyerHome> {
                               ),
                             ),
                           ),
-
                           InkWell(
                             onTap: _showFilterSheet,
                             borderRadius: BorderRadius.circular(12),
@@ -788,19 +760,18 @@ class _BuyerHomeState extends State<BuyerHome> {
                         inStockOnly ||
                         sortMode != 'default') ...[
                       const SizedBox(height: 10),
-
                       Row(
                         children: [
                           Expanded(
                             child: Text(
-                              "${displayedProducts.length} product${displayedProducts.length == 1 ? '' : 's'} found",
+                              '${displayedProducts.length} '
+                              'product${displayedProducts.length == 1 ? '' : 's'} found',
                               style: BuyerStyle.small,
                             ),
                           ),
-
                           TextButton(
                             onPressed: _clearFilters,
-                            child: const Text("Clear Filters"),
+                            child: const Text('Clear Filters'),
                           ),
                         ],
                       ),
@@ -825,21 +796,17 @@ class _BuyerHomeState extends State<BuyerHome> {
                         children: [
                           _miniBenefit(
                             icon: Icons.local_shipping_outlined,
-                            title: "Fast Delivery",
+                            title: 'Fast Delivery',
                           ),
-
                           _benefitDivider(),
-
                           _miniBenefit(
                             icon: Icons.verified_user_outlined,
-                            title: "Verified Sellers",
+                            title: 'Verified Sellers',
                           ),
-
                           _benefitDivider(),
-
                           _miniBenefit(
                             icon: Icons.lock_outline_rounded,
-                            title: "Secure Payment",
+                            title: 'Secure Payment',
                           ),
                         ],
                       ),
@@ -894,18 +861,16 @@ class _BuyerHomeState extends State<BuyerHome> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  "Made for everyday finds.",
+                                  'Made for everyday finds.',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 17,
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
-
                                 SizedBox(height: 5),
-
                                 Text(
-                                  "Shop products from different sellers in one place.",
+                                  'Shop products from different sellers in one place.',
                                   style: TextStyle(
                                     color: Colors.white70,
                                     fontSize: 11.5,
@@ -925,8 +890,8 @@ class _BuyerHomeState extends State<BuyerHome> {
                     // REAL API CATEGORIES
                     // ======================================================
                     _sectionHeader(
-                      title: "Shop by Category",
-                      action: "View All",
+                      title: 'Shop by Category',
+                      action: 'View All',
                       onTap: () {
                         _selectCategory(id: null, name: 'All');
                       },
@@ -951,10 +916,10 @@ class _BuyerHomeState extends State<BuyerHome> {
                           scrollDirection: Axis.horizontal,
                           physics: const BouncingScrollPhysics(),
                           itemCount: categories.length + 1,
-                          itemBuilder: (context, index) {
+                          itemBuilder: (BuildContext context, int index) {
                             if (index == 0) {
                               return _categoryCard(
-                                "All",
+                                'All',
                                 Icons.apps_rounded,
                                 selected: selectedCategoryId == null,
                                 onTap: () {
@@ -963,15 +928,16 @@ class _BuyerHomeState extends State<BuyerHome> {
                               );
                             }
 
-                            final category = categories[index - 1];
+                            final Map<String, dynamic> category =
+                                categories[index - 1];
 
-                            final id =
+                            final int id =
                                 int.tryParse(
                                   category['id']?.toString() ?? '',
                                 ) ??
                                 0;
 
-                            final name =
+                            final String name =
                                 category['name']?.toString() ?? 'Category';
 
                             return _categoryCard(
@@ -993,11 +959,11 @@ class _BuyerHomeState extends State<BuyerHome> {
                     // ======================================================
                     _sectionHeader(
                       title: searchQuery.isNotEmpty
-                          ? "Search Results"
+                          ? 'Search Results'
                           : selectedCategoryId != null
                           ? selectedCategoryName
-                          : "Featured Picks",
-                      action: "View All",
+                          : 'Featured Picks',
+                      action: 'View All',
                       onTap: _openProducts,
                     ),
 
@@ -1047,14 +1013,12 @@ class _BuyerHomeState extends State<BuyerHome> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    "Discover something new",
+                                    'Discover something new',
                                     style: BuyerStyle.productTitle,
                                   ),
-
                                   SizedBox(height: 4),
-
                                   Text(
-                                    "Explore products selected for your everyday needs.",
+                                    'Explore products selected for your everyday needs.',
                                     style: BuyerStyle.small,
                                   ),
                                 ],
@@ -1085,7 +1049,7 @@ class _BuyerHomeState extends State<BuyerHome> {
                     // WHY BILIHUB
                     // ======================================================
                     const Text(
-                      "Why Shop With BiliHub?",
+                      'Why Shop With BiliHub?',
                       style: BuyerStyle.sectionTitle,
                     ),
 
@@ -1106,17 +1070,15 @@ class _BuyerHomeState extends State<BuyerHome> {
                         children: [
                           _trustItem(
                             Icons.local_shipping_outlined,
-                            "Fast\nDelivery",
+                            'Fast\nDelivery',
                           ),
-
                           _trustItem(
                             Icons.verified_outlined,
-                            "Verified\nSellers",
+                            'Verified\nSellers',
                           ),
-
                           _trustItem(
                             Icons.lock_outline_rounded,
-                            "Secure\nPayments",
+                            'Secure\nPayments',
                           ),
                         ],
                       ),
@@ -1131,28 +1093,24 @@ class _BuyerHomeState extends State<BuyerHome> {
                       child: Column(
                         children: [
                           Text(
-                            "BiliHub",
+                            'BiliHub',
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w800,
                               color: BuyerColors.textDark,
                             ),
                           ),
-
                           SizedBox(height: 7),
-
                           Text(
-                            "Shop smart. Shop easy.",
+                            'Shop smart. Shop easy.',
                             style: TextStyle(
                               fontSize: 10,
                               color: BuyerColors.textGrey,
                             ),
                           ),
-
                           SizedBox(height: 4),
-
                           Text(
-                            "© 2026 BILIHUB. All rights reserved.",
+                            '© 2026 BILIHUB. All rights reserved.',
                             style: TextStyle(
                               fontSize: 9,
                               color: BuyerColors.textGrey,
@@ -1189,6 +1147,8 @@ class _BuyerHomeState extends State<BuyerHome> {
     }
 
     if (productError != null) {
+      final String errorMessage = productError ?? '';
+
       return SizedBox(
         height: 290,
         child: Center(
@@ -1204,7 +1164,7 @@ class _BuyerHomeState extends State<BuyerHome> {
               const SizedBox(height: 10),
 
               Text(
-                productError!,
+                errorMessage,
                 textAlign: TextAlign.center,
                 style: BuyerStyle.small,
               ),
@@ -1214,7 +1174,7 @@ class _BuyerHomeState extends State<BuyerHome> {
               ElevatedButton.icon(
                 onPressed: _loadProducts,
                 icon: const Icon(Icons.refresh_rounded),
-                label: const Text("Retry"),
+                label: const Text('Retry'),
               ),
             ],
           ),
@@ -1237,12 +1197,12 @@ class _BuyerHomeState extends State<BuyerHome> {
 
               const SizedBox(height: 10),
 
-              const Text("No products found", style: BuyerStyle.sectionTitle),
+              const Text('No products found', style: BuyerStyle.sectionTitle),
 
               const SizedBox(height: 6),
 
               const Text(
-                "Try another search, category, or filter.",
+                'Try another search, category, or filter.',
                 textAlign: TextAlign.center,
                 style: BuyerStyle.small,
               ),
@@ -1251,7 +1211,7 @@ class _BuyerHomeState extends State<BuyerHome> {
 
               TextButton(
                 onPressed: _clearFilters,
-                child: const Text("Clear Filters"),
+                child: const Text('Clear Filters'),
               ),
             ],
           ),
@@ -1265,8 +1225,8 @@ class _BuyerHomeState extends State<BuyerHome> {
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         itemCount: products.length,
-        itemBuilder: (context, index) {
-          final product = products[index];
+        itemBuilder: (BuildContext context, int index) {
+          final ProductModel product = products[index];
 
           return Padding(
             padding: EdgeInsets.only(
@@ -1299,7 +1259,6 @@ class _BuyerHomeState extends State<BuyerHome> {
     return Row(
       children: [
         Expanded(child: Text(title, style: BuyerStyle.sectionTitle)),
-
         InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(10),
@@ -1315,9 +1274,7 @@ class _BuyerHomeState extends State<BuyerHome> {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-
                 const SizedBox(width: 3),
-
                 const Icon(
                   Icons.arrow_forward_ios_rounded,
                   color: BuyerColors.primary,
@@ -1357,7 +1314,6 @@ class _BuyerHomeState extends State<BuyerHome> {
               ),
               child: Icon(icon, size: 21, color: BuyerColors.textDark),
             ),
-
             if (badge)
               Positioned(
                 top: 7,

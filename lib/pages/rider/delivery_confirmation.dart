@@ -24,12 +24,17 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   Future<void> confirmDelivery() async {
     if (isLoading) return;
 
+    if (widget.parcel.id <= 0) {
+      _showErrorMessage('Invalid shipment ID.');
+      return;
+    }
+
     setState(() {
       isLoading = true;
     });
 
     final result = await ApiService.updateRiderDeliveryStatus(
-      orderId: widget.parcel.id,
+      shipmentId: widget.parcel.id,
       status: 'delivered',
     );
 
@@ -40,7 +45,9 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
     });
 
     if (result['success'] == true) {
-      _showSuccessDialog();
+      _showSuccessDialog(
+        result['message']?.toString() ?? 'The parcel status has been updated.',
+      );
 
       return;
     }
@@ -54,8 +61,8 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   // SUCCESS DIALOG
   // ============================================================
 
-  void _showSuccessDialog() {
-    showDialog(
+  void _showSuccessDialog(String message) {
+    showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
@@ -63,38 +70,33 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
           ),
-
-          content: const Column(
+          content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.check_circle, color: Colors.green, size: 70),
-
-              SizedBox(height: 15),
-
-              Text(
+              const Icon(Icons.check_circle, color: Colors.green, size: 70),
+              const SizedBox(height: 15),
+              const Text(
                 'Parcel Delivered Successfully',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
               ),
-
-              SizedBox(height: 8),
-
+              const SizedBox(height: 8),
               Text(
-                'The parcel status has been updated.',
+                message,
                 textAlign: TextAlign.center,
                 style: RiderStyle.small,
               ),
             ],
           ),
-
           actions: [
             TextButton(
               onPressed: () {
                 Navigator.pop(dialogContext);
 
+                if (!mounted) return;
+
                 Navigator.pop(context, true);
               },
-
               child: const Text('Done'),
             ),
           ],
@@ -108,6 +110,8 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   // ============================================================
 
   void _showErrorMessage(String message) {
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -129,7 +133,6 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
 
     return Scaffold(
       backgroundColor: RiderColors.background,
-
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
@@ -137,67 +140,47 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
         iconTheme: const IconThemeData(color: Colors.black),
         title: const Text('Confirm Delivery', style: RiderStyle.title),
       ),
-
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
-
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
               Container(
                 width: double.infinity,
-
                 padding: const EdgeInsets.all(20),
-
                 decoration: RiderStyle.card,
-
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     const Text(
                       'Parcel Information',
                       style: RiderStyle.sectionTitle,
                     ),
-
                     const SizedBox(height: 20),
-
                     _infoRow(
                       'Tracking Number',
                       _displayValue(parcel.trackingNumber),
                     ),
-
                     _infoRow('Customer', _displayValue(parcel.customerName)),
-
                     _infoRow(
                       'Phone Number',
                       _displayValue(parcel.customerPhone),
                     ),
-
                     _infoRow('Address', _displayValue(parcel.deliveryAddress)),
-
                     _infoRow('Status', _formatStatus(parcel.status)),
                   ],
                 ),
               ),
-
               const SizedBox(height: 25),
-
               Container(
                 padding: const EdgeInsets.all(18),
-
                 decoration: RiderStyle.card,
-
                 child: const Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     Icon(Icons.info_outline, color: Colors.blue),
-
                     SizedBox(width: 10),
-
                     Expanded(
                       child: Text(
                         'Make sure the parcel has been received by the customer before confirming.',
@@ -206,18 +189,12 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 30),
-
               CustomButton(
                 text: 'CONFIRM DELIVERY',
-
                 icon: Icons.check_circle_outline,
-
                 isLoading: isLoading,
-
                 backgroundColor: Colors.green,
-
                 onPressed: confirmDelivery,
               ),
             ],
@@ -234,15 +211,11 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   Widget _infoRow(String title, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           Text(title, style: RiderStyle.small),
-
           const SizedBox(height: 4),
-
           Text(value, style: RiderStyle.cardTitle),
         ],
       ),

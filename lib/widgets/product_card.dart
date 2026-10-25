@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/product_model.dart';
@@ -19,15 +20,8 @@ class ProductCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ============================================================
-            // PRODUCT IMAGE
-            // ============================================================
-
             AspectRatio(aspectRatio: 1.25, child: _buildProductImage()),
 
-            // ============================================================
-            // PRODUCT INFORMATION
-            // ============================================================
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
@@ -117,47 +111,82 @@ class ProductCard extends StatelessWidget {
   // ============================================================
 
   Widget _buildProductImage() {
-    final imageUrl = product.imageUrl.trim();
+    final String imageUrl = product.imageUrl.trim();
+
+    if (kDebugMode) {
+      debugPrint(
+        'PRODUCT IMAGE | '
+        'ID: ${product.id} | '
+        'NAME: ${product.name} | '
+        'URL: $imageUrl',
+      );
+    }
 
     if (!_isValidNetworkUrl(imageUrl)) {
+      if (kDebugMode) {
+        debugPrint(
+          'INVALID PRODUCT IMAGE URL | '
+          'ID: ${product.id} | '
+          'URL: $imageUrl',
+        );
+      }
+
       return _imagePlaceholder();
     }
 
     return Container(
       width: double.infinity,
+      height: double.infinity,
       color: const Color(0xffEEEEEE),
       child: Image.network(
         imageUrl,
-        fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.medium,
 
-        errorBuilder: (context, error, stackTrace) {
-          return _imagePlaceholder(broken: true);
-        },
+        loadingBuilder:
+            (
+              BuildContext context,
+              Widget child,
+              ImageChunkEvent? loadingProgress,
+            ) {
+              if (loadingProgress == null) {
+                return child;
+              }
 
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) {
-            return child;
-          }
+              return const Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: BuyerColors.primary,
+                  ),
+                ),
+              );
+            },
 
-          return const Center(
-            child: SizedBox(
-              height: 22,
-              width: 22,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: BuyerColors.primary,
-              ),
-            ),
-          );
-        },
+        errorBuilder:
+            (BuildContext context, Object error, StackTrace? stackTrace) {
+              if (kDebugMode) {
+                debugPrint(
+                  'PRODUCT IMAGE ERROR | '
+                  'ID: ${product.id} | '
+                  'URL: $imageUrl | '
+                  'ERROR: $error',
+                );
+              }
+
+              return _imagePlaceholder(broken: true);
+            },
       ),
     );
   }
 
   // ============================================================
-  // IMAGE PLACEHOLDER
+  // PLACEHOLDER
   // ============================================================
 
   Widget _imagePlaceholder({bool broken = false}) {
@@ -165,12 +194,11 @@ class ProductCard extends StatelessWidget {
       width: double.infinity,
       height: double.infinity,
       color: const Color(0xffEEEEEE),
-      child: Center(
-        child: Icon(
-          broken ? Icons.broken_image_outlined : Icons.image_outlined,
-          size: 48,
-          color: Colors.grey,
-        ),
+      alignment: Alignment.center,
+      child: Icon(
+        broken ? Icons.broken_image_outlined : Icons.image_outlined,
+        size: 48,
+        color: Colors.grey,
       ),
     );
   }
@@ -184,7 +212,7 @@ class ProductCard extends StatelessWidget {
       return false;
     }
 
-    final uri = Uri.tryParse(value);
+    final Uri? uri = Uri.tryParse(value);
 
     if (uri == null) {
       return false;
@@ -194,6 +222,7 @@ class ProductCard extends StatelessWidget {
       return false;
     }
 
-    return uri.scheme == 'http' || uri.scheme == 'https';
+    return uri.scheme.toLowerCase() == 'http' ||
+        uri.scheme.toLowerCase() == 'https';
   }
 }

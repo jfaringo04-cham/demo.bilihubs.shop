@@ -16,7 +16,10 @@ class RiderNavigation extends StatefulWidget {
 }
 
 class _RiderNavigationState extends State<RiderNavigation> {
-  int currentIndex = 0;
+  static const int _homeIndex = 0;
+  static const int _lastTabIndex = 4;
+
+  int currentIndex = _homeIndex;
 
   final List<BottomNavItem> items = const [
     BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
@@ -30,6 +33,10 @@ class _RiderNavigationState extends State<RiderNavigation> {
   ];
 
   void _changeTab(int index) {
+    if (index < _homeIndex || index > _lastTabIndex) {
+      return;
+    }
+
     if (index == currentIndex) {
       return;
     }
@@ -63,13 +70,27 @@ class _RiderNavigationState extends State<RiderNavigation> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: _buildCurrentPage(),
+    return PopScope(
+      canPop: currentIndex == _homeIndex,
+      onPopInvokedWithResult: (bool didPop, dynamic result) {
+        if (didPop) {
+          return;
+        }
 
-      bottomNavigationBar: BottomNav(
-        currentIndex: currentIndex,
-        items: items,
-        onTap: _changeTab,
+        if (currentIndex != _homeIndex) {
+          setState(() {
+            currentIndex = _homeIndex;
+          });
+        }
+      },
+      child: Scaffold(
+        body: _buildCurrentPage(),
+
+        bottomNavigationBar: BottomNav(
+          currentIndex: currentIndex,
+          items: items,
+          onTap: _changeTab,
+        ),
       ),
     );
   }

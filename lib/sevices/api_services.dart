@@ -1056,11 +1056,174 @@ class ApiService {
   }
 
   // ============================================================
+  // UPLOAD RIDER DELIVERY PROOF
+  // POST /api/rider/orders/{shipment}/proof
+  // ============================================================
+
+  static Future<Map<String, dynamic>> uploadRiderDeliveryProof({
+    required int shipmentId,
+    required String proofFilePath,
+    required String deliveredTo,
+    String? deliverySignature,
+    String? deliveryNotes,
+  }) async {
+    try {
+      if (shipmentId <= 0) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid shipment ID.',
+        };
+      }
+
+      final String normalizedProofPath = proofFilePath.trim();
+
+      if (normalizedProofPath.isEmpty) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Proof-of-delivery photo is required.',
+        };
+      }
+
+      final String normalizedDeliveredTo = deliveredTo.trim();
+
+      if (normalizedDeliveredTo.isEmpty) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Receiver name is required.',
+        };
+      }
+
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
+      }
+
+      final http.MultipartRequest request = http.MultipartRequest(
+        'POST',
+        Uri.parse(
+          '$baseUrl/rider/orders/'
+          '$shipmentId/proof',
+        ),
+      );
+
+      request.headers.addAll({
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ${token.trim()}',
+      });
+
+      request.fields['delivered_to'] = normalizedDeliveredTo;
+
+      if (deliverySignature != null && deliverySignature.trim().isNotEmpty) {
+        request.fields['delivery_signature'] = deliverySignature.trim();
+      }
+
+      if (deliveryNotes != null && deliveryNotes.trim().isNotEmpty) {
+        request.fields['delivery_notes'] = deliveryNotes.trim();
+      }
+
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'proof_of_delivery',
+          normalizedProofPath,
+        ),
+      );
+
+      final http.StreamedResponse streamedResponse = await request.send();
+
+      final http.Response response = await http.Response.fromStream(
+        streamedResponse,
+      );
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (decoded is Map<String, dynamic>) {
+          final dynamic rawData = decoded['data'];
+
+          return {
+            'success': true,
+            'status_code': response.statusCode,
+            'message': _getMessage(
+              decoded,
+              fallback: 'Delivery proof uploaded successfully.',
+            ),
+            'data': rawData is Map
+                ? Map<String, dynamic>.from(rawData)
+                : <String, dynamic>{},
+          };
+        }
+
+        return {
+          'success': true,
+          'status_code': response.statusCode,
+          'message': 'Delivery proof uploaded successfully.',
+          'data': <String, dynamic>{},
+        };
+      }
+
+      if (response.statusCode == 413) {
+        return {
+          'success': false,
+          'status_code': 413,
+          'message':
+              'The proof photo is too large. '
+              'Please use an image not larger than 5 MB.',
+        };
+      }
+
+      if (response.statusCode == 422) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': _getMessage(
+            decoded,
+            fallback:
+                'Please check the proof-of-delivery information '
+                'and try again.',
+          ),
+          'errors': decoded is Map<String, dynamic> ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage:
+            'This shipment is not assigned '
+            'to this rider.',
+        notFoundMessage:
+            'Rider proof-of-delivery API '
+            'was not found.',
+        fallback:
+            'Unable to upload '
+            'proof of delivery.',
+      );
+    } catch (e) {
+      return {
+        'success': false,
+        'message':
+            'Unable to upload proof of delivery. '
+            'Please check your internet connection '
+            'and try again.',
+      };
+    }
+  }
+
+  // ============================================================
   // UPDATE RIDER DELIVERY STATUS
+  // PUT /api/rider/orders/{shipment}/status
   // ============================================================
 
   static Future<Map<String, dynamic>> updateRiderDeliveryStatus({
-    required int orderId,
+    required int shipmentId,
     required String status,
   }) async {
     try {
@@ -1070,20 +1233,31 @@ class ApiService {
         return {'success': false, 'message': 'Authentication token not found.'};
       }
 
-      if (orderId <= 0) {
-        return {'success': false, 'message': 'Invalid delivery ID.'};
+      if (shipmentId <= 0) {
+        return {'success': false, 'message': 'Invalid shipment ID.'};
       }
 
-      final String normalizedStatus = status.trim();
+      final String normalizedStatus = status.trim().toLowerCase();
 
-      if (normalizedStatus.isEmpty) {
-        return {'success': false, 'message': 'Delivery status is required.'};
+      const Set<String> allowedStatuses = {
+        'in_transit',
+        'out_for_delivery',
+        'delivered',
+        'failed',
+      };
+
+      if (!allowedStatuses.contains(normalizedStatus)) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid rider delivery status.',
+        };
       }
 
       final response = await http.put(
         Uri.parse(
           '$baseUrl/rider/orders/'
-          '$orderId/status',
+          '$shipmentId/status',
         ),
         headers: _authHeaders(token, json: true),
         body: jsonEncode({'status': normalizedStatus}),
@@ -1092,7 +1266,28 @@ class ApiService {
       final dynamic decoded = _decodeResponse(response.body);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return {'success': true, 'data': decoded};
+        if (decoded is Map<String, dynamic>) {
+          final dynamic rawData = decoded['data'];
+
+          return {
+            'success': true,
+            'status_code': response.statusCode,
+            'message': _getMessage(
+              decoded,
+              fallback: 'Delivery status updated successfully.',
+            ),
+            'data': rawData is Map
+                ? Map<String, dynamic>.from(rawData)
+                : <String, dynamic>{},
+          };
+        }
+
+        return {
+          'success': true,
+          'status_code': response.statusCode,
+          'message': 'Delivery status updated successfully.',
+          'data': <String, dynamic>{},
+        };
       }
 
       if (response.statusCode == 422) {
@@ -1113,11 +1308,9 @@ class ApiService {
         response.statusCode,
         decoded,
         forbiddenMessage:
-            'This account cannot update '
-            'this delivery.',
-        notFoundMessage:
-            'Delivery status API '
-            'is not available yet.',
+            'This shipment is not assigned '
+            'to this rider.',
+        notFoundMessage: 'Rider shipment was not found.',
         fallback:
             'Unable to update '
             'delivery status.',

@@ -22,9 +22,11 @@ class _ProductListState extends State<ProductList> {
   Timer? _searchDebounce;
 
   List<ProductModel> products = [];
+
   List<Map<String, dynamic>> categories = [];
 
   bool isLoading = true;
+
   bool isLoadingCategories = true;
 
   String? errorMessage;
@@ -32,10 +34,16 @@ class _ProductListState extends State<ProductList> {
   String searchQuery = '';
 
   int? selectedCategoryId;
+
   String selectedCategoryName = 'All';
 
   bool inStockOnly = false;
+
   String sortMode = 'default';
+
+  // ================================================================
+  // INITIALIZE
+  // ================================================================
 
   @override
   void initState() {
@@ -44,9 +52,14 @@ class _ProductListState extends State<ProductList> {
     _loadInitialData();
   }
 
+  // ================================================================
+  // DISPOSE
+  // ================================================================
+
   @override
   void dispose() {
     _searchDebounce?.cancel();
+
     searchController.dispose();
 
     super.dispose();
@@ -69,18 +82,21 @@ class _ProductListState extends State<ProductList> {
       isLoadingCategories = true;
     });
 
-    final result = await ApiService.getCategories();
+    final Map<String, dynamic> result = await ApiService.getCategories();
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     if (result['success'] == true) {
       try {
         final dynamic responseData = result['data'];
 
-        final List<Map<String, dynamic>> loadedCategories = [];
+        final List<Map<String, dynamic>> loadedCategories =
+            <Map<String, dynamic>>[];
 
         if (responseData is List) {
-          for (final item in responseData) {
+          for (final dynamic item in responseData) {
             if (item is Map<String, dynamic>) {
               loadedCategories.add(item);
             } else if (item is Map) {
@@ -91,17 +107,20 @@ class _ProductListState extends State<ProductList> {
 
         setState(() {
           categories = loadedCategories;
+
           isLoadingCategories = false;
         });
       } catch (_) {
         setState(() {
           categories = [];
+
           isLoadingCategories = false;
         });
       }
     } else {
       setState(() {
         categories = [];
+
         isLoadingCategories = false;
       });
     }
@@ -114,34 +133,43 @@ class _ProductListState extends State<ProductList> {
   Future<void> _loadProducts() async {
     setState(() {
       isLoading = true;
+
       errorMessage = null;
     });
 
     String? sortBy;
+
     String? sortOrder;
 
     switch (sortMode) {
       case 'price_low':
         sortBy = 'price';
+
         sortOrder = 'asc';
+
         break;
 
       case 'price_high':
         sortBy = 'price';
+
         sortOrder = 'desc';
+
         break;
 
       case 'rating':
         sortBy = 'rating';
+
         sortOrder = 'desc';
+
         break;
 
       default:
         sortBy = null;
+
         sortOrder = null;
     }
 
-    final result = await ApiService.getProducts(
+    final Map<String, dynamic> result = await ApiService.getProducts(
       search: searchQuery.trim().isEmpty ? null : searchQuery.trim(),
       categoryId: selectedCategoryId,
       sortBy: sortBy,
@@ -149,16 +177,18 @@ class _ProductListState extends State<ProductList> {
       perPage: 100,
     );
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     if (result['success'] == true) {
       try {
         final dynamic responseData = result['data'];
 
-        final List<ProductModel> loadedProducts = [];
+        final List<ProductModel> loadedProducts = <ProductModel>[];
 
         if (responseData is List) {
-          for (final item in responseData) {
+          for (final dynamic item in responseData) {
             if (item is Map<String, dynamic>) {
               loadedProducts.add(ProductModel.fromJson(item));
             } else if (item is Map) {
@@ -172,17 +202,21 @@ class _ProductListState extends State<ProductList> {
         // Backend currently does not support "sold"
         // as a sort_by value, so this stays local.
         if (sortMode == 'sold') {
-          loadedProducts.sort((a, b) => b.soldCount.compareTo(a.soldCount));
+          loadedProducts.sort((ProductModel a, ProductModel b) {
+            return b.soldCount.compareTo(a.soldCount);
+          });
         }
 
         setState(() {
           products = loadedProducts;
+
           isLoading = false;
         });
-      } catch (e) {
+      } catch (error) {
         setState(() {
           isLoading = false;
-          errorMessage = 'Invalid product data: $e';
+
+          errorMessage = 'Invalid product data: $error';
         });
       }
     } else {
@@ -204,7 +238,7 @@ class _ProductListState extends State<ProductList> {
 
     // Backend currently has no in_stock parameter.
     if (inStockOnly) {
-      result = result.where((product) {
+      result = result.where((ProductModel product) {
         return product.stock > 0;
       }).toList();
     }
@@ -247,6 +281,7 @@ class _ProductListState extends State<ProductList> {
   void _selectCategory({required int? id, required String name}) {
     setState(() {
       selectedCategoryId = id;
+
       selectedCategoryName = name;
     });
 
@@ -266,9 +301,11 @@ class _ProductListState extends State<ProductList> {
       searchQuery = '';
 
       selectedCategoryId = null;
+
       selectedCategoryName = 'All';
 
       inStockOnly = false;
+
       sortMode = 'default';
     });
 
@@ -280,7 +317,7 @@ class _ProductListState extends State<ProductList> {
   // ================================================================
 
   IconData _categoryIcon(String categoryName) {
-    final name = categoryName.toLowerCase();
+    final String name = categoryName.toLowerCase();
 
     if (name.contains('fashion') || name.contains('clothing')) {
       return Icons.checkroom_outlined;
@@ -326,13 +363,13 @@ class _ProductListState extends State<ProductList> {
 
     String temporarySort = sortMode;
 
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (bottomSheetContext) {
+      builder: (BuildContext bottomSheetContext) {
         return StatefulBuilder(
-          builder: (context, setModalState) {
+          builder: (BuildContext context, StateSetter setModalState) {
             return Container(
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 25),
               decoration: const BoxDecoration(
@@ -358,32 +395,32 @@ class _ProductListState extends State<ProductList> {
 
                     const SizedBox(height: 20),
 
-                    const Text("Filter Products", style: BuyerStyle.title),
+                    const Text('Filter Products', style: BuyerStyle.title),
 
                     const SizedBox(height: 5),
 
                     const Text(
-                      "Choose how products should be displayed.",
+                      'Choose how products should be displayed.',
                       style: BuyerStyle.subtitle,
                     ),
 
                     const SizedBox(height: 22),
 
-                    const Text("Availability", style: BuyerStyle.sectionTitle),
+                    const Text('Availability', style: BuyerStyle.sectionTitle),
 
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      activeColor: BuyerColors.primary,
+                      activeThumbColor: BuyerColors.primary,
                       title: const Text(
-                        "In-stock products only",
+                        'In-stock products only',
                         style: BuyerStyle.cardTitle,
                       ),
                       subtitle: const Text(
-                        "Hide products that are out of stock.",
+                        'Hide products that are out of stock.',
                         style: BuyerStyle.small,
                       ),
                       value: temporaryInStock,
-                      onChanged: (value) {
+                      onChanged: (bool value) {
                         setModalState(() {
                           temporaryInStock = value;
                         });
@@ -392,63 +429,40 @@ class _ProductListState extends State<ProductList> {
 
                     const SizedBox(height: 10),
 
-                    const Text("Sort By", style: BuyerStyle.sectionTitle),
+                    const Text('Sort By', style: BuyerStyle.sectionTitle),
 
                     const SizedBox(height: 5),
 
-                    _sortOption(
-                      title: "Newest",
-                      value: "default",
-                      selectedValue: temporarySort,
-                      onChanged: (value) {
-                        setModalState(() {
-                          temporarySort = value;
-                        });
-                      },
-                    ),
+                    RadioGroup<String>(
+                      groupValue: temporarySort,
+                      onChanged: (String? value) {
+                        if (value == null) {
+                          return;
+                        }
 
-                    _sortOption(
-                      title: "Price: Low to High",
-                      value: "price_low",
-                      selectedValue: temporarySort,
-                      onChanged: (value) {
                         setModalState(() {
                           temporarySort = value;
                         });
                       },
-                    ),
+                      child: Column(
+                        children: [
+                          _sortOption(title: 'Newest', value: 'default'),
 
-                    _sortOption(
-                      title: "Price: High to Low",
-                      value: "price_high",
-                      selectedValue: temporarySort,
-                      onChanged: (value) {
-                        setModalState(() {
-                          temporarySort = value;
-                        });
-                      },
-                    ),
+                          _sortOption(
+                            title: 'Price: Low to High',
+                            value: 'price_low',
+                          ),
 
-                    _sortOption(
-                      title: "Highest Rating",
-                      value: "rating",
-                      selectedValue: temporarySort,
-                      onChanged: (value) {
-                        setModalState(() {
-                          temporarySort = value;
-                        });
-                      },
-                    ),
+                          _sortOption(
+                            title: 'Price: High to Low',
+                            value: 'price_high',
+                          ),
 
-                    _sortOption(
-                      title: "Most Sold",
-                      value: "sold",
-                      selectedValue: temporarySort,
-                      onChanged: (value) {
-                        setModalState(() {
-                          temporarySort = value;
-                        });
-                      },
+                          _sortOption(title: 'Highest Rating', value: 'rating'),
+
+                          _sortOption(title: 'Most Sold', value: 'sold'),
+                        ],
+                      ),
                     ),
 
                     const SizedBox(height: 20),
@@ -469,7 +483,7 @@ class _ProductListState extends State<ProductList> {
 
                           _loadProducts();
                         },
-                        child: const Text("Apply Filters"),
+                        child: const Text('Apply Filters'),
                       ),
                     ),
 
@@ -479,12 +493,13 @@ class _ProductListState extends State<ProductList> {
                       width: double.infinity,
                       height: 50,
                       child: OutlinedButton(
+                        style: BuyerStyle.outlinedButton,
                         onPressed: () {
                           Navigator.pop(bottomSheetContext);
 
                           _clearFilters();
                         },
-                        child: const Text("Reset Filters"),
+                        child: const Text('Reset Filters'),
                       ),
                     ),
                   ],
@@ -497,25 +512,16 @@ class _ProductListState extends State<ProductList> {
     );
   }
 
-  Widget _sortOption({
-    required String title,
-    required String value,
-    required String selectedValue,
-    required ValueChanged<String> onChanged,
-  }) {
+  // ================================================================
+  // SORT OPTION
+  // ================================================================
+
+  Widget _sortOption({required String title, required String value}) {
     return RadioListTile<String>(
       contentPadding: EdgeInsets.zero,
       activeColor: BuyerColors.primary,
       title: Text(title, style: BuyerStyle.cardTitle),
       value: value,
-      groupValue: selectedValue,
-      onChanged: (newValue) {
-        if (newValue == null) {
-          return;
-        }
-
-        onChanged(newValue);
-      },
     );
   }
 
@@ -527,13 +533,11 @@ class _ProductListState extends State<ProductList> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: BuyerColors.background,
-
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        title: const Text("Products", style: BuyerStyle.title),
+        title: const Text('Products', style: BuyerStyle.title),
       ),
-
       body: RefreshIndicator(
         color: BuyerColors.primary,
         onRefresh: () async {
@@ -560,6 +564,8 @@ class _ProductListState extends State<ProductList> {
     }
 
     if (errorMessage != null) {
+      final String message = errorMessage ?? '';
+
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(20),
@@ -575,18 +581,14 @@ class _ProductListState extends State<ProductList> {
           const SizedBox(height: 15),
 
           const Text(
-            "Unable to load products",
+            'Unable to load products',
             textAlign: TextAlign.center,
             style: BuyerStyle.sectionTitle,
           ),
 
           const SizedBox(height: 8),
 
-          Text(
-            errorMessage!,
-            textAlign: TextAlign.center,
-            style: BuyerStyle.small,
-          ),
+          Text(message, textAlign: TextAlign.center, style: BuyerStyle.small),
 
           const SizedBox(height: 20),
 
@@ -594,14 +596,14 @@ class _ProductListState extends State<ProductList> {
             child: ElevatedButton.icon(
               onPressed: _loadProducts,
               icon: const Icon(Icons.refresh_rounded),
-              label: const Text("Retry"),
+              label: const Text('Retry'),
             ),
           ),
         ],
       );
     }
 
-    final displayedProducts = visibleProducts;
+    final List<ProductModel> displayedProducts = visibleProducts;
 
     return CustomScrollView(
       physics: const AlwaysScrollableScrollPhysics(
@@ -639,13 +641,13 @@ class _ProductListState extends State<ProductList> {
                       controller: searchController,
                       textInputAction: TextInputAction.search,
                       onChanged: _onSearchChanged,
-                      onSubmitted: (_) {
+                      onSubmitted: (String value) {
                         _searchDebounce?.cancel();
 
                         _loadProducts();
                       },
                       decoration: InputDecoration(
-                        hintText: "Search products...",
+                        hintText: 'Search products...',
                         hintStyle: const TextStyle(
                           color: BuyerColors.textGrey,
                           fontSize: 13,
@@ -654,8 +656,13 @@ class _ProductListState extends State<ProductList> {
                         isDense: true,
                         suffixIcon: searchQuery.isNotEmpty
                             ? IconButton(
+                                tooltip: 'Clear',
                                 onPressed: _clearSearch,
-                                icon: const Icon(Icons.close_rounded, size: 19),
+                                icon: const Icon(
+                                  Icons.close_rounded,
+                                  size: 19,
+                                  color: BuyerColors.textGrey,
+                                ),
                               )
                             : null,
                       ),
@@ -708,7 +715,7 @@ class _ProductListState extends State<ProductList> {
                     physics: const BouncingScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 14, 6, 8),
                     itemCount: categories.length + 1,
-                    itemBuilder: (context, index) {
+                    itemBuilder: (BuildContext context, int index) {
                       if (index == 0) {
                         return _categoryChip(
                           name: 'All',
@@ -720,12 +727,14 @@ class _ProductListState extends State<ProductList> {
                         );
                       }
 
-                      final category = categories[index - 1];
+                      final Map<String, dynamic> category =
+                          categories[index - 1];
 
-                      final id =
+                      final int id =
                           int.tryParse(category['id']?.toString() ?? '') ?? 0;
 
-                      final name = category['name']?.toString() ?? 'Category';
+                      final String name =
+                          category['name']?.toString() ?? 'Category';
 
                       return _categoryChip(
                         name: name,
@@ -750,7 +759,8 @@ class _ProductListState extends State<ProductList> {
               children: [
                 Expanded(
                   child: Text(
-                    "${displayedProducts.length} product${displayedProducts.length == 1 ? '' : 's'}",
+                    '${displayedProducts.length} '
+                    'product${displayedProducts.length == 1 ? '' : 's'}',
                     style: BuyerStyle.sectionTitle,
                   ),
                 ),
@@ -761,7 +771,7 @@ class _ProductListState extends State<ProductList> {
                     sortMode != 'default')
                   TextButton(
                     onPressed: _clearFilters,
-                    child: const Text("Clear"),
+                    child: const Text('Clear'),
                   ),
               ],
             ),
@@ -788,14 +798,14 @@ class _ProductListState extends State<ProductList> {
                   const SizedBox(height: 15),
 
                   const Text(
-                    "No products found",
+                    'No products found',
                     style: BuyerStyle.sectionTitle,
                   ),
 
                   const SizedBox(height: 7),
 
                   const Text(
-                    "Try another search, category, or filter.",
+                    'Try another search, category, or filter.',
                     textAlign: TextAlign.center,
                     style: BuyerStyle.small,
                   ),
@@ -804,7 +814,7 @@ class _ProductListState extends State<ProductList> {
 
                   TextButton(
                     onPressed: _clearFilters,
-                    child: const Text("Clear Filters"),
+                    child: const Text('Clear Filters'),
                   ),
                 ],
               ),
@@ -817,16 +827,21 @@ class _ProductListState extends State<ProductList> {
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 25),
             sliver: SliverGrid(
-              delegate: SliverChildBuilderDelegate((context, index) {
-                final product = displayedProducts[index];
+              delegate: SliverChildBuilderDelegate((
+                BuildContext context,
+                int index,
+              ) {
+                final ProductModel product = displayedProducts[index];
 
                 return ProductCard(
                   product: product,
                   onTap: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(
-                        builder: (context) => ProductDetails(product: product),
+                      MaterialPageRoute<void>(
+                        builder: (BuildContext context) {
+                          return ProductDetails(product: product);
+                        },
                       ),
                     );
                   },
@@ -836,7 +851,7 @@ class _ProductListState extends State<ProductList> {
                 crossAxisCount: 2,
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 12,
-                childAspectRatio: .65,
+                childAspectRatio: 0.65,
               ),
             ),
           ),
