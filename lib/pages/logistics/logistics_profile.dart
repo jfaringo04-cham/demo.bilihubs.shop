@@ -14,6 +14,8 @@ class _LogisticsProfileState extends State<LogisticsProfile> {
   bool _isLoading = true;
   bool _isLoggingOut = false;
 
+  String? _errorMessage;
+
   Map<String, dynamic> _user = <String, dynamic>{};
 
   @override
@@ -28,89 +30,163 @@ class _LogisticsProfileState extends State<LogisticsProfile> {
   // ============================================================
 
   Future<void> _loadProfile() async {
-    setState(() {
-      _isLoading = true;
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
 
-    final savedUser = await AuthStorage.getUser();
+    try {
+      final Map<String, dynamic>? user = await AuthStorage.getUser();
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      _user = savedUser ?? <String, dynamic>{};
+      setState(() {
+        _user = user ?? <String, dynamic>{};
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
 
-      _isLoading = false;
-    });
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Unable to load profile information: $e';
+      });
+    }
   }
 
   // ============================================================
-  // PROFILE VALUES
+  // LOGISTICS DATA
   // ============================================================
 
-  String get _name {
-    final value = _user['name']?.toString().trim();
+  Map<String, dynamic> get _logistic {
+    final dynamic value = _user['logistic'];
 
-    if (value == null || value.isEmpty) {
-      return 'Logistics Staff';
+    if (value is Map) {
+      return Map<String, dynamic>.from(value);
     }
 
-    return value;
+    return <String, dynamic>{};
   }
 
-  String get _email {
-    final value = _user['email']?.toString().trim();
+  // ============================================================
+  // VALUE HELPERS
+  // ============================================================
 
-    if (value == null || value.isEmpty) {
-      return 'Not available';
+  String _value(dynamic value, {String fallback = '—'}) {
+    final String text = value?.toString().trim() ?? '';
+
+    if (text.isEmpty || text.toLowerCase() == 'null') {
+      return fallback;
     }
 
-    return value;
+    return text;
   }
 
-  String get _userId {
-    final value = _user['id'];
+  String _capitalizeWords(String value) {
+    final String cleaned = value.replaceAll('_', ' ').trim();
 
-    if (value == null || value.toString().trim().isEmpty) {
-      return 'Not available';
+    if (cleaned.isEmpty) {
+      return cleaned;
     }
 
-    return value.toString();
+    return cleaned
+        .split(RegExp(r'\s+'))
+        .map((String word) {
+          if (word.isEmpty) {
+            return word;
+          }
+
+          return '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}';
+        })
+        .join(' ');
   }
+
+  // ============================================================
+  // ROLE
+  // ============================================================
 
   String get _role {
-    final directRole = _user['role']?.toString().trim();
+    final dynamic directRole = _user['role'];
 
-    if (directRole != null && directRole.isNotEmpty) {
-      return _formatRole(directRole);
+    if (directRole != null && directRole.toString().trim().isNotEmpty) {
+      return _capitalizeWords(directRole.toString());
     }
 
-    final roles = _user['roles'];
+    final dynamic roles = _user['roles'];
 
     if (roles is List && roles.isNotEmpty) {
-      final firstRole = roles.first;
+      final dynamic firstRole = roles.first;
 
       if (firstRole is Map) {
-        final roleName = firstRole['name']?.toString().trim();
+        final dynamic name = firstRole['name'];
 
-        if (roleName != null && roleName.isNotEmpty) {
-          return _formatRole(roleName);
+        if (name != null && name.toString().trim().isNotEmpty) {
+          return _capitalizeWords(name.toString());
         }
+      } else if (firstRole != null) {
+        return _capitalizeWords(firstRole.toString());
       }
     }
 
     return 'Logistics';
   }
 
-  String _formatRole(String value) {
-    return value
-        .replaceAll('_', ' ')
-        .split(' ')
-        .map(
-          (word) => word.isEmpty
-              ? word
-              : '${word[0].toUpperCase()}${word.substring(1)}',
-        )
-        .join(' ');
+  // ============================================================
+  // LOGISTICS STATUS
+  // ============================================================
+
+  String get _logisticsStatus {
+    final dynamic topLevel = _user['logistic_status'];
+
+    if (topLevel != null && topLevel.toString().trim().isNotEmpty) {
+      return _capitalizeWords(topLevel.toString());
+    }
+
+    final dynamic nestedStatus = _logistic['status'];
+
+    if (nestedStatus != null && nestedStatus.toString().trim().isNotEmpty) {
+      return _capitalizeWords(nestedStatus.toString());
+    }
+
+    return 'Approved';
+  }
+
+  // ============================================================
+  // ACCOUNT STATUS
+  // ============================================================
+
+  String get _accountStatus {
+    return _capitalizeWords(_value(_user['status'], fallback: 'active'));
+  }
+
+  // ============================================================
+  // COMPANY NAME
+  // ============================================================
+
+  String get _companyName {
+    final String nested = _value(_logistic['company_name'], fallback: '');
+
+    if (nested.isNotEmpty) {
+      return nested;
+    }
+
+    return _value(_user['company_name'], fallback: 'Logistics Company');
+  }
+
+  // ============================================================
+  // AVATAR LETTER
+  // ============================================================
+
+  String get _avatarLetter {
+    final String name = _value(_user['name'], fallback: 'L');
+
+    if (name.isEmpty) {
+      return 'L';
+    }
+
+    return name.substring(0, 1).toUpperCase();
   }
 
   // ============================================================
@@ -119,681 +195,399 @@ class _LogisticsProfileState extends State<LogisticsProfile> {
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-
     return Scaffold(
       backgroundColor: LogisticsColors.background,
 
       appBar: AppBar(
         backgroundColor: LogisticsColors.background,
 
-        elevation: 0,
-
         surfaceTintColor: Colors.transparent,
 
-        iconTheme: const IconThemeData(color: LogisticsColors.textDark),
-
-        titleSpacing: 4,
-
-        title: const Text(
-          'Profile',
-
-          style: TextStyle(
-            color: LogisticsColors.textDark,
-
-            fontSize: 20,
-
-            fontWeight: FontWeight.w800,
-          ),
-        ),
+        title: const Text('Profile', style: LogisticsStyle.title),
 
         actions: [
           IconButton(
-            tooltip: 'Refresh',
-
+            tooltip: 'Refresh profile',
             onPressed: _isLoading ? null : _loadProfile,
-
-            icon: const Icon(
-              Icons.refresh_rounded,
-
-              color: LogisticsColors.primary,
-            ),
-          ),
-
-          const SizedBox(width: 6),
-        ],
-      ),
-
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _loadProfile,
-
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(
-              parent: BouncingScrollPhysics(),
-            ),
-
-            padding: EdgeInsets.fromLTRB(width * 0.045, 4, width * 0.045, 30),
-
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-
-              children: [
-                if (_isLoading) ...[_loadingCard(), const SizedBox(height: 16)],
-
-                _profileHeader(),
-
-                const SizedBox(height: 24),
-
-                // ============================================================
-                // PERSONAL INFORMATION
-                // ============================================================
-                const Text(
-                  'Personal Information',
-
-                  style: LogisticsStyle.sectionTitle,
-                ),
-
-                const SizedBox(height: 12),
-
-                _infoCard(
-                  icon: Icons.person_outline_rounded,
-
-                  title: 'Name',
-
-                  value: _name,
-                ),
-
-                _infoCard(
-                  icon: Icons.email_outlined,
-
-                  title: 'Email Address',
-
-                  value: _email,
-                ),
-
-                _infoCard(
-                  icon: Icons.badge_outlined,
-
-                  title: 'User ID',
-
-                  value: _userId,
-                ),
-
-                _infoCard(
-                  icon: Icons.account_circle_outlined,
-
-                  title: 'Account Role',
-
-                  value: _role,
-                ),
-
-                const SizedBox(height: 12),
-
-                // ============================================================
-                // LOGISTICS INFORMATION
-                // ============================================================
-                const Text(
-                  'Logistics Information',
-
-                  style: LogisticsStyle.sectionTitle,
-                ),
-
-                const SizedBox(height: 12),
-
-                Container(
-                  width: double.infinity,
-
-                  padding: const EdgeInsets.all(16),
-
-                  decoration: LogisticsStyle.card,
-
-                  child: const Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-
-                    children: [
-                      Icon(
-                        Icons.info_outline_rounded,
-
-                        color: LogisticsColors.primary,
-
-                        size: 21,
-                      ),
-
-                      SizedBox(width: 10),
-
-                      Expanded(
-                        child: Text(
-                          'Employee ID, department, hub, and other Logistics-specific information will appear once the Logistics backend API is available.',
-
-                          style: LogisticsStyle.small,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // ============================================================
-                // ACCOUNT
-                // ============================================================
-                const Text('Account', style: LogisticsStyle.sectionTitle),
-
-                const SizedBox(height: 12),
-
-                Container(
-                  width: double.infinity,
-
-                  decoration: LogisticsStyle.card,
-
-                  child: Column(
-                    children: [
-                      _menuItem(
-                        icon: Icons.settings_outlined,
-
-                        title: 'Account Settings',
-
-                        subtitle: 'Account settings are not available yet.',
-
-                        onTap: () {
-                          _showUnavailable(
-                            'Account settings are not available yet.',
-                          );
-                        },
-                      ),
-
-                      _divider(),
-
-                      _menuItem(
-                        icon: Icons.lock_outline_rounded,
-
-                        title: 'Security',
-
-                        subtitle: 'Security settings are not available yet.',
-
-                        onTap: () {
-                          _showUnavailable(
-                            'Security settings are not available yet.',
-                          );
-                        },
-                      ),
-
-                      _divider(),
-
-                      _menuItem(
-                        icon: Icons.help_outline_rounded,
-
-                        title: 'Help Center',
-
-                        subtitle: 'Help center is not available yet.',
-
-                        onTap: () {
-                          _showUnavailable('Help center is not available yet.');
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // ============================================================
-                // LOGOUT
-                // ============================================================
-                SizedBox(
-                  width: double.infinity,
-
-                  height: 52,
-
-                  child: OutlinedButton.icon(
-                    onPressed: _isLoggingOut ? null : _showLogoutDialog,
-
-                    icon: _isLoggingOut
-                        ? const SizedBox(
-                            height: 19,
-
-                            width: 19,
-
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-
-                              color: LogisticsColors.danger,
-                            ),
-                          )
-                        : const Icon(Icons.logout_rounded, size: 20),
-
-                    label: Text(_isLoggingOut ? 'Logging out...' : 'Logout'),
-
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: LogisticsColors.danger,
-
-                      backgroundColor: Colors.white,
-
-                      elevation: 0,
-
-                      side: const BorderSide(color: LogisticsColors.danger),
-
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-
-                      textStyle: const TextStyle(
-                        fontSize: 14,
-
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                const Center(
-                  child: Text(
-                    'BiliHub Logistics',
-
-                    style: TextStyle(
-                      color: LogisticsColors.textLight,
-
-                      fontSize: 10,
-
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // PROFILE HEADER
-  // ============================================================
-
-  Widget _profileHeader() {
-    return Container(
-      width: double.infinity,
-
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-
-          end: Alignment.bottomRight,
-
-          colors: [LogisticsColors.primary, LogisticsColors.primaryDark],
-        ),
-
-        borderRadius: BorderRadius.circular(24),
-
-        boxShadow: [
-          BoxShadow(
-            color: LogisticsColors.primary.withValues(alpha: 0.22),
-
-            blurRadius: 20,
-
-            offset: const Offset(0, 8),
+            icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
 
-      child: Stack(
-        children: [
-          Positioned(
-            top: -35,
+      body: RefreshIndicator(
+        onRefresh: _loadProfile,
 
-            right: -25,
-
-            child: Container(
-              height: 120,
-
-              width: 120,
-
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-
-                color: Colors.white.withValues(alpha: 0.08),
-              ),
-            ),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics(),
           ),
 
-          Positioned(
-            bottom: -45,
+          padding: const EdgeInsets.all(18),
 
-            left: -30,
+          children: [
+            if (_isLoading)
+              const LinearProgressIndicator(color: LogisticsColors.primary),
 
-            child: Container(
-              height: 110,
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 12),
 
-              width: 110,
+              _errorCard(),
+            ],
 
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
+            const SizedBox(height: 12),
 
-                color: Colors.white.withValues(alpha: 0.06),
-              ),
-            ),
-          ),
+            // ====================================================
+            // PROFILE HEADER
+            // ====================================================
+            Container(
+              width: double.infinity,
 
-          Padding(
-            padding: const EdgeInsets.all(22),
+              padding: const EdgeInsets.all(20),
 
-            child: Column(
-              children: [
-                Container(
-                  height: 92,
+              decoration: LogisticsStyle.elevatedCard,
 
-                  width: 92,
+              child: Column(
+                children: [
+                  CircleAvatar(
+                    radius: 40,
 
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.16),
+                    backgroundColor: LogisticsColors.lightPurple,
 
-                    shape: BoxShape.circle,
-
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.75),
-
-                      width: 2,
-                    ),
-                  ),
-
-                  child: const Icon(
-                    Icons.badge_rounded,
-
-                    color: Colors.white,
-
-                    size: 50,
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                Text(
-                  _name,
-
-                  textAlign: TextAlign.center,
-
-                  maxLines: 2,
-
-                  overflow: TextOverflow.ellipsis,
-
-                  style: const TextStyle(
-                    color: Colors.white,
-
-                    fontSize: 22,
-
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-
-                const SizedBox(height: 6),
-
-                Text(
-                  _email,
-
-                  textAlign: TextAlign.center,
-
-                  maxLines: 1,
-
-                  overflow: TextOverflow.ellipsis,
-
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.78),
-
-                    fontSize: 12,
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-
-                    vertical: 6,
-                  ),
-
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.14),
-
-                    borderRadius: BorderRadius.circular(20),
-
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.18),
-                    ),
-                  ),
-
-                  child: Text(
-                    _role.toUpperCase(),
-
-                    style: const TextStyle(
-                      color: Colors.white,
-
-                      fontSize: 10,
-
-                      fontWeight: FontWeight.w800,
-
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // LOADING
-  // ============================================================
-
-  Widget _loadingCard() {
-    return Container(
-      width: double.infinity,
-
-      padding: const EdgeInsets.all(16),
-
-      decoration: LogisticsStyle.card,
-
-      child: const Row(
-        children: [
-          SizedBox(
-            height: 22,
-
-            width: 22,
-
-            child: CircularProgressIndicator(
-              strokeWidth: 2.2,
-
-              color: LogisticsColors.primary,
-            ),
-          ),
-
-          SizedBox(width: 12),
-
-          Expanded(
-            child: Text('Loading profile...', style: LogisticsStyle.small),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // INFORMATION CARD
-  // ============================================================
-
-  Widget _infoCard({
-    required IconData icon,
-    required String title,
-    required String value,
-  }) {
-    return Container(
-      width: double.infinity,
-
-      margin: const EdgeInsets.only(bottom: 10),
-
-      padding: const EdgeInsets.all(15),
-
-      decoration: LogisticsStyle.card,
-
-      child: Row(
-        children: [
-          Container(
-            height: 44,
-
-            width: 44,
-
-            decoration: BoxDecoration(
-              color: LogisticsColors.lightPurple,
-
-              borderRadius: BorderRadius.circular(13),
-            ),
-
-            child: Icon(icon, color: LogisticsColors.primary, size: 22),
-          ),
-
-          const SizedBox(width: 13),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-
-              children: [
-                Text(
-                  title,
-
-                  style: const TextStyle(
-                    color: LogisticsColors.textGrey,
-
-                    fontSize: 11,
-
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-
-                const SizedBox(height: 4),
-
-                Text(
-                  value,
-
-                  maxLines: 2,
-
-                  overflow: TextOverflow.ellipsis,
-
-                  style: LogisticsStyle.cardTitle,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // MENU ITEM
-  // ============================================================
-
-  Widget _menuItem({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: Colors.transparent,
-
-      child: InkWell(
-        onTap: onTap,
-
-        borderRadius: BorderRadius.circular(18),
-
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
-
-          child: Row(
-            children: [
-              Container(
-                height: 43,
-
-                width: 43,
-
-                decoration: BoxDecoration(
-                  color: LogisticsColors.lightPurple,
-
-                  borderRadius: BorderRadius.circular(12),
-                ),
-
-                child: Icon(icon, color: LogisticsColors.primary, size: 21),
-              ),
-
-              const SizedBox(width: 13),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-
-                  children: [
-                    Text(title, style: LogisticsStyle.cardTitle),
-
-                    const SizedBox(height: 3),
-
-                    Text(
-                      subtitle,
-
-                      maxLines: 1,
-
-                      overflow: TextOverflow.ellipsis,
+                    child: Text(
+                      _avatarLetter,
 
                       style: const TextStyle(
-                        color: LogisticsColors.textGrey,
-
-                        fontSize: 10,
+                        fontSize: 29,
+                        fontWeight: FontWeight.w800,
+                        color: LogisticsColors.primary,
                       ),
                     ),
-                  ],
+                  ),
+
+                  const SizedBox(height: 13),
+
+                  Text(
+                    _value(_user['name'], fallback: 'Logistics Staff'),
+
+                    textAlign: TextAlign.center,
+
+                    style: LogisticsStyle.sectionTitle,
+                  ),
+
+                  const SizedBox(height: 4),
+
+                  Text(
+                    _value(_user['email'], fallback: 'Email not available'),
+
+                    textAlign: TextAlign.center,
+
+                    style: LogisticsStyle.small,
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+
+                    decoration: LogisticsStyle.statusBadge(
+                      color: LogisticsColors.success,
+                    ),
+
+                    child: Text(
+                      _role.toUpperCase(),
+
+                      style: const TextStyle(
+                        color: LogisticsColors.success,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 22),
+
+            // ====================================================
+            // ACCOUNT INFORMATION
+            // ====================================================
+            const Text(
+              'Account Information',
+
+              style: LogisticsStyle.sectionTitle,
+            ),
+
+            const SizedBox(height: 12),
+
+            Container(
+              decoration: LogisticsStyle.card,
+
+              child: Column(
+                children: [
+                  _info(Icons.badge_outlined, 'User ID', _value(_user['id'])),
+
+                  const Divider(height: 1),
+
+                  _info(Icons.email_outlined, 'Email', _value(_user['email'])),
+
+                  const Divider(height: 1),
+
+                  _info(
+                    Icons.phone_outlined,
+                    'Phone',
+                    _value(
+                      _user['phone'] ?? _user['mobile_number'],
+                      fallback: 'Not provided',
+                    ),
+                  ),
+
+                  const Divider(height: 1),
+
+                  _info(
+                    Icons.verified_user_outlined,
+                    'Account Status',
+                    _accountStatus,
+                  ),
+
+                  const Divider(height: 1),
+
+                  _info(
+                    Icons.approval_outlined,
+                    'Logistics Status',
+                    _logisticsStatus,
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 22),
+
+            // ====================================================
+            // COMPANY
+            // ====================================================
+            const Text(
+              'Company Information',
+
+              style: LogisticsStyle.sectionTitle,
+            ),
+
+            const SizedBox(height: 12),
+
+            Container(
+              decoration: LogisticsStyle.card,
+
+              child: Column(
+                children: [
+                  _info(Icons.business_outlined, 'Company', _companyName),
+
+                  const Divider(height: 1),
+
+                  _info(
+                    Icons.person_outline_rounded,
+                    'Contact Person',
+                    _value(
+                      _logistic['contact_person'],
+                      fallback: 'Not provided',
+                    ),
+                  ),
+
+                  const Divider(height: 1),
+
+                  _info(
+                    Icons.email_outlined,
+                    'Company Email',
+                    _value(
+                      _logistic['email'],
+                      fallback: _value(
+                        _user['email'],
+                        fallback: 'Not provided',
+                      ),
+                    ),
+                  ),
+
+                  const Divider(height: 1),
+
+                  _info(
+                    Icons.phone_in_talk_outlined,
+                    'Company Phone',
+                    _value(_logistic['phone'], fallback: 'Not provided'),
+                  ),
+
+                  const Divider(height: 1),
+
+                  _info(
+                    Icons.location_on_outlined,
+                    'Address',
+                    _value(_logistic['address'], fallback: 'Not provided'),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 22),
+
+            // ====================================================
+            // SESSION
+            // ====================================================
+            const Text('Session', style: LogisticsStyle.sectionTitle),
+
+            const SizedBox(height: 12),
+
+            Container(
+              padding: const EdgeInsets.all(16),
+
+              decoration: LogisticsStyle.card,
+
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+
+                children: [
+                  Icon(
+                    Icons.security_outlined,
+
+                    color: LogisticsColors.primary,
+
+                    size: 22,
+                  ),
+
+                  SizedBox(width: 11),
+
+                  Expanded(
+                    child: Text(
+                      'Your logistics account is authenticated using the secure session saved on this device.',
+
+                      style: LogisticsStyle.small,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // ====================================================
+            // LOGOUT
+            // ====================================================
+            SizedBox(
+              width: double.infinity,
+
+              height: 50,
+
+              child: OutlinedButton.icon(
+                onPressed: _isLoggingOut ? null : _showLogoutDialog,
+
+                icon: _isLoggingOut
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+
+                          color: LogisticsColors.danger,
+                        ),
+                      )
+                    : const Icon(Icons.logout_rounded),
+
+                label: Text(_isLoggingOut ? 'Logging out...' : 'Logout'),
+
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: LogisticsColors.danger,
+
+                  side: const BorderSide(color: LogisticsColors.danger),
+
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
               ),
+            ),
 
-              const SizedBox(width: 8),
-
-              const Icon(
-                Icons.chevron_right_rounded,
-
-                color: LogisticsColors.textLight,
-
-                size: 22,
-              ),
-            ],
-          ),
+            const SizedBox(height: 20),
+          ],
         ),
       ),
     );
   }
 
-  Widget _divider() {
-    return const Padding(
-      padding: EdgeInsets.only(left: 71),
+  // ============================================================
+  // ERROR CARD
+  // ============================================================
 
-      child: Divider(height: 1, thickness: 0.7, color: LogisticsColors.border),
+  Widget _errorCard() {
+    return Container(
+      width: double.infinity,
+
+      padding: const EdgeInsets.all(14),
+
+      decoration: BoxDecoration(
+        color: LogisticsColors.danger.withValues(alpha: 0.07),
+
+        borderRadius: BorderRadius.circular(14),
+
+        border: Border.all(
+          color: LogisticsColors.danger.withValues(alpha: 0.25),
+        ),
+      ),
+
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+
+            color: LogisticsColors.danger,
+          ),
+
+          const SizedBox(width: 10),
+
+          Expanded(
+            child: Text(
+              _errorMessage ?? 'Unable to load profile information.',
+
+              style: LogisticsStyle.small,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   // ============================================================
-  // UNAVAILABLE
+  // INFO TILE
   // ============================================================
 
-  void _showUnavailable(String message) {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+  Widget _info(IconData icon, String title, String value) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
+      leading: Container(
+        height: 40,
+        width: 40,
+
+        decoration: BoxDecoration(
+          color: LogisticsColors.lightPurple,
+
+          borderRadius: BorderRadius.circular(12),
+        ),
+
+        child: Icon(icon, color: LogisticsColors.primary, size: 21),
+      ),
+
+      title: Text(title, style: LogisticsStyle.small),
+
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 3),
+
+        child: Text(value, style: LogisticsStyle.cardTitle),
+      ),
     );
   }
 
@@ -802,39 +596,15 @@ class _LogisticsProfileState extends State<LogisticsProfile> {
   // ============================================================
 
   Future<void> _showLogoutDialog() async {
-    final shouldLogout = await showDialog<bool>(
+    final bool? shouldLogout = await showDialog<bool>(
       context: context,
 
-      builder: (dialogContext) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
-          backgroundColor: Colors.white,
-
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(22),
-          ),
-
-          title: const Text(
-            'Logout',
-
-            style: TextStyle(
-              color: LogisticsColors.textDark,
-
-              fontSize: 18,
-
-              fontWeight: FontWeight.w800,
-            ),
-          ),
+          title: const Text('Logout'),
 
           content: const Text(
             'Are you sure you want to logout from your logistics account?',
-
-            style: TextStyle(
-              color: LogisticsColors.textGrey,
-
-              fontSize: 13,
-
-              height: 1.45,
-            ),
           ),
 
           actions: [
@@ -846,29 +616,23 @@ class _LogisticsProfileState extends State<LogisticsProfile> {
               child: const Text('Cancel'),
             ),
 
-            ElevatedButton(
+            ElevatedButton.icon(
               onPressed: () {
                 Navigator.pop(dialogContext, true);
               },
 
-              style: ElevatedButton.styleFrom(
-                backgroundColor: LogisticsColors.danger,
+              icon: const Icon(Icons.logout_rounded),
 
-                foregroundColor: Colors.white,
-              ),
-
-              child: const Text('Logout'),
+              label: const Text('Logout'),
             ),
           ],
         );
       },
     );
 
-    if (shouldLogout != true || !mounted) {
-      return;
+    if (shouldLogout == true && mounted) {
+      await _logout();
     }
-
-    await _logout();
   }
 
   // ============================================================
@@ -876,6 +640,10 @@ class _LogisticsProfileState extends State<LogisticsProfile> {
   // ============================================================
 
   Future<void> _logout() async {
+    if (_isLoggingOut) {
+      return;
+    }
+
     setState(() {
       _isLoggingOut = true;
     });
@@ -885,7 +653,7 @@ class _LogisticsProfileState extends State<LogisticsProfile> {
 
       if (!mounted) return;
 
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      Navigator.of(context).popUntil((Route<dynamic> route) => route.isFirst);
     } catch (e) {
       if (!mounted) return;
 
@@ -893,9 +661,13 @@ class _LogisticsProfileState extends State<LogisticsProfile> {
         _isLoggingOut = false;
       });
 
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
+
+          backgroundColor: LogisticsColors.danger,
 
           content: Text('Unable to logout: $e'),
         ),

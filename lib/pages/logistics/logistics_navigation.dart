@@ -3,10 +3,10 @@ import 'package:flutter/material.dart';
 import '../../widgets/bottom_nav.dart';
 
 import 'logistics_home.dart';
+import 'logistics_profile.dart';
+import 'parcel_list.dart';
 import 'parcel_scanner.dart';
 import 'tracking_map.dart';
-import 'parcel_list.dart';
-import 'logistics_profile.dart';
 
 class LogisticsNavigation extends StatefulWidget {
   const LogisticsNavigation({super.key});
@@ -16,14 +16,18 @@ class LogisticsNavigation extends StatefulWidget {
 }
 
 class _LogisticsNavigationState extends State<LogisticsNavigation> {
-  int currentIndex = 0;
+  int _currentIndex = 0;
 
-  final List<BottomNavItem> items = [
+  // ============================================================
+  // BOTTOM NAV ITEMS
+  // ============================================================
+
+  final List<BottomNavItem> _items = const [
     BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
-    BottomNavItem(icon: Icons.qr_code_scanner, label: 'Scanner'),
+    BottomNavItem(icon: Icons.qr_code_scanner_rounded, label: 'Scanner'),
     BottomNavItem(icon: Icons.location_on_outlined, label: 'Tracking'),
     BottomNavItem(icon: Icons.inventory_2_outlined, label: 'Parcels'),
-    BottomNavItem(icon: Icons.person_outline, label: 'Profile'),
+    BottomNavItem(icon: Icons.person_outline_rounded, label: 'Profile'),
   ];
 
   // ============================================================
@@ -31,21 +35,21 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
   // ============================================================
 
   void _changeTab(int index) {
-    if (index < 0 || index >= items.length || index == currentIndex) {
+    if (index < 0 || index >= _items.length || index == _currentIndex) {
       return;
     }
 
     setState(() {
-      currentIndex = index;
+      _currentIndex = index;
     });
   }
 
   // ============================================================
-  // BUILD CURRENT PAGE
+  // BUILD PAGE
   // ============================================================
 
   Widget _buildCurrentPage() {
-    switch (currentIndex) {
+    switch (_currentIndex) {
       case 0:
         return LogisticsHome(
           onOpenScanner: () {
@@ -81,11 +85,13 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _buildCurrentPage(),
+      backgroundColor: Colors.white,
+
+      body: SafeArea(top: false, bottom: false, child: _buildCurrentPage()),
 
       bottomNavigationBar: BottomNav(
-        currentIndex: currentIndex,
-        items: items,
+        currentIndex: _currentIndex,
+        items: _items,
         onTap: _changeTab,
       ),
     );

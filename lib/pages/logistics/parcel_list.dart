@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/parcel_model.dart';
+import '../../sevices/api_services.dart';
 import '../../styles/logistics_style.dart';
 import '../../widgets/parcel_card.dart';
 
@@ -16,16 +17,107 @@ class ParcelList extends StatefulWidget {
 class _ParcelListState extends State<ParcelList> {
   final TextEditingController _searchController = TextEditingController();
 
+  final List<ParcelModel> _parcels = <ParcelModel>[];
+
   String _searchQuery = '';
   String _selectedStatus = 'all';
 
-  final List<ParcelModel> _parcels = <ParcelModel>[];
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadParcels();
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
-
     super.dispose();
+  }
+
+  // ============================================================
+  // LOAD PARCELS
+  // ============================================================
+
+  Future<void> _loadParcels({bool showLoading = true}) async {
+    if (showLoading && mounted) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
+
+    try {
+      final result = await ApiService.getLogisticsShipments();
+
+      if (!mounted) return;
+
+      if (result['success'] != true) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage =
+              result['message']?.toString() ??
+              'Unable to load logistics parcels.';
+        });
+
+        return;
+      }
+
+      final dynamic rawData = result['data'];
+
+      final List<dynamic> items;
+
+      if (rawData is List) {
+        items = rawData;
+      } else {
+        items = <dynamic>[];
+      }
+
+      final List<ParcelModel> loadedParcels = [];
+
+      for (final item in items) {
+        if (item is! Map) continue;
+
+        try {
+          final map = Map<String, dynamic>.from(item);
+
+          // ParcelModel expects order_date.
+          // Logistics API currently returns created_at,
+          // so use it as fallback.
+          map['order_date'] ??= map['created_at'] ?? '';
+
+          map['tracking_number'] ??= map['tracking_code'] ?? '';
+
+          map['customer_name'] ??= '';
+          map['customer_phone'] ??= '';
+          map['delivery_address'] ??= '';
+          map['rider_name'] ??= '';
+          map['status'] ??= 'pending';
+
+          loadedParcels.add(ParcelModel.fromJson(map));
+        } catch (e) {
+          debugPrint('Unable to parse logistics parcel: $e');
+        }
+      }
+
+      setState(() {
+        _parcels
+          ..clear()
+          ..addAll(loadedParcels);
+
+        _isLoading = false;
+        _errorMessage = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Unable to load logistics parcels: $e';
+      });
+    }
   }
 
   // ============================================================
@@ -50,7 +142,10 @@ class _ParcelListState extends State<ParcelList> {
         return true;
       }
 
-      final status = parcel.status.trim().toLowerCase().replaceAll(' ', '_');
+      final status = parcel.status
+          .trim()
+          .toLowerCase()
+          .replaceAll(' ', '_');
 
       switch (_selectedStatus) {
         case 'pending':
@@ -69,6 +164,9 @@ class _ParcelListState extends State<ParcelList> {
         case 'delivered':
           return status == 'delivered' || status == 'completed';
 
+        case 'cancelled':
+          return status == 'cancelled';
+
         default:
           return true;
       }
@@ -80,17 +178,7 @@ class _ParcelListState extends State<ParcelList> {
   // ============================================================
 
   Future<void> _refreshParcels() async {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        behavior: SnackBarBehavior.floating,
-
-        content: Text('Logistics parcel API is not available yet.'),
-      ),
-    );
+    await _loadParcels(showLoading: false);
   }
 
   // ============================================================
@@ -100,80 +188,60 @@ class _ParcelListState extends State<ParcelList> {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-
     final filteredParcels = _filteredParcels;
 
     return Scaffold(
       backgroundColor: LogisticsColors.background,
-
       appBar: AppBar(
         backgroundColor: LogisticsColors.background,
-
         elevation: 0,
-
         surfaceTintColor: Colors.transparent,
-
-        iconTheme: const IconThemeData(color: LogisticsColors.textDark),
-
+        iconTheme: const IconThemeData(
+          color: LogisticsColors.textDark,
+        ),
         titleSpacing: 4,
-
         title: const Text(
           'Parcel List',
-
           style: TextStyle(
             color: LogisticsColors.textDark,
-
             fontSize: 20,
-
             fontWeight: FontWeight.w800,
           ),
         ),
-
         actions: [
           IconButton(
-            onPressed: _refreshParcels,
-
+            onPressed: _isLoading ? null : _refreshParcels,
             tooltip: 'Refresh',
-
             icon: const Icon(
               Icons.refresh_rounded,
-
               color: LogisticsColors.primary,
             ),
           ),
-
           const SizedBox(width: 6),
         ],
       ),
-
       body: SafeArea(
         child: Column(
           children: [
-            // ====================================================
-            // HEADER / SEARCH
-            // ====================================================
-
             Padding(
-              padding: EdgeInsets.fromLTRB(width * 0.045, 4, width * 0.045, 0),
-
+              padding: EdgeInsets.fromLTRB(
+                width * 0.045,
+                4,
+                width * 0.045,
+                0,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-
                 children: [
                   const Text(
                     'Manage Parcels',
-
                     style: LogisticsStyle.sectionTitle,
                   ),
-
                   const SizedBox(height: 4),
-
                   const Text(
                     'Search and view parcel delivery information.',
-
                     style: LogisticsStyle.small,
                   ),
-
                   const SizedBox(height: 16),
 
                   Row(
@@ -182,58 +250,44 @@ class _ParcelListState extends State<ParcelList> {
                         child: Container(
                           decoration: BoxDecoration(
                             color: LogisticsColors.white,
-
                             borderRadius: BorderRadius.circular(15),
-
-                            border: Border.all(color: LogisticsColors.border),
-
+                            border: Border.all(
+                              color: LogisticsColors.border,
+                            ),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.025),
-
+                                color: Colors.black.withValues(
+                                  alpha: 0.025,
+                                ),
                                 blurRadius: 10,
-
                                 offset: const Offset(0, 4),
                               ),
                             ],
                           ),
-
                           child: TextField(
                             controller: _searchController,
-
                             onChanged: (value) {
                               setState(() {
                                 _searchQuery = value.trim();
                               });
                             },
-
                             textInputAction: TextInputAction.search,
-
                             style: const TextStyle(
                               color: LogisticsColors.textDark,
-
                               fontSize: 13,
-
                               fontWeight: FontWeight.w500,
                             ),
-
                             decoration: InputDecoration(
                               hintText: 'Search tracking number...',
-
                               hintStyle: const TextStyle(
                                 color: LogisticsColors.textLight,
-
                                 fontSize: 13,
                               ),
-
                               prefixIcon: const Icon(
                                 Icons.search_rounded,
-
                                 color: LogisticsColors.primary,
-
                                 size: 22,
                               ),
-
                               suffixIcon: _searchQuery.isNotEmpty
                                   ? IconButton(
                                       onPressed: () {
@@ -243,102 +297,55 @@ class _ParcelListState extends State<ParcelList> {
                                           _searchQuery = '';
                                         });
                                       },
-
                                       icon: const Icon(
                                         Icons.close_rounded,
-
-                                        color: LogisticsColors.textGrey,
-
                                         size: 19,
                                       ),
                                     )
                                   : null,
-
-                              filled: true,
-
-                              fillColor: LogisticsColors.white,
-
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-
-                                vertical: 14,
-                              ),
-
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(15),
-
-                                borderSide: BorderSide.none,
-                              ),
-
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(15),
-
-                                borderSide: BorderSide.none,
-                              ),
-
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(15),
-
-                                borderSide: const BorderSide(
-                                  color: LogisticsColors.primary,
-
-                                  width: 1.3,
-                                ),
-                              ),
+                              border: InputBorder.none,
+                              contentPadding:
+                                  const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
                             ),
                           ),
                         ),
                       ),
-
                       const SizedBox(width: 10),
-
                       Material(
-                        color: LogisticsColors.lightPurple,
-
-                        borderRadius: BorderRadius.circular(15),
-
+                        color: Colors.transparent,
                         child: InkWell(
                           onTap: _showFilterOptions,
-
                           borderRadius: BorderRadius.circular(15),
-
                           child: Container(
                             height: 50,
                             width: 50,
-
                             decoration: BoxDecoration(
+                              color: LogisticsColors.white,
                               borderRadius: BorderRadius.circular(15),
-
                               border: Border.all(
-                                color: LogisticsColors.softPurple,
+                                color: _selectedStatus == 'all'
+                                    ? LogisticsColors.border
+                                    : LogisticsColors.primary,
                               ),
                             ),
-
                             child: Stack(
                               alignment: Alignment.center,
-
                               children: [
                                 const Icon(
                                   Icons.tune_rounded,
-
                                   color: LogisticsColors.primary,
-
-                                  size: 22,
                                 ),
-
                                 if (_selectedStatus != 'all')
                                   Positioned(
                                     top: 8,
                                     right: 8,
-
                                     child: Container(
                                       height: 7,
-
                                       width: 7,
-
                                       decoration: const BoxDecoration(
                                         color: LogisticsColors.warning,
-
                                         shape: BoxShape.circle,
                                       ),
                                     ),
@@ -354,36 +361,27 @@ class _ParcelListState extends State<ParcelList> {
                   const SizedBox(height: 20),
 
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-
+                    mainAxisAlignment:
+                        MainAxisAlignment.spaceBetween,
                     children: [
                       const Text(
                         'All Parcels',
-
                         style: LogisticsStyle.sectionTitle,
                       ),
-
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,
-
                           vertical: 5,
                         ),
-
                         decoration: BoxDecoration(
                           color: LogisticsColors.lightPurple,
-
                           borderRadius: BorderRadius.circular(20),
                         ),
-
                         child: Text(
                           '${filteredParcels.length} parcel${filteredParcels.length == 1 ? '' : 's'}',
-
                           style: const TextStyle(
                             color: LogisticsColors.primary,
-
                             fontSize: 10,
-
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -396,14 +394,13 @@ class _ParcelListState extends State<ParcelList> {
               ),
             ),
 
-            // ====================================================
-            // BODY
-            // ====================================================
             Expanded(
               child: RefreshIndicator(
                 onRefresh: _refreshParcels,
-
-                child: _buildParcelBody(width, filteredParcels),
+                child: _buildParcelBody(
+                  width,
+                  filteredParcels,
+                ),
               ),
             ),
           ],
@@ -413,12 +410,27 @@ class _ParcelListState extends State<ParcelList> {
   }
 
   // ============================================================
-  // PARCEL BODY
+  // BODY
   // ============================================================
 
-  Widget _buildParcelBody(double width, List<ParcelModel> filteredParcels) {
+  Widget _buildParcelBody(
+    double width,
+    List<ParcelModel> filteredParcels,
+  ) {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(
+          color: LogisticsColors.primary,
+        ),
+      );
+    }
+
+    if (_errorMessage != null) {
+      return _errorState();
+    }
+
     if (_parcels.isEmpty) {
-      return _apiUnavailableState();
+      return _emptyState();
     }
 
     if (filteredParcels.isEmpty) {
@@ -432,27 +444,29 @@ class _ParcelListState extends State<ParcelList> {
   // PARCEL LIST
   // ============================================================
 
-  Widget _parcelList(double width, List<ParcelModel> parcels) {
+  Widget _parcelList(
+    double width,
+    List<ParcelModel> parcels,
+  ) {
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(
         parent: BouncingScrollPhysics(),
       ),
-
-      padding: EdgeInsets.fromLTRB(width * 0.045, 4, width * 0.045, 24),
-
+      padding: EdgeInsets.fromLTRB(
+        width * 0.045,
+        4,
+        width * 0.045,
+        24,
+      ),
       itemCount: parcels.length,
-
       itemBuilder: (context, index) {
         final parcel = parcels[index];
 
         return Padding(
           padding: const EdgeInsets.only(bottom: 12),
-
           child: ParcelCard(
             parcel: parcel,
-
             buttonText: 'View',
-
             onButtonPressed: () {
               _openParcel(parcel);
             },
@@ -463,93 +477,126 @@ class _ParcelListState extends State<ParcelList> {
   }
 
   // ============================================================
-  // API UNAVAILABLE
+  // ERROR STATE
   // ============================================================
 
-  Widget _apiUnavailableState() {
+  Widget _errorState() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-
-      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 30),
-
+      padding: const EdgeInsets.symmetric(
+        horizontal: 30,
+        vertical: 30,
+      ),
       children: [
         const SizedBox(height: 50),
-
         Center(
           child: Container(
             height: 100,
             width: 100,
-
             decoration: const BoxDecoration(
               color: LogisticsColors.lightPurple,
-
               shape: BoxShape.circle,
             ),
-
             child: const Icon(
-              Icons.inventory_2_outlined,
-
+              Icons.cloud_off_rounded,
               color: LogisticsColors.primary,
-
               size: 46,
             ),
           ),
         ),
-
         const SizedBox(height: 22),
-
         const Text(
-          'Parcel List Unavailable',
-
+          'Unable to Load Parcels',
           textAlign: TextAlign.center,
-
           style: TextStyle(
             color: LogisticsColors.textDark,
-
             fontSize: 20,
-
             fontWeight: FontWeight.w800,
           ),
         ),
-
         const SizedBox(height: 8),
-
-        const Text(
-          'The Logistics parcel API is not available yet.\n'
-          'Assigned parcels will appear here once the backend endpoint is enabled.',
-
+        Text(
+          _errorMessage ?? 'Unable to load parcels.',
           textAlign: TextAlign.center,
-
-          style: TextStyle(
+          style: const TextStyle(
             color: LogisticsColors.textGrey,
-
             fontSize: 13,
-
             height: 1.5,
           ),
         ),
-
         const SizedBox(height: 22),
-
         Center(
           child: OutlinedButton.icon(
-            onPressed: _refreshParcels,
-
-            icon: const Icon(Icons.refresh_rounded, size: 19),
-
-            label: const Text('Check Again'),
-
+            onPressed: () {
+              _loadParcels();
+            },
+            icon: const Icon(
+              Icons.refresh_rounded,
+              size: 19,
+            ),
+            label: const Text('Try Again'),
             style: OutlinedButton.styleFrom(
               foregroundColor: LogisticsColors.primary,
-
               backgroundColor: LogisticsColors.white,
-
-              side: const BorderSide(color: LogisticsColors.primary),
-
+              side: const BorderSide(
+                color: LogisticsColors.primary,
+              ),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(13),
               ),
             ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ============================================================
+  // EMPTY STATE
+  // ============================================================
+
+  Widget _emptyState() {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 30,
+        vertical: 30,
+      ),
+      children: [
+        const SizedBox(height: 50),
+        Center(
+          child: Container(
+            height: 100,
+            width: 100,
+            decoration: const BoxDecoration(
+              color: LogisticsColors.lightPurple,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.inventory_2_outlined,
+              color: LogisticsColors.primary,
+              size: 46,
+            ),
+          ),
+        ),
+        const SizedBox(height: 22),
+        const Text(
+          'No Parcels Yet',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: LogisticsColors.textDark,
+            fontSize: 20,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'There are currently no shipments assigned to this logistics account.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: LogisticsColors.textGrey,
+            fontSize: 13,
+            height: 1.5,
           ),
         ),
       ],
@@ -563,63 +610,43 @@ class _ParcelListState extends State<ParcelList> {
   Widget _noSearchResults() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-
       padding: const EdgeInsets.all(30),
-
       children: [
         const SizedBox(height: 70),
-
         Center(
           child: Container(
             height: 80,
             width: 80,
-
             decoration: const BoxDecoration(
               color: LogisticsColors.lightPurple,
-
               shape: BoxShape.circle,
             ),
-
             child: const Icon(
               Icons.search_off_rounded,
-
               color: LogisticsColors.primary,
-
               size: 36,
             ),
           ),
         ),
-
         const SizedBox(height: 18),
-
         const Text(
           'No Parcels Found',
-
           textAlign: TextAlign.center,
-
           style: TextStyle(
             color: LogisticsColors.textDark,
-
             fontSize: 18,
-
             fontWeight: FontWeight.w800,
           ),
         ),
-
         const SizedBox(height: 7),
-
         Text(
           _searchQuery.isNotEmpty
               ? 'No parcel matches "$_searchQuery".'
               : 'No parcels match the selected filter.',
-
           textAlign: TextAlign.center,
-
           style: LogisticsStyle.small,
         ),
-
         const SizedBox(height: 18),
-
         Center(
           child: TextButton(
             onPressed: () {
@@ -630,9 +657,7 @@ class _ParcelListState extends State<ParcelList> {
                 _selectedStatus = 'all';
               });
             },
-
             style: LogisticsStyle.textButton,
-
             child: const Text('Clear Filters'),
           ),
         ),
@@ -647,98 +672,86 @@ class _ParcelListState extends State<ParcelList> {
   void _showFilterOptions() {
     showModalBottomSheet(
       context: context,
-
       backgroundColor: Colors.transparent,
-
       builder: (sheetContext) {
         return Container(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-
+          padding: const EdgeInsets.fromLTRB(
+            20,
+            12,
+            20,
+            28,
+          ),
           decoration: const BoxDecoration(
             color: Colors.white,
-
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(28),
+            ),
           ),
-
           child: Column(
             mainAxisSize: MainAxisSize.min,
-
-            crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
-              Center(
-                child: Container(
-                  height: 4,
-                  width: 42,
-
-                  decoration: BoxDecoration(
-                    color: LogisticsColors.border,
-
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+              Container(
+                height: 4,
+                width: 42,
+                decoration: BoxDecoration(
+                  color: LogisticsColors.border,
+                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
-
               const SizedBox(height: 18),
-
-              const Text('Filter Parcels', style: LogisticsStyle.sectionTitle),
-
-              const SizedBox(height: 5),
-
-              const Text(
-                'Choose a parcel status to filter the list.',
-
-                style: LogisticsStyle.small,
+              const Row(
+                children: [
+                  Icon(
+                    Icons.tune_rounded,
+                    color: LogisticsColors.primary,
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Filter Parcels',
+                    style: LogisticsStyle.sectionTitle,
+                  ),
+                ],
               ),
-
               const SizedBox(height: 18),
 
               _filterOption(
-                sheetContext: sheetContext,
-
-                icon: Icons.all_inbox_rounded,
-
+                sheetContext,
+                icon: Icons.inventory_2_outlined,
                 title: 'All Parcels',
-
                 value: 'all',
-
                 color: LogisticsColors.primary,
               ),
 
               _filterOption(
-                sheetContext: sheetContext,
-
-                icon: Icons.pending_actions_rounded,
-
+                sheetContext,
+                icon: Icons.schedule_rounded,
                 title: 'Pending',
-
                 value: 'pending',
-
                 color: LogisticsColors.warning,
               ),
 
               _filterOption(
-                sheetContext: sheetContext,
-
-                icon: Icons.local_shipping_rounded,
-
+                sheetContext,
+                icon: Icons.local_shipping_outlined,
                 title: 'In Transit',
-
                 value: 'in_transit',
-
                 color: LogisticsColors.primary,
               ),
 
               _filterOption(
-                sheetContext: sheetContext,
-
-                icon: Icons.check_circle_rounded,
-
+                sheetContext,
+                icon: Icons.check_circle_outline_rounded,
                 title: 'Delivered',
-
                 value: 'delivered',
+                color: Colors.green,
+              ),
 
-                color: LogisticsColors.success,
+              _filterOption(
+                sheetContext,
+                icon: Icons.cancel_outlined,
+                title: 'Cancelled',
+                value: 'cancelled',
+                color: Colors.red,
               ),
             ],
           ),
@@ -747,12 +760,8 @@ class _ParcelListState extends State<ParcelList> {
     );
   }
 
-  // ============================================================
-  // FILTER OPTION
-  // ============================================================
-
-  Widget _filterOption({
-    required BuildContext sheetContext,
+  Widget _filterOption(
+    BuildContext sheetContext, {
     required IconData icon,
     required String title,
     required String value,
@@ -762,10 +771,8 @@ class _ParcelListState extends State<ParcelList> {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-
       child: Material(
         color: Colors.transparent,
-
         child: InkWell(
           onTap: () {
             Navigator.pop(sheetContext);
@@ -774,55 +781,53 @@ class _ParcelListState extends State<ParcelList> {
               _selectedStatus = value;
             });
           },
-
           borderRadius: BorderRadius.circular(14),
-
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 12,
+            ),
             decoration: BoxDecoration(
               color: isSelected
                   ? LogisticsColors.lightPurple
                   : LogisticsColors.background,
-
               borderRadius: BorderRadius.circular(14),
-
               border: Border.all(
                 color: isSelected
                     ? LogisticsColors.primary
                     : LogisticsColors.border,
               ),
             ),
-
             child: Row(
               children: [
                 Container(
                   height: 38,
                   width: 38,
-
                   decoration: BoxDecoration(
                     color: color.withValues(alpha: 0.10),
-
                     borderRadius: BorderRadius.circular(11),
                   ),
-
-                  child: Icon(icon, color: color, size: 20),
+                  child: Icon(
+                    icon,
+                    color: color,
+                    size: 20,
+                  ),
                 ),
-
                 const SizedBox(width: 12),
-
-                Expanded(child: Text(title, style: LogisticsStyle.cardTitle)),
-
+                Expanded(
+                  child: Text(
+                    title,
+                    style: LogisticsStyle.cardTitle,
+                  ),
+                ),
                 if (isSelected)
                   const Icon(
                     Icons.check_rounded,
-
                     color: LogisticsColors.primary,
                   )
                 else
                   const Icon(
                     Icons.chevron_right_rounded,
-
                     color: LogisticsColors.textLight,
                   ),
               ],
@@ -840,10 +845,19 @@ class _ParcelListState extends State<ParcelList> {
   Future<void> _openParcel(ParcelModel parcel) async {
     await Navigator.push(
       context,
-
       MaterialPageRoute(
-        builder: (context) => ParcelInformation(parcel: parcel),
+        builder: (context) {
+          return ParcelInformation(
+            parcel: parcel,
+          );
+        },
       ),
+    );
+
+    if (!mounted) return;
+
+    await _loadParcels(
+      showLoading: false,
     );
   }
 }

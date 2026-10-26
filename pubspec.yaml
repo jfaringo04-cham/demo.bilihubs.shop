@@ -14,14 +14,20 @@ dependencies:
 
   cupertino_icons: ^1.0.8
 
+  # HTTP requests
+  http: ^1.6.0
+
+  # Secure local authentication storage
+  flutter_secure_storage: ^11.2.0
+
   # Barcode and QR code scanner
   mobile_scanner: ^7.4.2
 
-  # Interactive map
+  # Interactive parcel tracking map
   flutter_map: ^8.3.2
   latlong2: ^0.10.1
-  http: ^1.6.0
-  flutter_secure_storage: ^11.2.0
+
+  # Image/file selection
   image_picker: ^1.2.4
   file_picker: ^13.1.0
 
@@ -34,27 +40,35 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
   assets:
     - assets/bilihub_logo.png
+    - assets/bilihub_app_icon.png
 
 flutter_launcher_icons:
   android: true
   ios: true
+
   image_path: assets/bilihub_app_icon.png
+
   adaptive_icon_background: "#241458"
   adaptive_icon_foreground: assets/bilihub_app_icon.png
   adaptive_icon_foreground_inset: 8
+
   remove_alpha_ios: true
   background_color_ios: "#241458"
+
   web:
     generate: true
     image_path: assets/bilihub_app_icon.png
     background_color: "#241458"
     theme_color: "#6C4CF1"
+
   windows:
     generate: true
     image_path: assets/bilihub_app_icon.png
     icon_size: 256
+
   macos:
     generate: true
     image_path: assets/bilihub_app_icon.png

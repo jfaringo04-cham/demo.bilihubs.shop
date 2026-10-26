@@ -1327,6 +1327,7 @@ class ApiService {
 
   // ============================================================
   // LOGISTICS DASHBOARD
+  // GET /api/logistic/dashboard
   // ============================================================
 
   static Future<Map<String, dynamic>> getLogisticsDashboard() async {
@@ -1334,10 +1335,14 @@ class ApiService {
       final String? token = await AuthStorage.getToken();
 
       if (token == null || token.trim().isEmpty) {
-        return {'success': false, 'message': 'Authentication token not found.'};
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
       }
 
-      final response = await http.get(
+      final http.Response response = await http.get(
         Uri.parse('$baseUrl/logistic/dashboard'),
         headers: _authHeaders(token),
       );
@@ -1345,20 +1350,44 @@ class ApiService {
       final dynamic decoded = _decodeResponse(response.body);
 
       if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
-        final dynamic logisticsData =
-            decoded['logistics'] ?? decoded['logistic'];
+        final dynamic rawData = decoded['data'];
+
+        if (rawData is Map) {
+          final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
+
+          return {
+            'success': true,
+            'status_code': 200,
+            'data': data,
+            'logistic': data['logistic'] is Map
+                ? Map<String, dynamic>.from(data['logistic'])
+                : <String, dynamic>{},
+            'shipments': data['shipments'] is Map
+                ? Map<String, dynamic>.from(data['shipments'])
+                : <String, dynamic>{},
+            'riders': data['riders'] is Map
+                ? Map<String, dynamic>.from(data['riders'])
+                : <String, dynamic>{},
+            'hubs': data['hubs'] is Map
+                ? Map<String, dynamic>.from(data['hubs'])
+                : <String, dynamic>{},
+            'alerts_count': data['alerts_count'] ?? 0,
+            'recent_shipments': data['recent_shipments'] is List
+                ? List<dynamic>.from(data['recent_shipments'])
+                : <dynamic>[],
+          };
+        }
 
         return {
           'success': true,
-          'logistics': logisticsData is Map
-              ? Map<String, dynamic>.from(logisticsData)
-              : <String, dynamic>{},
-          'overview': decoded['overview'] is Map
-              ? Map<String, dynamic>.from(decoded['overview'])
-              : <String, dynamic>{},
-          'activity': decoded['activity'] is Map
-              ? Map<String, dynamic>.from(decoded['activity'])
-              : <String, dynamic>{},
+          'status_code': 200,
+          'data': <String, dynamic>{},
+          'logistic': <String, dynamic>{},
+          'shipments': <String, dynamic>{},
+          'riders': <String, dynamic>{},
+          'hubs': <String, dynamic>{},
+          'alerts_count': 0,
+          'recent_shipments': <dynamic>[],
         };
       }
 
@@ -1369,8 +1398,8 @@ class ApiService {
             'This account cannot access '
             'the logistics dashboard.',
         notFoundMessage:
-            'Logistics dashboard API '
-            'is not available yet.',
+            'Logistics dashboard endpoint was not found on the server. '
+            'Please verify that the latest Laravel routes are deployed.',
         fallback:
             'Unable to load '
             'logistics dashboard.',
@@ -1387,18 +1416,49 @@ class ApiService {
 
   // ============================================================
   // LOGISTICS SHIPMENTS
+  // GET /api/logistic/shipments
   // ============================================================
 
-  static Future<Map<String, dynamic>> getLogisticsShipments() async {
+  static Future<Map<String, dynamic>> getLogisticsShipments({
+    String? status,
+    String? sortingStatus,
+    String? search,
+    int page = 1,
+    int perPage = 100,
+  }) async {
     try {
       final String? token = await AuthStorage.getToken();
 
       if (token == null || token.trim().isEmpty) {
-        return {'success': false, 'message': 'Authentication token not found.'};
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
       }
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/logistic/shipments'),
+      final Map<String, String> queryParameters = {
+        'page': page.toString(),
+        'per_page': perPage.toString(),
+      };
+
+      if (status != null && status.trim().isNotEmpty) {
+        queryParameters['status'] = status.trim();
+      }
+
+      if (sortingStatus != null && sortingStatus.trim().isNotEmpty) {
+        queryParameters['sorting_status'] = sortingStatus.trim();
+      }
+
+      if (search != null && search.trim().isNotEmpty) {
+        queryParameters['search'] = search.trim();
+      }
+
+      final Uri uri = Uri.parse('$baseUrl/logistic/shipments')
+          .replace(queryParameters: queryParameters);
+
+      final http.Response response = await http.get(
+        uri,
         headers: _authHeaders(token),
       );
 
@@ -1407,10 +1467,14 @@ class ApiService {
       if (response.statusCode == 200) {
         return {
           'success': true,
+          'status_code': 200,
           'data': _extractList(
             decoded,
             keys: const ['data', 'shipments', 'parcels'],
           ),
+          'meta': decoded is Map<String, dynamic> && decoded['meta'] is Map
+              ? Map<String, dynamic>.from(decoded['meta'])
+              : <String, dynamic>{},
         };
       }
 
@@ -1421,8 +1485,8 @@ class ApiService {
             'This account cannot access '
             'logistics shipments.',
         notFoundMessage:
-            'Logistics shipments API '
-            'is not available yet.',
+            'Logistics shipments endpoint was not found on the server. '
+            'Please verify that the latest Laravel routes are deployed.',
         fallback:
             'Unable to load '
             'logistics shipments.',
@@ -1438,18 +1502,108 @@ class ApiService {
   }
 
   // ============================================================
+  // SINGLE LOGISTICS SHIPMENT
+  // GET /api/logistic/shipments/{shipment}
+  // ============================================================
+
+  static Future<Map<String, dynamic>> getLogisticsShipment(
+    int shipmentId,
+  ) async {
+    try {
+      if (shipmentId <= 0) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid shipment ID.',
+        };
+      }
+
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
+      }
+
+      final http.Response response = await http.get(
+        Uri.parse('$baseUrl/logistic/shipments/$shipmentId'),
+        headers: _authHeaders(token),
+      );
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
+        final dynamic rawData = decoded['data'];
+
+        if (rawData is Map) {
+          return {
+            'success': true,
+            'status_code': 200,
+            'data': Map<String, dynamic>.from(rawData),
+          };
+        }
+
+        return {
+          'success': false,
+          'status_code': 500,
+          'message': 'Invalid shipment response from server.',
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage:
+            'This shipment does not belong '
+            'to this Logistics account.',
+        notFoundMessage: 'Logistics shipment was not found.',
+        fallback:
+            'Unable to load '
+            'logistics shipment.',
+      );
+    } catch (e) {
+      return {
+        'success': false,
+        'message':
+            'Unable to load '
+            'logistics shipment: $e',
+      };
+    }
+  }
+
+  // ============================================================
   // PROCESS LOGISTICS SHIPMENT
+  // POST /api/logistic/shipments/{shipment}/{action}
   // ============================================================
 
   static Future<Map<String, dynamic>> processLogisticsShipment({
     required int shipmentId,
     required String action,
+    String? deliveryZone,
+    String? deliveryType,
+    String? sortingArea,
+    String? rackNumber,
   }) async {
     try {
+      if (shipmentId <= 0) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid shipment ID.',
+        };
+      }
+
       final String? token = await AuthStorage.getToken();
 
       if (token == null || token.trim().isEmpty) {
-        return {'success': false, 'message': 'Authentication token not found.'};
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
       }
 
       const Set<String> allowedActions = {'receive', 'scan', 'sort', 'stage'};
@@ -1457,28 +1611,105 @@ class ApiService {
       final String normalizedAction = action.trim().toLowerCase();
 
       if (!allowedActions.contains(normalizedAction)) {
-        return {'success': false, 'message': 'Invalid logistics action.'};
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid logistics action.',
+        };
       }
 
-      final response = await http.post(
+      final Map<String, dynamic> requestBody = <String, dynamic>{};
+
+      if (normalizedAction == 'scan') {
+        final String normalizedZone = deliveryZone?.trim() ?? '';
+
+        final String normalizedType = deliveryType?.trim().toLowerCase() ?? '';
+
+        const Set<String> allowedDeliveryTypes = {
+          'standard',
+          'same_day',
+          'express',
+        };
+
+        if (normalizedZone.isEmpty) {
+          return {
+            'success': false,
+            'status_code': 422,
+            'message': 'Delivery zone is required.',
+          };
+        }
+
+        if (!allowedDeliveryTypes.contains(normalizedType)) {
+          return {
+            'success': false,
+            'status_code': 422,
+            'message': 'Please select a valid delivery type.',
+          };
+        }
+
+        requestBody['delivery_zone'] = normalizedZone;
+        requestBody['delivery_type'] = normalizedType;
+      }
+
+      if (normalizedAction == 'sort') {
+        final String normalizedArea = sortingArea?.trim() ?? '';
+
+        final String normalizedRack = rackNumber?.trim() ?? '';
+
+        if (normalizedArea.isEmpty) {
+          return {
+            'success': false,
+            'status_code': 422,
+            'message': 'Sorting area is required.',
+          };
+        }
+
+        if (normalizedRack.isEmpty) {
+          return {
+            'success': false,
+            'status_code': 422,
+            'message': 'Rack number is required.',
+          };
+        }
+
+        requestBody['sorting_area'] = normalizedArea;
+        requestBody['rack_number'] = normalizedRack;
+      }
+
+      final http.Response response = await http.post(
         Uri.parse(
           '$baseUrl/logistic/shipments/'
           '$shipmentId/$normalizedAction',
         ),
         headers: _authHeaders(token, json: true),
-        body: jsonEncode({}),
+        body: jsonEncode(requestBody),
       );
 
       final dynamic decoded = _decodeResponse(response.body);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        String message = 'Parcel updated successfully.';
+        if (decoded is Map<String, dynamic>) {
+          final dynamic rawData = decoded['data'];
 
-        if (decoded is Map<String, dynamic> && decoded['message'] != null) {
-          message = decoded['message'].toString();
+          return {
+            'success': true,
+            'status_code': response.statusCode,
+            'message': _getMessage(
+              decoded,
+              fallback: 'Parcel updated successfully.',
+            ),
+            'data': rawData is Map
+                ? Map<String, dynamic>.from(rawData)
+                : <String, dynamic>{},
+          };
         }
 
-        return {'success': true, 'message': message, 'data': decoded};
+        return {
+          'success': true,
+          'status_code': response.statusCode,
+          'message': 'Parcel updated successfully.',
+          'data': <String, dynamic>{},
+        };
       }
 
       if (response.statusCode == 422) {
@@ -1502,8 +1733,8 @@ class ApiService {
             'This account cannot process '
             'this shipment.',
         notFoundMessage:
-            'Logistics parcel processing API '
-            'is not available yet.',
+            'The requested Logistics parcel action was not found on the server. '
+            'Please verify that the latest Laravel routes are deployed.',
         fallback:
             'Unable to process '
             'logistics shipment.',
