@@ -21,6 +21,13 @@ use App\Http\Controllers\Api\Rider\ScannerController as RiderScannerController;
 use App\Http\Controllers\Api\Rider\EarningsController as RiderEarningsController;
 use App\Http\Controllers\Api\Rider\NotificationController as RiderNotificationController;
 
+// ============================================================
+// MOBILE LOGISTICS API CONTROLLERS
+// ============================================================
+
+use App\Http\Controllers\Api\Logistic\DashboardController as LogisticDashboardController;
+use App\Http\Controllers\Api\Logistic\ShipmentController as LogisticShipmentController;
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -520,129 +527,84 @@ Route::middleware([
 
 // ============================================================
 // LOGISTICS MOBILE API
-// TODO
 // ============================================================
 
-// Route::middleware([
-//     'auth:sanctum',
-//     'role:logistic_owner',
-// ])
-//     ->prefix('logistic')
-//     ->name('logistic.api.')
-//     ->group(function () {
-//
-//         Route::get(
-//             '/dashboard',
-//             [
-//                 App\Http\Controllers\Api\Logistic\DashboardController::class,
-//                 'index',
-//             ]
-//         );
-//
-//         Route::get(
-//             '/shipments',
-//             [
-//                 App\Http\Controllers\Api\Logistic\ShipmentController::class,
-//                 'index',
-//             ]
-//         );
-//
-//         Route::get(
-//             '/shipments/{shipment}',
-//             [
-//                 App\Http\Controllers\Api\Logistic\ShipmentController::class,
-//                 'show',
-//             ]
-//         );
-//
-//         Route::post(
-//             '/shipments/{shipment}/receive',
-//             [
-//                 App\Http\Controllers\Api\Logistic\ShipmentController::class,
-//                 'receive',
-//             ]
-//         );
-//
-//         Route::post(
-//             '/shipments/{shipment}/scan',
-//             [
-//                 App\Http\Controllers\Api\Logistic\ShipmentController::class,
-//                 'scan',
-//             ]
-//         );
-//
-//         Route::post(
-//             '/shipments/{shipment}/sort',
-//             [
-//                 App\Http\Controllers\Api\Logistic\ShipmentController::class,
-//                 'sort',
-//             ]
-//         );
-//
-//         Route::post(
-//             '/shipments/{shipment}/stage',
-//             [
-//                 App\Http\Controllers\Api\Logistic\ShipmentController::class,
-//                 'stage',
-//             ]
-//         );
-//
-//         Route::post(
-//             '/shipments/{shipment}/assign',
-//             [
-//                 App\Http\Controllers\Api\Logistic\ShipmentController::class,
-//                 'assignRider',
-//             ]
-//         );
-//
-//         Route::get(
-//             '/riders',
-//             [
-//                 App\Http\Controllers\Api\Logistic\RiderController::class,
-//                 'index',
-//             ]
-//         );
-//
-//         Route::get(
-//             '/hubs',
-//             [
-//                 App\Http\Controllers\Api\Logistic\HubController::class,
-//                 'index',
-//             ]
-//         );
-//
-//         Route::post(
-//             '/hubs',
-//             [
-//                 App\Http\Controllers\Api\Logistic\HubController::class,
-//                 'store',
-//             ]
-//         );
-//
-//         Route::put(
-//             '/hubs/{hub}',
-//             [
-//                 App\Http\Controllers\Api\Logistic\HubController::class,
-//                 'update',
-//             ]
-//         );
-//
-//         Route::delete(
-//             '/hubs/{hub}',
-//             [
-//                 App\Http\Controllers\Api\Logistic\HubController::class,
-//                 'destroy',
-//             ]
-//         );
-//
-//         Route::get(
-//             '/notifications',
-//             [
-//                 App\Http\Controllers\Api\Logistic\NotificationController::class,
-//                 'index',
-//             ]
-//         );
-//     });
+Route::middleware([
+    'auth:sanctum',
+    'logistic_owner',
+])
+    ->prefix('logistic')
+    ->name('logistic.api.')
+    ->group(function () {
+
+        // ====================================================
+        // LOGISTICS DASHBOARD
+        // ====================================================
+
+        Route::get(
+            '/dashboard',
+            [LogisticDashboardController::class, 'index']
+        )->name('dashboard');
+
+        // ====================================================
+        // LOGISTICS SHIPMENTS
+        // ====================================================
+
+        Route::get(
+            '/shipments',
+            [LogisticShipmentController::class, 'index']
+        )->name('shipments.index');
+
+        Route::get(
+            '/shipments/{shipment}',
+            [LogisticShipmentController::class, 'show']
+        )->name('shipments.show');
+
+        // ====================================================
+        // RECEIVE SHIPMENT
+        // ====================================================
+
+        Route::post(
+            '/shipments/{shipment}/receive',
+            [LogisticShipmentController::class, 'receive']
+        )->name('shipments.receive');
+
+        // ====================================================
+        // SCAN SHIPMENT
+        // ====================================================
+
+        Route::post(
+            '/shipments/{shipment}/scan',
+            [LogisticShipmentController::class, 'scan']
+        )->name('shipments.scan');
+
+        // ====================================================
+        // SORT SHIPMENT
+        // ====================================================
+
+        Route::post(
+            '/shipments/{shipment}/sort',
+            [LogisticShipmentController::class, 'sort']
+        )->name('shipments.sort');
+
+        // ====================================================
+        // STAGE SHIPMENT
+        // ====================================================
+
+        Route::post(
+            '/shipments/{shipment}/stage',
+            [LogisticShipmentController::class, 'stage']
+        )->name('shipments.stage');
+
+        // ====================================================
+        // ASSIGN RIDER
+        // ====================================================
+
+        Route::post(
+            '/shipments/{shipment}/assign',
+            [LogisticShipmentController::class, 'assignRider']
+        )->name('shipments.assign');
+    });
 
 // ============================================================
 // ADMIN MOBILE API
