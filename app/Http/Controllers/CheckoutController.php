@@ -416,7 +416,11 @@ class CheckoutController extends Controller
 
         // Existing BiliHub checkout fees.
         $taxMinor = intdiv(($subtotalMinor * 3) + 50, 100);
-        $shippingMinor = 5000;
+
+        // Shipping is PHP 50.00 per seller/shipment.
+        $sellerCount = max(1, $cartItems->pluck('product.seller_id')->filter()->unique()->count());
+        $shippingPerSellerMinor = (int) config('bilihub.shipping_fee_per_seller_minor', 5000);
+        $shippingMinor = $shippingPerSellerMinor * $sellerCount;
 
         // Voucher preview.
         $voucherCode = $request->session()->get('checkout.voucher_code');
@@ -559,8 +563,10 @@ class CheckoutController extends Controller
         // Buyer service fee: 3%.
         $taxMinor = intdiv(($subtotalMinor * 3) + 50, 100);
 
-        // Fixed shipping fee: PHP 50.00.
-        $shippingMinor = 5000;
+        // Shipping is PHP 50.00 per seller/shipment.
+        $sellerCount = max(1, $cartItems->pluck('product.seller_id')->filter()->unique()->count());
+        $shippingPerSellerMinor = (int) config('bilihub.shipping_fee_per_seller_minor', 5000);
+        $shippingMinor = $shippingPerSellerMinor * $sellerCount;
 
         // Get the applied voucher from the checkout session.
         // Final voucher validation happens inside the DB transaction.
@@ -618,6 +624,8 @@ class CheckoutController extends Controller
             $taxMinor,
 
             $shippingMinor,
+
+            $shippingPerSellerMinor,
 
             $totalMinor,
 
@@ -838,8 +846,6 @@ class CheckoutController extends Controller
 
             $sellerIndex = 0;
 
-            $allocatedShippingMinor = 0;
-
             $allocatedTaxMinor = 0;
 
             $firstSellerOrderId = null;
@@ -859,26 +865,16 @@ class CheckoutController extends Controller
                     return $unitPriceMinor * $item->quantity;
                 });
 
-                // Allocate integer centavos. The final seller receives any remainder
-
-                // so all SellerOrder totals reconcile exactly with the parent Order.
+                // Each SellerOrder represents one seller/shipment and receives the full
+                // per-seller shipping fee. Tax/service fee still reconciles proportionally.
+                $sellerShippingMinor = $shippingPerSellerMinor;
 
                 if ($sellerIndex === $sellerCount) {
-
-                    $sellerShippingMinor = $shippingMinor - $allocatedShippingMinor;
-
                     $sellerTaxMinor = $taxMinor - $allocatedTaxMinor;
                 } else {
-
-                    $sellerShippingMinor = intdiv($shippingMinor, $sellerCount);
-
                     $sellerTaxMinor = $subtotalMinor > 0
-
                         ? intdiv($taxMinor * $sellerSubtotalMinor, $subtotalMinor)
-
                         : 0;
-
-                    $allocatedShippingMinor += $sellerShippingMinor;
 
                     $allocatedTaxMinor += $sellerTaxMinor;
                 }

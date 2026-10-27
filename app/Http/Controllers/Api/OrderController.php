@@ -146,8 +146,11 @@ if (!$product->seller_id) {
             ];
         }
 
-        // Fixed shipping fee: PHP 50.00.
-        $shippingFeeMinor = 5000;
+        // Shipping is PHP 50.00 per seller/shipment.
+        $itemsBySeller = collect($cartItems)->groupBy('seller_id');
+        $sellerCount = max(1, $itemsBySeller->count());
+        $shippingFeePerSellerMinor = (int) config('bilihub.shipping_fee_per_seller_minor', 5000);
+        $shippingFeeMinor = $shippingFeePerSellerMinor * $sellerCount;
 
         // Standardized buyer service fee: 3%.
         $serviceFeeMinor = intdiv(($subtotalMinor * 3) + 50, 100);
@@ -194,10 +197,6 @@ if (!$product->seller_id) {
             ]);
 
             // Split the buyer order into one SellerOrder per seller/shop.
-            $itemsBySeller = collect($cartItems)->groupBy('seller_id');
-            $sellerCount = max(1, $itemsBySeller->count());
-
-            $allocatedShippingMinor = 0;
             $allocatedServiceFeeMinor = 0;
             $sellerIndex = 0;
 
@@ -205,18 +204,17 @@ if (!$product->seller_id) {
                 $sellerIndex++;
                 $sellerSubtotalMinor = (int) $sellerItems->sum('subtotal_minor');
 
-                // Allocate fees in centavos. The final seller receives any rounding remainder
-                // so all SellerOrder totals add up exactly to the buyer Order total.
+                // One SellerOrder equals one seller/shipment, so each receives the full
+                // per-seller shipping fee. Service fee still reconciles proportionally.
+                $sellerShippingMinor = $shippingFeePerSellerMinor;
+
                 if ($sellerIndex === $sellerCount) {
-                    $sellerShippingMinor = $shippingFeeMinor - $allocatedShippingMinor;
                     $sellerServiceFeeMinor = $serviceFeeMinor - $allocatedServiceFeeMinor;
                 } else {
-                    $sellerShippingMinor = intdiv($shippingFeeMinor, $sellerCount);
                     $sellerServiceFeeMinor = $subtotalMinor > 0
                         ? intdiv(($serviceFeeMinor * $sellerSubtotalMinor) + intdiv($subtotalMinor, 2), $subtotalMinor)
                         : 0;
 
-                    $allocatedShippingMinor += $sellerShippingMinor;
                     $allocatedServiceFeeMinor += $sellerServiceFeeMinor;
                 }
 

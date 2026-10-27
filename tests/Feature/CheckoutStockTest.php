@@ -573,6 +573,14 @@ class CheckoutStockTest extends TestCase
             DB::table('seller_orders')->distinct('seller_id')->count('seller_id')
 
         );
+
+        // Shipping is charged per seller/shipment: PHP 50.00 each.
+        $this->assertSame(10000, (int) DB::table('orders')->value('shipping_minor'));
+        $this->assertSame(10000, (int) DB::table('seller_orders')->sum('shipping_minor'));
+
+        foreach (DB::table('seller_orders')->pluck('shipping_minor') as $sellerShippingMinor) {
+            $this->assertSame(5000, (int) $sellerShippingMinor);
+        }
     }
 
     public function test_multi_seller_out_of_stock_rolls_back_everything(): void
