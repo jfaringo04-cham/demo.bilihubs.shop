@@ -50,82 +50,32 @@ class ScannerController extends Controller
         }
 
         // ============================================================
-        // READ QR PAYLOAD
+        // READ / NORMALIZE QR PAYLOAD
         // ============================================================
 
         $rawPayload = trim(
             (string) $validated['qr_payload']
         );
 
-        $decoded = json_decode(
-            $rawPayload,
-            true
+        $parsedPayload = $this->parseQrPayload(
+            $rawPayload
         );
 
-        // ============================================================
-        // WAYBILL QR FORMAT
-        // ============================================================
-        //
-        // Shipment.php generates:
-        //
-        // {
-        //     "t": tracking_number,
-        //     "q": qr_token,
-        //     "so": seller_order_id
-        // }
-        //
-
-        if (!is_array($decoded)) {
+        if (!$parsedPayload['success']) {
             return response()->json([
                 'success' => false,
-                'message' => 'Invalid BiliHub waybill QR code.',
+                'message' => $parsedPayload['message'],
             ], 422);
         }
 
-        if (
-            !isset(
-                $decoded['t'],
-                $decoded['q'],
-                $decoded['so']
-            )
-        ) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Incomplete BiliHub waybill QR code.',
-            ], 422);
-        }
+        $trackingNumber =
+            $parsedPayload['tracking_number'];
 
-        if (
-            !is_scalar($decoded['t']) ||
-            !is_scalar($decoded['q']) ||
-            !is_scalar($decoded['so'])
-        ) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid BiliHub waybill QR data.',
-            ], 422);
-        }
+        $qrToken =
+            $parsedPayload['qr_token'];
 
-        $trackingNumber = trim(
-            (string) $decoded['t']
-        );
-
-        $qrToken = trim(
-            (string) $decoded['q']
-        );
-
-        $sellerOrderId = (int) $decoded['so'];
-
-        if (
-            $trackingNumber === '' ||
-            $qrToken === '' ||
-            $sellerOrderId <= 0
-        ) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid BiliHub waybill QR data.',
-            ], 422);
-        }
+        $sellerOrderId =
+            $parsedPayload['seller_order_id'];
 
         // ============================================================
         // LOCATE SHIPMENT
@@ -140,12 +90,17 @@ class ScannerController extends Controller
                 'seller_order_id',
                 $sellerOrderId
             )
+            ->where(
+                'qr_token',
+                $qrToken
+            )
             ->first();
 
         if (!$shipment) {
             return response()->json([
                 'success' => false,
-                'message' => 'Shipment was not found.',
+                'message' =>
+                    'Shipment was not found or the QR code is invalid.',
             ], 404);
         }
 
@@ -270,9 +225,6 @@ class ScannerController extends Controller
                     // ====================================================
                     // SELLER PICKUP SCAN
                     // ====================================================
-                    //
-                    // Same flow as the existing web scan().
-                    //
 
                     if (
                         $isPickupRider &&
@@ -290,9 +242,6 @@ class ScannerController extends Controller
                     // ====================================================
                     // FINAL-MILE HUB PICKUP SCAN
                     // ====================================================
-                    //
-                    // Same flow as existing web scanHubPickup().
-                    //
 
                     if ($isFinalMileRider) {
                         return $this
@@ -361,6 +310,332 @@ class ScannerController extends Controller
                     'Unable to process the scanned waybill.',
             ], 500);
         }
+    }
+
+    // ============================================================
+    // PARSE QR PAYLOAD
+    // ============================================================
+
+    private function parseQrPayload(
+        string $rawPayload
+    ): array {
+        if ($rawPayload === '') {
+            return [
+                'success' => false,
+                'message' => 'QR code is empty.',
+            ];
+        }
+
+        // ------------------------------------------------------------
+        // 1. ORIGINAL BILIHUB JSON QR
+        //
+        // Shipment.php:
+        //
+        // {
+        //     "t": "TRACKING",
+        //     "q": "QR_TOKEN",
+        //     "so": 123
+        // }
+        // ------------------------------------------------------------
+
+        $decoded = json_decode(
+            $rawPayload,
+            true
+        );
+
+        if (is_array($decoded)) {
+            return $this
+                ->normalizeParsedQrData(
+                    $decoded
+                );
+        }
+
+        // ------------------------------------------------------------
+        // 2. WEBSITE URL QR
+        //
+        // Examples:
+        //
+        // https://site.com/track?t=TRACKING&q=TOKEN&so=123
+        //
+        // or
+        //
+        // https://site.com/track?
+        // tracking_number=TRACKING
+        // &qr_token=TOKEN
+        // &seller_order_id=123
+        // ------------------------------------------------------------
+
+        if (
+            filter_var(
+                $rawPayload,
+                FILTER_VALIDATE_URL
+            )
+        ) {
+            $queryString = parse_url(
+                $rawPayload,
+                PHP_URL_QUERY
+            );
+
+            $query = [];
+
+            if (
+                is_string($queryString) &&
+                $queryString !== ''
+            ) {
+                parse_str(
+                    $queryString,
+                    $query
+                );
+            }
+
+            if (!empty($query)) {
+                $normalized = [
+                    't' =>
+                        $query['t'] ??
+                        $query['tracking_number'] ??
+                        $query['tracking'] ??
+                        $query['tracking_code'] ??
+                        null,
+
+                    'q' =>
+                        $query['q'] ??
+                        $query['qr_token'] ??
+                        $query['token'] ??
+                        null,
+
+                    'so' =>
+                        $query['so'] ??
+                        $query['seller_order_id'] ??
+                        null,
+                ];
+
+                $result =
+                    $this->normalizeParsedQrData(
+                        $normalized
+                    );
+
+                if ($result['success']) {
+                    return $result;
+                }
+            }
+
+            // --------------------------------------------------------
+            // URL PATH SUPPORT
+            //
+            // Example:
+            //
+            // /track/TRACKING/TOKEN/123
+            // --------------------------------------------------------
+
+            $path = parse_url(
+                $rawPayload,
+                PHP_URL_PATH
+            );
+
+            if (
+                is_string($path) &&
+                trim($path) !== ''
+            ) {
+                $segments = array_values(
+                    array_filter(
+                        explode(
+                            '/',
+                            trim(
+                                $path,
+                                '/'
+                            )
+                        ),
+                        fn ($segment) =>
+                            trim((string) $segment) !== ''
+                    )
+                );
+
+                $trackIndex = array_search(
+                    'track',
+                    array_map(
+                        'strtolower',
+                        $segments
+                    ),
+                    true
+                );
+
+                if (
+                    $trackIndex !== false &&
+                    isset(
+                        $segments[$trackIndex + 1],
+                        $segments[$trackIndex + 2],
+                        $segments[$trackIndex + 3]
+                    )
+                ) {
+                    $result =
+                        $this->normalizeParsedQrData([
+                            't' =>
+                                urldecode(
+                                    $segments[
+                                        $trackIndex + 1
+                                    ]
+                                ),
+
+                            'q' =>
+                                urldecode(
+                                    $segments[
+                                        $trackIndex + 2
+                                    ]
+                                ),
+
+                            'so' =>
+                                urldecode(
+                                    $segments[
+                                        $trackIndex + 3
+                                    ]
+                                ),
+                        ]);
+
+                    if ($result['success']) {
+                        return $result;
+                    }
+                }
+            }
+
+            return [
+                'success' => false,
+
+                'message' =>
+                    'The website QR is missing the secure BiliHub '
+                    . 'tracking number, QR token, or seller order ID.',
+            ];
+        }
+
+        // ------------------------------------------------------------
+        // 3. QUERY STRING STYLE WITHOUT FULL URL
+        //
+        // t=TRACKING&q=TOKEN&so=123
+        // ------------------------------------------------------------
+
+        if (
+            str_contains(
+                $rawPayload,
+                '='
+            ) &&
+            str_contains(
+                $rawPayload,
+                '&'
+            )
+        ) {
+            $query = [];
+
+            parse_str(
+                ltrim(
+                    $rawPayload,
+                    '?'
+                ),
+                $query
+            );
+
+            if (!empty($query)) {
+                $result =
+                    $this->normalizeParsedQrData([
+                        't' =>
+                            $query['t'] ??
+                            $query['tracking_number'] ??
+                            $query['tracking'] ??
+                            $query['tracking_code'] ??
+                            null,
+
+                        'q' =>
+                            $query['q'] ??
+                            $query['qr_token'] ??
+                            $query['token'] ??
+                            null,
+
+                        'so' =>
+                            $query['so'] ??
+                            $query['seller_order_id'] ??
+                            null,
+                    ]);
+
+                if ($result['success']) {
+                    return $result;
+                }
+            }
+        }
+
+        // ------------------------------------------------------------
+        // TRACKING NUMBER ONLY IS NOT ACCEPTED
+        //
+        // Important:
+        //
+        // A Rider scan changes the shipment state.
+        // Because of that, we require the secure qr_token and
+        // seller_order_id instead of trusting only a tracking number.
+        // ------------------------------------------------------------
+
+        return [
+            'success' => false,
+
+            'message' =>
+                'Invalid BiliHub QR code. Please scan the original '
+                . 'waybill QR generated by BiliHub.',
+        ];
+    }
+
+    // ============================================================
+    // NORMALIZE PARSED QR DATA
+    // ============================================================
+
+    private function normalizeParsedQrData(
+        array $data
+    ): array {
+        $trackingNumber = trim(
+            (string) (
+                $data['t'] ??
+                $data['tracking_number'] ??
+                $data['tracking'] ??
+                $data['tracking_code'] ??
+                ''
+            )
+        );
+
+        $qrToken = trim(
+            (string) (
+                $data['q'] ??
+                $data['qr_token'] ??
+                $data['token'] ??
+                ''
+            )
+        );
+
+        $sellerOrderId = (int) (
+            $data['so'] ??
+            $data['seller_order_id'] ??
+            0
+        );
+
+        if (
+            $trackingNumber === '' ||
+            $qrToken === '' ||
+            $sellerOrderId <= 0
+        ) {
+            return [
+                'success' => false,
+
+                'message' =>
+                    'Incomplete BiliHub waybill QR code.',
+            ];
+        }
+
+        return [
+            'success' => true,
+
+            'tracking_number' =>
+                $trackingNumber,
+
+            'qr_token' =>
+                $qrToken,
+
+            'seller_order_id' =>
+                $sellerOrderId,
+        ];
     }
 
     // ============================================================
