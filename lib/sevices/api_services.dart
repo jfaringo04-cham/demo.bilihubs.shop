@@ -748,10 +748,14 @@ class ApiService {
       final String? token = await AuthStorage.getToken();
 
       if (token == null || token.trim().isEmpty) {
-        return {'success': false, 'message': 'Authentication token not found.'};
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
       }
 
-      final response = await http.get(
+      final http.Response response = await http.get(
         Uri.parse('$baseUrl/rider/dashboard'),
         headers: _authHeaders(token),
       );
@@ -759,17 +763,36 @@ class ApiService {
       final dynamic decoded = _decodeResponse(response.body);
 
       if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
+        final Map<String, dynamic> root = _extractMapRoot(decoded);
+
+        final Map<String, dynamic> rider = _extractMapByKeys(
+          root,
+          const <String>['rider', 'profile', 'user'],
+        );
+
+        final Map<String, dynamic> overview = _extractMapByKeys(
+          root,
+          const <String>['overview', 'summary', 'stats', 'statistics'],
+        );
+
+        final List<dynamic> tasks = _extractList(
+          root,
+          keys: const <String>[
+            'tasks',
+            'deliveries',
+            'orders',
+            'shipments',
+            'recent_tasks',
+          ],
+        );
+
         return {
           'success': true,
-          'rider': decoded['rider'] is Map
-              ? Map<String, dynamic>.from(decoded['rider'])
-              : <String, dynamic>{},
-          'overview': decoded['overview'] is Map
-              ? Map<String, dynamic>.from(decoded['overview'])
-              : <String, dynamic>{},
-          'tasks': decoded['tasks'] is List
-              ? List<dynamic>.from(decoded['tasks'])
-              : <dynamic>[],
+          'status_code': 200,
+          'data': root,
+          'rider': rider,
+          'overview': overview,
+          'tasks': tasks,
         };
       }
 
@@ -804,10 +827,14 @@ class ApiService {
       final String? token = await AuthStorage.getToken();
 
       if (token == null || token.trim().isEmpty) {
-        return {'success': false, 'message': 'Authentication token not found.'};
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
       }
 
-      final response = await http.get(
+      final http.Response response = await http.get(
         Uri.parse('$baseUrl/rider/orders'),
         headers: _authHeaders(token),
       );
@@ -815,12 +842,19 @@ class ApiService {
       final dynamic decoded = _decodeResponse(response.body);
 
       if (response.statusCode == 200) {
+        final List<dynamic> deliveries = _extractList(
+          decoded,
+          keys: const <String>['data', 'deliveries', 'orders', 'shipments'],
+        );
+
+        final Map<String, dynamic> meta = _extractMeta(decoded);
+
         return {
           'success': true,
-          'data': _extractList(
-            decoded,
-            keys: const ['data', 'deliveries', 'orders', 'shipments'],
-          ),
+          'status_code': 200,
+          'data': deliveries,
+          'deliveries': deliveries,
+          'meta': meta,
         };
       }
 
@@ -853,44 +887,48 @@ class ApiService {
   static Future<Map<String, dynamic>> getRiderDelivery(int shipmentId) async {
     try {
       if (shipmentId <= 0) {
-        return {'success': false, 'message': 'Invalid shipment ID.'};
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid shipment ID.',
+        };
       }
 
       final String? token = await AuthStorage.getToken();
 
       if (token == null || token.trim().isEmpty) {
-        return {'success': false, 'message': 'Authentication token not found.'};
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
       }
 
-      final response = await http.get(
-        Uri.parse(
-          '$baseUrl/rider/orders/'
-          '$shipmentId',
-        ),
+      final http.Response response = await http.get(
+        Uri.parse('$baseUrl/rider/orders/$shipmentId'),
         headers: _authHeaders(token),
       );
 
       final dynamic decoded = _decodeResponse(response.body);
 
-      if (response.statusCode == 200) {
-        if (decoded is Map<String, dynamic>) {
-          final dynamic rawData = decoded['data'];
+      if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
+        final Map<String, dynamic> root = _extractMapRoot(decoded);
 
-          if (rawData is Map) {
-            return {
-              'success': true,
-              'data': Map<String, dynamic>.from(rawData),
-            };
-          }
+        Map<String, dynamic> shipment = _extractMapByKeys(root, const <String>[
+          'shipment',
+          'order',
+          'delivery',
+        ]);
 
-          return {'success': true, 'data': Map<String, dynamic>.from(decoded)};
+        if (shipment.isEmpty) {
+          shipment = root;
         }
 
         return {
-          'success': false,
-          'message':
-              'Invalid shipment response '
-              'from server.',
+          'success': true,
+          'status_code': 200,
+          'data': shipment,
+          'shipment': shipment,
         };
       }
 
@@ -925,16 +963,24 @@ class ApiService {
       final String? token = await AuthStorage.getToken();
 
       if (token == null || token.trim().isEmpty) {
-        return {'success': false, 'message': 'Authentication token not found.'};
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
       }
 
       final String normalizedPayload = qrPayload.trim();
 
       if (normalizedPayload.isEmpty) {
-        return {'success': false, 'message': 'QR code is empty.'};
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'QR code is empty.',
+        };
       }
 
-      final response = await http.post(
+      final http.Response response = await http.post(
         Uri.parse('$baseUrl/rider/scan'),
         headers: _authHeaders(token, json: true),
         body: jsonEncode({'qr_payload': normalizedPayload}),
@@ -944,26 +990,45 @@ class ApiService {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         if (decoded is Map<String, dynamic>) {
-          final dynamic rawShipment = decoded['shipment'];
+          final Map<String, dynamic> root = _extractMapRoot(decoded);
+
+          Map<String, dynamic> shipment = _extractMapByKeys(
+            root,
+            const <String>['shipment', 'delivery', 'order'],
+          );
+
+          if (shipment.isEmpty &&
+              (root.containsKey('tracking_number') ||
+                  root.containsKey('shipment_id'))) {
+            shipment = root;
+          }
+
+          final String scanType = _firstString(<dynamic>[
+            decoded['scan_type'],
+            root['scan_type'],
+            root['type'],
+          ]);
 
           return {
             'success': true,
+            'status_code': response.statusCode,
             'message': _getMessage(
               decoded,
               fallback: 'Waybill scanned successfully.',
             ),
-            'scan_type': decoded['scan_type']?.toString() ?? '',
-            'shipment': rawShipment is Map
-                ? Map<String, dynamic>.from(rawShipment)
-                : <String, dynamic>{},
+            'scan_type': scanType,
+            'shipment': shipment,
+            'data': root,
           };
         }
 
         return {
           'success': true,
+          'status_code': response.statusCode,
           'message': 'Waybill scanned successfully.',
           'scan_type': '',
           'shipment': <String, dynamic>{},
+          'data': <String, dynamic>{},
         };
       }
 
@@ -1009,10 +1074,14 @@ class ApiService {
       final String? token = await AuthStorage.getToken();
 
       if (token == null || token.trim().isEmpty) {
-        return {'success': false, 'message': 'Authentication token not found.'};
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
       }
 
-      final response = await http.get(
+      final http.Response response = await http.get(
         Uri.parse('$baseUrl/rider/earnings'),
         headers: _authHeaders(token),
       );
@@ -1021,17 +1090,20 @@ class ApiService {
 
       if (response.statusCode == 200) {
         if (decoded is Map<String, dynamic>) {
-          final dynamic earningsData = decoded['data'] ?? decoded;
+          final Map<String, dynamic> root = _extractMapRoot(decoded);
 
-          return {
-            'success': true,
-            'data': earningsData is Map
-                ? Map<String, dynamic>.from(earningsData)
-                : <String, dynamic>{},
-          };
+          final Map<String, dynamic> earnings = root['earnings'] is Map
+              ? Map<String, dynamic>.from(root['earnings'])
+              : root;
+
+          return {'success': true, 'status_code': 200, 'data': earnings};
         }
 
-        return {'success': true, 'data': <String, dynamic>{}};
+        return {
+          'success': true,
+          'status_code': 200,
+          'data': <String, dynamic>{},
+        };
       }
 
       return _authApiError(
@@ -1960,27 +2032,127 @@ class ApiService {
       return List<dynamic>.from(decoded);
     }
 
-    if (decoded is! Map<String, dynamic>) {
+    if (decoded is! Map) {
       return <dynamic>[];
     }
 
+    final Map<String, dynamic> map = Map<String, dynamic>.from(decoded);
+
     for (final String key in keys) {
-      final dynamic value = decoded[key];
+      final dynamic value = map[key];
 
       if (value is List) {
         return List<dynamic>.from(value);
       }
 
       if (value is Map) {
-        final dynamic nested = value['data'];
+        final List<dynamic> nested = _extractList(value, keys: keys);
 
-        if (nested is List) {
-          return List<dynamic>.from(nested);
+        if (nested.isNotEmpty) {
+          return nested;
         }
       }
     }
 
+    final dynamic data = map['data'];
+
+    if (data is List) {
+      return List<dynamic>.from(data);
+    }
+
+    if (data is Map) {
+      final List<dynamic> nested = _extractList(data, keys: keys);
+
+      if (nested.isNotEmpty) {
+        return nested;
+      }
+    }
+
     return <dynamic>[];
+  }
+
+  static Map<String, dynamic> _extractMapRoot(Map<String, dynamic> decoded) {
+    final dynamic data = decoded['data'];
+
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+
+    return Map<String, dynamic>.from(decoded);
+  }
+
+  static Map<String, dynamic> _extractMapByKeys(
+    Map<String, dynamic> source,
+    List<String> keys,
+  ) {
+    for (final String key in keys) {
+      final dynamic value = source[key];
+
+      if (value is Map) {
+        return Map<String, dynamic>.from(value);
+      }
+    }
+
+    return <String, dynamic>{};
+  }
+
+  static Map<String, dynamic> _extractMeta(dynamic decoded) {
+    if (decoded is! Map) {
+      return <String, dynamic>{};
+    }
+
+    final Map<String, dynamic> map = Map<String, dynamic>.from(decoded);
+
+    final dynamic directMeta = map['meta'];
+
+    if (directMeta is Map) {
+      return Map<String, dynamic>.from(directMeta);
+    }
+
+    final dynamic data = map['data'];
+
+    if (data is Map) {
+      final Map<String, dynamic> nested = Map<String, dynamic>.from(data);
+
+      final dynamic nestedMeta = nested['meta'];
+
+      if (nestedMeta is Map) {
+        return Map<String, dynamic>.from(nestedMeta);
+      }
+
+      final Map<String, dynamic> pagination = <String, dynamic>{};
+
+      for (final String key in <String>[
+        'current_page',
+        'last_page',
+        'per_page',
+        'total',
+        'from',
+        'to',
+      ]) {
+        if (nested.containsKey(key)) {
+          pagination[key] = nested[key];
+        }
+      }
+
+      if (pagination.isNotEmpty) {
+        return pagination;
+      }
+    }
+
+    return <String, dynamic>{};
+  }
+
+  static String _firstString(List<dynamic> values) {
+    for (final dynamic value in values) {
+      final String text = value?.toString().trim() ?? '';
+
+      if (text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
+    }
+
+    return '';
   }
 
   // ============================================================

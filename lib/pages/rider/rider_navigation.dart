@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../widgets/bottom_nav.dart';
 
-import 'rider_home.dart';
 import 'rider_deliveries.dart';
-import 'rider_scanner.dart';
 import 'rider_earnings.dart';
+import 'rider_home.dart';
 import 'rider_profile.dart';
+import 'rider_scanner.dart';
 
 class RiderNavigation extends StatefulWidget {
   const RiderNavigation({super.key});
@@ -17,78 +17,106 @@ class RiderNavigation extends StatefulWidget {
 
 class _RiderNavigationState extends State<RiderNavigation> {
   static const int _homeIndex = 0;
-  static const int _lastTabIndex = 4;
+  static const int _profileIndex = 4;
+  static const int _lastTabIndex = _profileIndex;
 
-  int currentIndex = _homeIndex;
+  int _currentIndex = _homeIndex;
 
-  final List<BottomNavItem> items = const [
-    BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
-    BottomNavItem(icon: Icons.local_shipping_outlined, label: 'Deliveries'),
-    BottomNavItem(icon: Icons.qr_code_scanner, label: 'Scanner'),
+  final List<BottomNavItem> _items = const <BottomNavItem>[
+    BottomNavItem(
+      icon: Icons.home_outlined,
+      label: 'Home',
+    ),
+    BottomNavItem(
+      icon: Icons.local_shipping_outlined,
+      label: 'Deliveries',
+    ),
+    BottomNavItem(
+      icon: Icons.qr_code_scanner_rounded,
+      label: 'Scanner',
+    ),
     BottomNavItem(
       icon: Icons.account_balance_wallet_outlined,
       label: 'Earnings',
     ),
-    BottomNavItem(icon: Icons.person_outline, label: 'Profile'),
+    BottomNavItem(
+      icon: Icons.person_outline_rounded,
+      label: 'Profile',
+    ),
   ];
+
+  late final List<Widget> _pages;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _pages = <Widget>[
+      RiderHome(
+        onNavigateTab: _changeTab,
+      ),
+      const RiderDeliveries(),
+      const RiderScanner(),
+      const Earnings(),
+      const RiderProfile(),
+    ];
+  }
+
+  // ============================================================
+  // CHANGE TAB
+  // ============================================================
 
   void _changeTab(int index) {
     if (index < _homeIndex || index > _lastTabIndex) {
       return;
     }
 
-    if (index == currentIndex) {
+    if (index == _currentIndex) {
       return;
     }
 
     setState(() {
-      currentIndex = index;
+      _currentIndex = index;
     });
   }
 
-  Widget _buildCurrentPage() {
-    switch (currentIndex) {
-      case 0:
-        return RiderHome(onNavigateTab: _changeTab);
+  // ============================================================
+  // HANDLE BACK
+  // ============================================================
 
-      case 1:
-        return const RiderDeliveries();
+  void _handleBack(
+    bool didPop,
+    dynamic result,
+  ) {
+    if (didPop) {
+      return;
+    }
 
-      case 2:
-        return const RiderScanner();
-
-      case 3:
-        return const Earnings();
-
-      case 4:
-        return const RiderProfile();
-
-      default:
-        return RiderHome(onNavigateTab: _changeTab);
+    if (_currentIndex != _homeIndex) {
+      setState(() {
+        _currentIndex = _homeIndex;
+      });
     }
   }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: currentIndex == _homeIndex,
-      onPopInvokedWithResult: (bool didPop, dynamic result) {
-        if (didPop) {
-          return;
-        }
-
-        if (currentIndex != _homeIndex) {
-          setState(() {
-            currentIndex = _homeIndex;
-          });
-        }
-      },
+      canPop: _currentIndex == _homeIndex,
+      onPopInvokedWithResult: _handleBack,
       child: Scaffold(
-        body: _buildCurrentPage(),
-
+        backgroundColor: Colors.white,
+        body: IndexedStack(
+          index: _currentIndex,
+          children: _pages,
+        ),
         bottomNavigationBar: BottomNav(
-          currentIndex: currentIndex,
-          items: items,
+          currentIndex: _currentIndex,
+          items: _items,
           onTap: _changeTab,
         ),
       ),

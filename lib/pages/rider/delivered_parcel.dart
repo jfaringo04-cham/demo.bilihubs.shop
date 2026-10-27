@@ -5,8 +5,6 @@ import '../../sevices/api_services.dart';
 import '../../styles/rider_style.dart';
 
 class DeliveredParcels extends StatefulWidget {
-  // Keep optional para hindi masira ang existing navigation
-  // kung may lumang code na nagpapasa pa ng parcels.
   final List<ParcelModel>? parcels;
 
   const DeliveredParcels({super.key, this.parcels});
@@ -19,18 +17,26 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   final TextEditingController _searchController = TextEditingController();
 
   bool _isLoading = true;
+  bool _isRefreshing = false;
 
   String? _errorMessage;
-
   String _searchQuery = '';
 
-  List<ParcelModel> _deliveredParcels = [];
+  List<ParcelModel> _deliveredParcels = <ParcelModel>[];
 
   @override
   void initState() {
     super.initState();
 
-    _loadDeliveredParcels();
+    if (widget.parcels != null && widget.parcels!.isNotEmpty) {
+      _deliveredParcels = widget.parcels!.where(_isDeliveredParcel).toList();
+
+      _sortParcels();
+
+      _isLoading = false;
+    } else {
+      _loadDeliveredParcels();
+    }
   }
 
   @override
@@ -44,65 +50,292 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   // LOAD DELIVERY HISTORY
   // ============================================================
 
-  Future<void> _loadDeliveredParcels() async {
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-        _errorMessage = null;
-      });
-    }
-
-    final result = await ApiService.getRiderDeliveries();
-
+  Future<void> _loadDeliveredParcels({bool refresh = false}) async {
     if (!mounted) return;
 
-    if (result['success'] == true) {
-      final dynamic rawData = result['data'];
+    setState(() {
+      if (refresh) {
+        _isRefreshing = true;
+      } else {
+        _isLoading = true;
+      }
 
-      final List<ParcelModel> parsedParcels = [];
+      _errorMessage = null;
+    });
 
-      if (rawData is List) {
-        for (final item in rawData) {
-          Map<String, dynamic>? parcelJson;
+    try {
+      final Map<String, dynamic> result = await ApiService.getRiderDeliveries();
 
-          if (item is Map<String, dynamic>) {
-            parcelJson = item;
-          } else if (item is Map) {
-            parcelJson = Map<String, dynamic>.from(item);
-          }
+      if (!mounted) return;
 
-          if (parcelJson == null) {
-            continue;
-          }
+      if (result['success'] != true) {
+        setState(() {
+          _deliveredParcels = <ParcelModel>[];
 
-          final parcel = ParcelModel.fromJson(parcelJson);
+          _isLoading = false;
+          _isRefreshing = false;
 
-          final status = parcel.status.trim().toLowerCase();
+          final String message = result['message']?.toString().trim() ?? '';
 
-          if (status == 'delivered' || status == 'completed') {
+          _errorMessage = message.isNotEmpty
+              ? message
+              : 'Unable to load delivery history.';
+        });
+
+        return;
+      }
+
+      final List<Map<String, dynamic>> rawItems = _extractDeliveryMaps(result);
+
+      final List<ParcelModel> parsedParcels = <ParcelModel>[];
+
+      for (final Map<String, dynamic> raw in rawItems) {
+        try {
+          final Map<String, dynamic> normalized = _normalizeShipment(raw);
+
+          final ParcelModel parcel = ParcelModel.fromJson(normalized);
+
+          if (_isDeliveredParcel(parcel)) {
             parsedParcels.add(parcel);
           }
+        } catch (error) {
+          debugPrint('Failed to parse delivered parcel: $error');
         }
       }
+
+      parsedParcels.sort((ParcelModel a, ParcelModel b) {
+        final DateTime? aDate = DateTime.tryParse(a.orderDate);
+
+        final DateTime? bDate = DateTime.tryParse(b.orderDate);
+
+        if (aDate == null && bDate == null) {
+          return 0;
+        }
+
+        if (aDate == null) {
+          return 1;
+        }
+
+        if (bDate == null) {
+          return -1;
+        }
+
+        return bDate.compareTo(aDate);
+      });
 
       setState(() {
         _deliveredParcels = parsedParcels;
 
         _isLoading = false;
-
+        _isRefreshing = false;
         _errorMessage = null;
       });
+    } catch (error) {
+      debugPrint('Delivery history error: $error');
 
-      return;
+      if (!mounted) return;
+
+      setState(() {
+        _deliveredParcels = <ParcelModel>[];
+
+        _isLoading = false;
+        _isRefreshing = false;
+
+        _errorMessage = 'Unable to connect to the server. Please try again.';
+      });
+    }
+  }
+
+  // ============================================================
+  // EXTRACT DELIVERY MAPS
+  // ============================================================
+
+  List<Map<String, dynamic>> _extractDeliveryMaps(Map<String, dynamic> result) {
+    final List<Map<String, dynamic>> direct = _toMapList(result['data']);
+
+    if (direct.isNotEmpty) {
+      return direct;
     }
 
-    setState(() {
-      _deliveredParcels = [];
+    final List<Map<String, dynamic>> directDeliveries = _toMapList(
+      result['deliveries'],
+    );
 
-      _isLoading = false;
+    if (directDeliveries.isNotEmpty) {
+      return directDeliveries;
+    }
 
-      _errorMessage =
-          result['message']?.toString() ?? 'Unable to load delivery history.';
+    final List<Map<String, dynamic>> directOrders = _toMapList(
+      result['orders'],
+    );
+
+    if (directOrders.isNotEmpty) {
+      return directOrders;
+    }
+
+    final List<Map<String, dynamic>> directShipments = _toMapList(
+      result['shipments'],
+    );
+
+    if (directShipments.isNotEmpty) {
+      return directShipments;
+    }
+
+    final dynamic rawData = result['data'];
+
+    if (rawData is Map) {
+      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
+
+      final List<Map<String, dynamic>> nestedData = _toMapList(data['data']);
+
+      if (nestedData.isNotEmpty) {
+        return nestedData;
+      }
+
+      final List<Map<String, dynamic>> deliveries = _toMapList(
+        data['deliveries'],
+      );
+
+      if (deliveries.isNotEmpty) {
+        return deliveries;
+      }
+
+      final List<Map<String, dynamic>> orders = _toMapList(data['orders']);
+
+      if (orders.isNotEmpty) {
+        return orders;
+      }
+
+      final List<Map<String, dynamic>> shipments = _toMapList(
+        data['shipments'],
+      );
+
+      if (shipments.isNotEmpty) {
+        return shipments;
+      }
+    }
+
+    return <Map<String, dynamic>>[];
+  }
+
+  // ============================================================
+  // CONVERT TO MAP LIST
+  // ============================================================
+
+  List<Map<String, dynamic>> _toMapList(dynamic value) {
+    if (value is! List) {
+      return <Map<String, dynamic>>[];
+    }
+
+    final List<Map<String, dynamic>> list = <Map<String, dynamic>>[];
+
+    for (final dynamic item in value) {
+      if (item is Map<String, dynamic>) {
+        list.add(Map<String, dynamic>.from(item));
+      } else if (item is Map) {
+        list.add(Map<String, dynamic>.from(item));
+      }
+    }
+
+    return list;
+  }
+
+  // ============================================================
+  // NORMALIZE SHIPMENT
+  // ============================================================
+
+  Map<String, dynamic> _normalizeShipment(Map<String, dynamic> raw) {
+    final Map<String, dynamic> map = Map<String, dynamic>.from(raw);
+
+    final dynamic nestedShipment = raw['shipment'];
+
+    if (nestedShipment is Map) {
+      map.addAll(Map<String, dynamic>.from(nestedShipment));
+    }
+
+    final dynamic nestedOrder = raw['order'];
+
+    if (nestedOrder is Map) {
+      final Map<String, dynamic> order = Map<String, dynamic>.from(nestedOrder);
+
+      map['order_number'] ??= order['order_number'] ?? order['number'];
+
+      map['created_at'] ??= order['created_at'];
+
+      map['customer_name'] ??= order['customer_name'];
+
+      map['customer_phone'] ??= order['customer_phone'];
+
+      map['delivery_address'] ??= order['delivery_address'];
+    }
+
+    map['id'] ??= map['shipment_id'] ?? map['order_id'] ?? 0;
+
+    map['shipment_id'] ??= map['id'];
+
+    map['tracking_number'] ??=
+        map['tracking_code'] ?? map['waybill_number'] ?? '';
+
+    map['customer_name'] ??= map['recipient_name'] ?? map['buyer_name'] ?? '';
+
+    map['customer_phone'] ??= map['phone'] ?? map['recipient_phone'] ?? '';
+
+    map['delivery_address'] ??= map['address'] ?? map['shipping_address'] ?? '';
+
+    map['rider_name'] ??= map['driver_name'] ?? '';
+
+    map['rider_id'] ??= map['driver_id'];
+
+    map['status'] ??= map['shipment_status'] ?? map['delivery_status'] ?? '';
+
+    map['order_date'] ??= map['delivered_at'] ?? map['created_at'] ?? '';
+
+    map['delivery_earnings'] ??= map['earnings'] ?? map['delivery_fee'] ?? 0;
+
+    map['latitude'] ??= map['rider_latitude'];
+
+    map['longitude'] ??= map['rider_longitude'];
+
+    return map;
+  }
+
+  // ============================================================
+  // DELIVERY STATUS
+  // ============================================================
+
+  bool _isDeliveredParcel(ParcelModel parcel) {
+    final String status = parcel.status
+        .trim()
+        .toLowerCase()
+        .replaceAll(' ', '_')
+        .replaceAll('-', '_');
+
+    return status == 'delivered' || status == 'completed';
+  }
+
+  // ============================================================
+  // SORT
+  // ============================================================
+
+  void _sortParcels() {
+    _deliveredParcels.sort((ParcelModel a, ParcelModel b) {
+      final DateTime? aDate = DateTime.tryParse(a.orderDate);
+
+      final DateTime? bDate = DateTime.tryParse(b.orderDate);
+
+      if (aDate == null && bDate == null) {
+        return 0;
+      }
+
+      if (aDate == null) {
+        return 1;
+      }
+
+      if (bDate == null) {
+        return -1;
+      }
+
+      return bDate.compareTo(aDate);
     });
   }
 
@@ -111,13 +344,13 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   // ============================================================
 
   List<ParcelModel> get _filteredParcels {
-    final query = _searchQuery.trim().toLowerCase();
+    final String query = _searchQuery.trim().toLowerCase();
 
     if (query.isEmpty) {
       return _deliveredParcels;
     }
 
-    return _deliveredParcels.where((parcel) {
+    return _deliveredParcels.where((ParcelModel parcel) {
       return parcel.trackingNumber.toLowerCase().contains(query) ||
           parcel.customerName.toLowerCase().contains(query) ||
           parcel.customerPhone.toLowerCase().contains(query) ||
@@ -131,11 +364,11 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
+    final double width = MediaQuery.of(context).size.width;
 
-    final horizontalPadding = width < 380 ? 14.0 : 18.0;
+    final double horizontalPadding = width < 380 ? 14 : 18;
 
-    final parcels = _filteredParcels;
+    final List<ParcelModel> parcels = _filteredParcels;
 
     return Scaffold(
       backgroundColor: RiderColors.background,
@@ -164,13 +397,39 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
         ),
 
         actions: [
-          IconButton(
-            tooltip: 'Refresh',
+          if (_isRefreshing)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
 
-            onPressed: _isLoading ? null : _loadDeliveredParcels,
+              child: Center(
+                child: SizedBox(
+                  height: 19,
+                  width: 19,
 
-            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
-          ),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+
+                    color: RiderColors.primary,
+                  ),
+                ),
+              ),
+            )
+          else
+            IconButton(
+              tooltip: 'Refresh',
+
+              onPressed: _isLoading
+                  ? null
+                  : () {
+                      _loadDeliveredParcels(refresh: true);
+                    },
+
+              icon: const Icon(
+                Icons.refresh_rounded,
+
+                color: RiderColors.primary,
+              ),
+            ),
 
           const SizedBox(width: 5),
         ],
@@ -242,7 +501,7 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                   TextField(
                     controller: _searchController,
 
-                    onChanged: (value) {
+                    onChanged: (String value) {
                       setState(() {
                         _searchQuery = value;
                       });
@@ -301,7 +560,7 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(13),
 
-                        borderSide: BorderSide(color: RiderColors.border),
+                        borderSide: const BorderSide(color: RiderColors.border),
                       ),
 
                       focusedBorder: OutlineInputBorder(
@@ -324,7 +583,9 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
             // ==================================================
             Expanded(
               child: RefreshIndicator(
-                onRefresh: _loadDeliveredParcels,
+                onRefresh: () {
+                  return _loadDeliveredParcels(refresh: true);
+                },
 
                 child: _buildBody(horizontalPadding, parcels),
               ),
@@ -370,7 +631,7 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
       itemCount: parcels.length,
 
-      itemBuilder: (context, index) {
+      itemBuilder: (BuildContext context, int index) {
         return _historyCard(parcels[index]);
       },
     );
@@ -381,6 +642,8 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   // ============================================================
 
   Widget _historyCard(ParcelModel parcel) {
+    final String formattedDate = _formatDate(parcel.orderDate);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
 
@@ -392,8 +655,6 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
         crossAxisAlignment: CrossAxisAlignment.start,
 
         children: [
-          // HEADER
-
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
 
@@ -431,6 +692,7 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                     Text(
                       _displayValue(
                         parcel.trackingNumber,
+
                         fallback: 'Tracking unavailable',
                       ),
 
@@ -496,13 +758,13 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
             value: _displayValue(parcel.deliveryAddress),
           ),
 
-          if (parcel.orderDate.trim().isNotEmpty)
+          if (formattedDate.isNotEmpty)
             _infoRow(
               icon: Icons.calendar_today_outlined,
 
-              label: 'Order Date',
+              label: 'Delivery Date',
 
-              value: parcel.orderDate.trim(),
+              value: formattedDate,
             ),
 
           const SizedBox(height: 4),
@@ -633,14 +895,16 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   // ============================================================
 
   void _showDeliveryDetails(ParcelModel parcel) {
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
 
       isScrollControlled: true,
 
       backgroundColor: Colors.transparent,
 
-      builder: (sheetContext) {
+      builder: (BuildContext sheetContext) {
+        final String formattedDate = _formatDate(parcel.orderDate);
+
         return SafeArea(
           child: Container(
             constraints: BoxConstraints(
@@ -742,7 +1006,8 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
                   _detailTile('Rider', _displayValue(parcel.riderName)),
 
-                  _detailTile('Order Date', _displayValue(parcel.orderDate)),
+                  if (formattedDate.isNotEmpty)
+                    _detailTile('Delivery Date', formattedDate),
 
                   _detailTile('Status', _formatStatus(parcel.status)),
 
@@ -886,7 +1151,9 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
         Center(
           child: ElevatedButton.icon(
-            onPressed: _loadDeliveredParcels,
+            onPressed: () {
+              _loadDeliveredParcels(refresh: true);
+            },
 
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
 
@@ -1029,17 +1296,74 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   }
 
   // ============================================================
+  // FORMAT DATE
+  // ============================================================
+
+  String _formatDate(String value) {
+    final String cleaned = value.trim();
+
+    if (cleaned.isEmpty) {
+      return '';
+    }
+
+    final DateTime? parsed = DateTime.tryParse(cleaned);
+
+    if (parsed == null) {
+      return cleaned;
+    }
+
+    final DateTime local = parsed.toLocal();
+
+    const List<String> months = <String>[
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    final String month = months[local.month - 1];
+
+    final int hour = local.hour == 0
+        ? 12
+        : local.hour > 12
+        ? local.hour - 12
+        : local.hour;
+
+    final String minute = local.minute.toString().padLeft(2, '0');
+
+    final String meridiem = local.hour >= 12 ? 'PM' : 'AM';
+
+    return '$month ${local.day}, ${local.year} • '
+        '$hour:$minute $meridiem';
+  }
+
+  // ============================================================
   // HELPERS
   // ============================================================
 
   String _displayValue(String value, {String fallback = 'Not available'}) {
-    final cleaned = value.trim();
+    final String cleaned = value.trim();
 
-    return cleaned.isEmpty ? fallback : cleaned;
+    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
+      return fallback;
+    }
+
+    return cleaned;
   }
 
   String _formatStatus(String value) {
-    final cleaned = value.trim().replaceAll('_', ' ');
+    final String cleaned = value
+        .trim()
+        .replaceAll('_', ' ')
+        .replaceAll('-', ' ');
 
     if (cleaned.isEmpty) {
       return 'Delivered';
@@ -1047,11 +1371,14 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
     return cleaned
         .split(RegExp(r'\s+'))
-        .map(
-          (word) => word.isEmpty
-              ? word
-              : '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
-        )
+        .map((String word) {
+          if (word.isEmpty) {
+            return word;
+          }
+
+          return '${word[0].toUpperCase()}'
+              '${word.substring(1).toLowerCase()}';
+        })
         .join(' ');
   }
 }

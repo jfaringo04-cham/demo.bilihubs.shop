@@ -15,18 +15,25 @@ class RiderHome extends StatefulWidget {
 
 class _RiderHomeState extends State<RiderHome> {
   bool _isLoading = true;
+  bool _isRefreshing = false;
   bool _hasDashboardData = false;
 
+  bool? _localAvailabilityOverride;
+
   String? _errorMessage;
+
   String _savedUserName = 'Rider';
 
+  Map<String, dynamic> _savedUser = <String, dynamic>{};
   Map<String, dynamic> _rider = <String, dynamic>{};
   Map<String, dynamic> _overview = <String, dynamic>{};
+
   List<Map<String, dynamic>> _tasks = <Map<String, dynamic>>[];
 
   @override
   void initState() {
     super.initState();
+
     _loadDashboard();
   }
 
@@ -34,83 +41,380 @@ class _RiderHomeState extends State<RiderHome> {
   // LOAD DASHBOARD
   // ============================================================
 
-  Future<void> _loadDashboard() async {
-    if (mounted) {
-      setState(() {
+  Future<void> _loadDashboard({bool refresh = false}) async {
+    if (!mounted) return;
+
+    setState(() {
+      if (refresh) {
+        _isRefreshing = true;
+      } else {
         _isLoading = true;
-        _errorMessage = null;
-      });
-    }
-
-    try {
-      final savedUser = await AuthStorage.getUser();
-
-      if (savedUser != null) {
-        final savedName = savedUser['name']?.toString().trim();
-
-        if (savedName != null && savedName.isNotEmpty) {
-          _savedUserName = savedName;
-        }
       }
 
-      final result = await ApiService.getRiderDashboard();
+      _errorMessage = null;
+    });
+
+    try {
+      await _loadSavedUser();
+
+      final Map<String, dynamic> dashboardResult =
+          await ApiService.getRiderDashboard();
+
+      final Map<String, dynamic> deliveryResult =
+          await ApiService.getRiderDeliveries();
 
       if (!mounted) return;
 
-      if (result['success'] == true) {
-        final riderData = result['rider'];
-        final overviewData = result['overview'];
-        final taskData = result['tasks'];
+      final Map<String, dynamic> riderData = _extractRiderData(dashboardResult);
 
-        final parsedTasks = <Map<String, dynamic>>[];
+      final Map<String, dynamic> overviewData = _extractOverviewData(
+        dashboardResult,
+      );
 
-        if (taskData is List) {
-          for (final task in taskData) {
-            if (task is Map<String, dynamic>) {
-              parsedTasks.add(task);
-            } else if (task is Map) {
-              parsedTasks.add(Map<String, dynamic>.from(task));
-            }
-          }
+      final List<Map<String, dynamic>> dashboardTasks = _extractDashboardTasks(
+        dashboardResult,
+      );
+
+      final List<Map<String, dynamic>> deliveryTasks = _extractDeliveryTasks(
+        deliveryResult,
+      );
+
+      final List<Map<String, dynamic>> finalTasks = dashboardTasks.isNotEmpty
+          ? dashboardTasks
+          : deliveryTasks;
+
+      final Map<String, dynamic> finalRider = riderData.isNotEmpty
+          ? riderData
+          : _extractSavedRider();
+
+      final Map<String, dynamic> finalOverview = overviewData.isNotEmpty
+          ? overviewData
+          : _buildOverviewFromTasks(finalTasks);
+
+      final bool dashboardSuccess = dashboardResult['success'] == true;
+
+      final bool deliveriesSuccess = deliveryResult['success'] == true;
+
+      final bool hasUsefulData =
+          finalRider.isNotEmpty ||
+          finalOverview.isNotEmpty ||
+          finalTasks.isNotEmpty ||
+          dashboardSuccess ||
+          deliveriesSuccess;
+
+      String? errorMessage;
+
+      if (!dashboardSuccess && !deliveriesSuccess) {
+        errorMessage = dashboardResult['message']?.toString().trim();
+
+        if (errorMessage == null || errorMessage.isEmpty) {
+          errorMessage = deliveryResult['message']?.toString().trim();
         }
 
-        setState(() {
-          _rider = riderData is Map
-              ? Map<String, dynamic>.from(riderData)
-              : <String, dynamic>{};
-
-          _overview = overviewData is Map
-              ? Map<String, dynamic>.from(overviewData)
-              : <String, dynamic>{};
-
-          _tasks = parsedTasks;
-
-          _hasDashboardData = true;
-          _errorMessage = null;
-          _isLoading = false;
-        });
-
-        return;
+        if (errorMessage == null || errorMessage.isEmpty) {
+          errorMessage = 'Unable to load rider information.';
+        }
       }
 
       setState(() {
-        _hasDashboardData = false;
+        _rider = finalRider;
+        _overview = finalOverview;
+        _tasks = finalTasks;
 
-        _errorMessage =
-            result['message']?.toString() ?? 'Unable to load rider dashboard.';
+        _hasDashboardData = hasUsefulData;
+
+        _errorMessage = hasUsefulData ? null : errorMessage;
 
         _isLoading = false;
+        _isRefreshing = false;
       });
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
-        _hasDashboardData = false;
         _isLoading = false;
+        _isRefreshing = false;
+        _hasDashboardData = false;
 
         _errorMessage = 'Unable to load rider dashboard: $e';
       });
     }
+  }
+
+  // ============================================================
+  // LOAD SAVED USER
+  // ============================================================
+
+  Future<void> _loadSavedUser() async {
+    final Map<String, dynamic>? saved = await AuthStorage.getUser();
+
+    if (saved == null) {
+      return;
+    }
+
+    _savedUser = Map<String, dynamic>.from(saved);
+
+    final String? savedName = saved['name']?.toString().trim();
+
+    if (savedName != null && savedName.isNotEmpty) {
+      _savedUserName = savedName;
+    }
+  }
+
+  // ============================================================
+  // EXTRACT RIDER DATA
+  // ============================================================
+
+  Map<String, dynamic> _extractRiderData(Map<String, dynamic> result) {
+    final dynamic directRider = result['rider'];
+
+    if (directRider is Map) {
+      return Map<String, dynamic>.from(directRider);
+    }
+
+    final dynamic rawData = result['data'];
+
+    if (rawData is Map) {
+      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
+
+      final dynamic nestedRider = data['rider'];
+
+      if (nestedRider is Map) {
+        return Map<String, dynamic>.from(nestedRider);
+      }
+
+      if (_looksLikeRider(data)) {
+        return data;
+      }
+    }
+
+    return <String, dynamic>{};
+  }
+
+  // ============================================================
+  // SAVED RIDER
+  // ============================================================
+
+  Map<String, dynamic> _extractSavedRider() {
+    final dynamic savedRider = _savedUser['rider'];
+
+    if (savedRider is Map) {
+      return Map<String, dynamic>.from(savedRider);
+    }
+
+    final dynamic profile = _savedUser['profile'];
+
+    if (profile is Map) {
+      final Map<String, dynamic> profileMap = Map<String, dynamic>.from(
+        profile,
+      );
+
+      final dynamic profileRider = profileMap['rider'];
+
+      if (profileRider is Map) {
+        return Map<String, dynamic>.from(profileRider);
+      }
+    }
+
+    final Map<String, dynamic> fallback = <String, dynamic>{};
+
+    final dynamic name = _savedUser['name'];
+
+    final dynamic vehicleType = _savedUser['vehicle_type'];
+
+    final dynamic availabilityStatus = _savedUser['availability_status'];
+
+    final dynamic status = _savedUser['status'];
+
+    if (name != null) {
+      fallback['name'] = name;
+    }
+
+    if (vehicleType != null) {
+      fallback['vehicle_type'] = vehicleType;
+    }
+
+    if (availabilityStatus != null) {
+      fallback['availability_status'] = availabilityStatus;
+    }
+
+    if (status != null) {
+      fallback['status'] = status;
+    }
+
+    return fallback;
+  }
+
+  // ============================================================
+  // RIDER MAP CHECK
+  // ============================================================
+
+  bool _looksLikeRider(Map<String, dynamic> data) {
+    return data.containsKey('vehicle_type') ||
+        data.containsKey('availability_status') ||
+        data.containsKey('license_number') ||
+        data.containsKey('driver_license_number');
+  }
+
+  // ============================================================
+  // EXTRACT OVERVIEW
+  // ============================================================
+
+  Map<String, dynamic> _extractOverviewData(Map<String, dynamic> result) {
+    final dynamic directOverview = result['overview'];
+
+    if (directOverview is Map) {
+      return Map<String, dynamic>.from(directOverview);
+    }
+
+    final dynamic rawData = result['data'];
+
+    if (rawData is Map) {
+      final dynamic nestedOverview = rawData['overview'];
+
+      if (nestedOverview is Map) {
+        return Map<String, dynamic>.from(nestedOverview);
+      }
+
+      final dynamic statistics = rawData['statistics'];
+
+      if (statistics is Map) {
+        return Map<String, dynamic>.from(statistics);
+      }
+    }
+
+    return <String, dynamic>{};
+  }
+
+  // ============================================================
+  // EXTRACT DASHBOARD TASKS
+  // ============================================================
+
+  List<Map<String, dynamic>> _extractDashboardTasks(
+    Map<String, dynamic> result,
+  ) {
+    final dynamic directTasks = result['tasks'];
+
+    final List<Map<String, dynamic>> parsedDirect = _toMapList(directTasks);
+
+    if (parsedDirect.isNotEmpty) {
+      return parsedDirect;
+    }
+
+    final dynamic rawData = result['data'];
+
+    if (rawData is Map) {
+      final dynamic tasks = rawData['tasks'];
+
+      final List<Map<String, dynamic>> parsedTasks = _toMapList(tasks);
+
+      if (parsedTasks.isNotEmpty) {
+        return parsedTasks;
+      }
+
+      final dynamic deliveries = rawData['deliveries'];
+
+      final List<Map<String, dynamic>> parsedDeliveries = _toMapList(
+        deliveries,
+      );
+
+      if (parsedDeliveries.isNotEmpty) {
+        return parsedDeliveries;
+      }
+
+      final dynamic orders = rawData['orders'];
+
+      final List<Map<String, dynamic>> parsedOrders = _toMapList(orders);
+
+      if (parsedOrders.isNotEmpty) {
+        return parsedOrders;
+      }
+
+      final dynamic shipments = rawData['shipments'];
+
+      final List<Map<String, dynamic>> parsedShipments = _toMapList(shipments);
+
+      if (parsedShipments.isNotEmpty) {
+        return parsedShipments;
+      }
+    }
+
+    return <Map<String, dynamic>>[];
+  }
+
+  // ============================================================
+  // EXTRACT DELIVERIES
+  // ============================================================
+
+  List<Map<String, dynamic>> _extractDeliveryTasks(
+    Map<String, dynamic> result,
+  ) {
+    if (result['success'] != true) {
+      return <Map<String, dynamic>>[];
+    }
+
+    final dynamic rawData = result['data'];
+
+    return _toMapList(rawData);
+  }
+
+  // ============================================================
+  // CONVERT LIST
+  // ============================================================
+
+  List<Map<String, dynamic>> _toMapList(dynamic value) {
+    if (value is! List) {
+      return <Map<String, dynamic>>[];
+    }
+
+    final List<Map<String, dynamic>> result = <Map<String, dynamic>>[];
+
+    for (final dynamic item in value) {
+      if (item is Map<String, dynamic>) {
+        result.add(Map<String, dynamic>.from(item));
+      } else if (item is Map) {
+        result.add(Map<String, dynamic>.from(item));
+      }
+    }
+
+    return result;
+  }
+
+  // ============================================================
+  // BUILD OVERVIEW FROM TASKS
+  // ============================================================
+
+  Map<String, dynamic> _buildOverviewFromTasks(
+    List<Map<String, dynamic>> tasks,
+  ) {
+    int assigned = 0;
+    int completed = 0;
+    int pending = 0;
+
+    for (final Map<String, dynamic> task in tasks) {
+      final String status = _normalizeStatus(task['status']?.toString() ?? '');
+
+      if (status == 'delivered' || status == 'completed') {
+        completed++;
+        continue;
+      }
+
+      if (status == 'pending' ||
+          status == 'assigned' ||
+          status == 'staged' ||
+          status == 'ready_for_pickup') {
+        pending++;
+      }
+
+      assigned++;
+    }
+
+    return <String, dynamic>{
+      'today_delivery': assigned,
+      'assigned': assigned,
+      'completed': completed,
+      'pending': pending,
+    };
   }
 
   // ============================================================
@@ -122,21 +426,42 @@ class _RiderHomeState extends State<RiderHome> {
   }
 
   // ============================================================
-  // DATA HELPERS
+  // RIDER NAME
   // ============================================================
 
   String get _riderName {
-    final apiName = _rider['name']?.toString().trim();
+    final List<dynamic> candidates = <dynamic>[
+      _rider['name'],
+      _rider['full_name'],
+      _savedUser['name'],
+    ];
 
-    if (apiName != null && apiName.isNotEmpty) {
-      return apiName;
+    for (final dynamic candidate in candidates) {
+      final String value = candidate?.toString().trim() ?? '';
+
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+
+    final String firstName = _rider['first_name']?.toString().trim() ?? '';
+
+    final String lastName = _rider['last_name']?.toString().trim() ?? '';
+
+    final String completeName = <String>[
+      firstName,
+      lastName,
+    ].where((String part) => part.isNotEmpty).join(' ');
+
+    if (completeName.isNotEmpty) {
+      return completeName;
     }
 
     return _savedUserName;
   }
 
   String get _firstName {
-    final name = _riderName.trim();
+    final String name = _riderName.trim();
 
     if (name.isEmpty) {
       return 'Rider';
@@ -145,51 +470,135 @@ class _RiderHomeState extends State<RiderHome> {
     return name.split(RegExp(r'\s+')).first;
   }
 
-  String get _availabilityStatus {
-    final raw = _rider['availability_status']?.toString().trim();
+  // ============================================================
+  // AVAILABILITY
+  // ============================================================
 
-    if (raw == null || raw.isEmpty) {
-      return 'Unavailable';
+  bool get _isAvailable {
+    final bool? override = _localAvailabilityOverride;
+
+    if (override != null) {
+      return override;
     }
 
-    return _formatStatus(raw);
+    final dynamic boolAvailable = _rider['is_available'] ?? _rider['available'];
+
+    if (boolAvailable is bool) {
+      return boolAvailable;
+    }
+
+    if (boolAvailable != null) {
+      final String value = boolAvailable.toString().trim().toLowerCase();
+
+      if (value == '1' || value == 'true' || value == 'yes') {
+        return true;
+      }
+
+      if (value == '0' || value == 'false' || value == 'no') {
+        return false;
+      }
+    }
+
+    final String availability =
+        (_rider['availability_status'] ??
+                _rider['availability'] ??
+                _savedUser['availability_status'] ??
+                '')
+            .toString()
+            .trim()
+            .toLowerCase();
+
+    if (availability == 'available' ||
+        availability == 'online' ||
+        availability == 'active') {
+      return true;
+    }
+
+    if (availability == 'unavailable' ||
+        availability == 'offline' ||
+        availability == 'inactive') {
+      return false;
+    }
+
+    return false;
   }
 
-  bool get _isOnline {
-    final status = _rider['availability_status']
-        ?.toString()
-        .trim()
-        .toLowerCase();
-
-    return status == 'online' || status == 'available' || status == 'active';
+  String get _availabilityStatus {
+    return _isAvailable ? 'Available' : 'Unavailable';
   }
+
+  void _toggleAvailability() {
+    final bool newValue = !_isAvailable;
+
+    setState(() {
+      _localAvailabilityOverride = newValue;
+    });
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          newValue
+              ? 'You are now shown as Available on this device.'
+              : 'You are now shown as Unavailable on this device.',
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // VEHICLE TYPE
+  // ============================================================
 
   String get _vehicleType {
-    final value = _rider['vehicle_type']?.toString().trim();
+    final List<dynamic> candidates = <dynamic>[
+      _rider['vehicle_type'],
+      _rider['vehicle'],
+      _savedUser['vehicle_type'],
+    ];
 
-    if (value == null || value.isEmpty) {
-      return 'Vehicle not specified';
+    for (final dynamic candidate in candidates) {
+      final String value = candidate?.toString().trim() ?? '';
+
+      if (value.isNotEmpty) {
+        return _formatStatus(value);
+      }
     }
 
-    return _formatStatus(value);
+    return 'Vehicle not specified';
   }
 
-  String _overviewValue(String key) {
-    if (!_hasDashboardData) {
-      return '—';
+  // ============================================================
+  // OVERVIEW VALUE
+  // ============================================================
+
+  String _overviewValue(List<String> keys) {
+    for (final String key in keys) {
+      final dynamic value = _overview[key];
+
+      if (value != null) {
+        return value.toString();
+      }
     }
 
-    final value = _overview[key];
+    return '0';
+  }
 
-    if (value == null) {
-      return '—';
-    }
+  // ============================================================
+  // STATUS HELPERS
+  // ============================================================
 
-    return value.toString();
+  String _normalizeStatus(String value) {
+    return value.trim().toLowerCase().replaceAll(' ', '_').replaceAll('-', '_');
   }
 
   String _formatStatus(String value) {
-    final cleaned = value.trim().replaceAll('_', ' ');
+    final String cleaned = value
+        .trim()
+        .replaceAll('_', ' ')
+        .replaceAll('-', ' ');
 
     if (cleaned.isEmpty) {
       return 'Unknown';
@@ -197,16 +606,19 @@ class _RiderHomeState extends State<RiderHome> {
 
     return cleaned
         .split(RegExp(r'\s+'))
-        .map(
-          (word) => word.isEmpty
-              ? word
-              : '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
-        )
+        .map((String word) {
+          if (word.isEmpty) {
+            return word;
+          }
+
+          return '${word[0].toUpperCase()}'
+              '${word.substring(1).toLowerCase()}';
+        })
         .join(' ');
   }
 
   Color _statusColor(String status) {
-    final normalized = status.trim().toLowerCase();
+    final String normalized = _normalizeStatus(status);
 
     switch (normalized) {
       case 'delivered':
@@ -242,16 +654,18 @@ class _RiderHomeState extends State<RiderHome> {
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final double screenWidth = MediaQuery.of(context).size.width;
 
-    final horizontalPadding = screenWidth < 380 ? 14.0 : 18.0;
+    final double horizontalPadding = screenWidth < 380 ? 14 : 18;
 
     return Scaffold(
       backgroundColor: RiderColors.background,
 
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _loadDashboard,
+          onRefresh: () {
+            return _loadDashboard(refresh: true);
+          },
 
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(
@@ -274,9 +688,12 @@ class _RiderHomeState extends State<RiderHome> {
 
               if (!_isLoading && _errorMessage != null) ...[
                 _errorCard(),
-
                 const SizedBox(height: 14),
               ],
+
+              _availabilityCard(),
+
+              const SizedBox(height: 14),
 
               _riderInfoCard(),
 
@@ -317,60 +734,130 @@ class _RiderHomeState extends State<RiderHome> {
           ),
         ),
 
-        const SizedBox(width: 8),
-
-        _statusBadge(),
-
-        const SizedBox(width: 8),
+        if (_isRefreshing)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 10),
+            child: SizedBox(
+              height: 19,
+              width: 19,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: RiderColors.primary,
+              ),
+            ),
+          )
+        else
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: () {
+              _loadDashboard(refresh: true);
+            },
+            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
+          ),
 
         _notificationButton(),
       ],
     );
   }
 
-  Widget _statusBadge() {
+  // ============================================================
+  // AVAILABILITY CARD
+  // ============================================================
+
+  Widget _availabilityCard() {
+    final bool available = _isAvailable;
+
     return Container(
-      constraints: const BoxConstraints(maxWidth: 95),
+      width: double.infinity,
 
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      padding: const EdgeInsets.all(16),
 
-      decoration: BoxDecoration(
-        color: _isOnline ? RiderColors.lightGreen : RiderColors.lightOrange,
-
-        borderRadius: BorderRadius.circular(20),
-      ),
+      decoration: RiderStyle.card,
 
       child: Row(
-        mainAxisSize: MainAxisSize.min,
-
         children: [
           Container(
-            height: 7,
-            width: 7,
+            height: 46,
+            width: 46,
 
             decoration: BoxDecoration(
-              color: _isOnline ? RiderColors.success : RiderColors.warning,
+              color: available
+                  ? RiderColors.lightGreen
+                  : RiderColors.lightOrange,
 
-              shape: BoxShape.circle,
+              borderRadius: BorderRadius.circular(14),
+            ),
+
+            alignment: Alignment.center,
+
+            child: Icon(
+              available
+                  ? Icons.check_circle_outline_rounded
+                  : Icons.pause_circle_outline_rounded,
+
+              color: available ? RiderColors.success : RiderColors.warning,
+
+              size: 25,
             ),
           ),
 
-          const SizedBox(width: 5),
+          const SizedBox(width: 12),
 
-          Flexible(
-            child: Text(
-              _availabilityStatus,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
 
-              maxLines: 1,
+              children: [
+                const Text('Availability', style: RiderStyle.cardTitle),
 
-              overflow: TextOverflow.ellipsis,
+                const SizedBox(height: 3),
 
-              style: TextStyle(
-                color: _isOnline ? RiderColors.success : RiderColors.warning,
+                Text(
+                  available
+                      ? 'You are available for delivery assignments.'
+                      : 'You are currently unavailable for new assignments.',
 
-                fontSize: 9,
+                  style: RiderStyle.small,
+                ),
+              ],
+            ),
+          ),
 
-                fontWeight: FontWeight.w800,
+          const SizedBox(width: 10),
+
+          GestureDetector(
+            onTap: _toggleAvailability,
+
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+
+              width: 54,
+              height: 30,
+
+              padding: const EdgeInsets.all(3),
+
+              decoration: BoxDecoration(
+                color: available ? RiderColors.success : RiderColors.border,
+
+                borderRadius: BorderRadius.circular(20),
+              ),
+
+              child: AnimatedAlign(
+                duration: const Duration(milliseconds: 180),
+
+                alignment: available
+                    ? Alignment.centerRight
+                    : Alignment.centerLeft,
+
+                child: Container(
+                  height: 24,
+                  width: 24,
+
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                ),
               ),
             ),
           ),
@@ -407,7 +894,6 @@ class _RiderHomeState extends State<RiderHome> {
 
                 decoration: const BoxDecoration(
                   color: RiderColors.primary,
-
                   shape: BoxShape.circle,
                 ),
 
@@ -415,9 +901,7 @@ class _RiderHomeState extends State<RiderHome> {
 
                 child: const Icon(
                   Icons.two_wheeler_rounded,
-
                   color: Colors.white,
-
                   size: 26,
                 ),
               ),
@@ -445,9 +929,7 @@ class _RiderHomeState extends State<RiderHome> {
                       children: [
                         const Icon(
                           Icons.directions_bike_outlined,
-
                           size: 14,
-
                           color: RiderColors.textGrey,
                         ),
 
@@ -462,6 +944,41 @@ class _RiderHomeState extends State<RiderHome> {
                             overflow: TextOverflow.ellipsis,
 
                             style: RiderStyle.small,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 5),
+
+                    Row(
+                      children: [
+                        Container(
+                          height: 7,
+                          width: 7,
+
+                          decoration: BoxDecoration(
+                            color: _isAvailable
+                                ? RiderColors.success
+                                : RiderColors.warning,
+
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+
+                        const SizedBox(width: 6),
+
+                        Text(
+                          _availabilityStatus,
+
+                          style: TextStyle(
+                            color: _isAvailable
+                                ? RiderColors.success
+                                : RiderColors.warning,
+
+                            fontSize: 11,
+
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ],
@@ -481,7 +998,7 @@ class _RiderHomeState extends State<RiderHome> {
   // ============================================================
 
   Widget _deliveryOverview(double screenWidth) {
-    final compact = screenWidth < 380;
+    final bool compact = screenWidth < 380;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -496,9 +1013,17 @@ class _RiderHomeState extends State<RiderHome> {
             Expanded(
               child: _overviewCard(
                 title: 'Assigned',
-                value: _overviewValue('today_delivery'),
+
+                value: _overviewValue(<String>[
+                  'today_delivery',
+                  'assigned',
+                  'total',
+                ]),
+
                 icon: Icons.inventory_2_outlined,
+
                 background: RiderColors.lightBlue,
+
                 compact: compact,
               ),
             ),
@@ -508,9 +1033,17 @@ class _RiderHomeState extends State<RiderHome> {
             Expanded(
               child: _overviewCard(
                 title: 'Completed',
-                value: _overviewValue('completed'),
+
+                value: _overviewValue(<String>[
+                  'completed',
+                  'delivered',
+                  'completed_delivery',
+                ]),
+
                 icon: Icons.check_circle_outline_rounded,
+
                 background: RiderColors.lightGreen,
+
                 compact: compact,
               ),
             ),
@@ -521,8 +1054,15 @@ class _RiderHomeState extends State<RiderHome> {
 
         _wideOverviewCard(
           title: 'Pending Deliveries',
-          value: _overviewValue('pending'),
+
+          value: _overviewValue(<String>[
+            'pending',
+            'pending_delivery',
+            'pending_deliveries',
+          ]),
+
           icon: Icons.pending_actions_outlined,
+
           background: RiderColors.lightOrange,
         ),
       ],
@@ -572,9 +1112,7 @@ class _RiderHomeState extends State<RiderHome> {
 
             style: const TextStyle(
               color: RiderColors.textDark,
-
               fontSize: 21,
-
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -622,9 +1160,7 @@ class _RiderHomeState extends State<RiderHome> {
 
                   style: const TextStyle(
                     color: RiderColors.textDark,
-
                     fontSize: 22,
-
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -674,7 +1210,6 @@ class _RiderHomeState extends State<RiderHome> {
               const Expanded(
                 child: Text(
                   'Assigned Shipments',
-
                   style: RiderStyle.sectionTitle,
                 ),
               ),
@@ -697,29 +1232,40 @@ class _RiderHomeState extends State<RiderHome> {
                 child: CircularProgressIndicator(color: RiderColors.primary),
               ),
             )
-          else if (!_hasDashboardData)
-            _emptyShipmentState('Shipment data is unavailable.')
           else if (_tasks.isEmpty)
             _emptyShipmentState('No assigned shipments.')
           else
-            ..._tasks.take(4).map((task) => _shipmentItem(task)),
+            ..._tasks.take(4).map((Map<String, dynamic> task) {
+              return _shipmentItem(task);
+            }),
         ],
       ),
     );
   }
 
   Widget _shipmentItem(Map<String, dynamic> task) {
-    final tracking = task['tracking_number']?.toString().trim();
+    final String tracking = _firstNonEmpty(<dynamic>[
+      task['tracking_number'],
+      task['tracking_code'],
+      task['waybill_number'],
+    ], fallback: 'Tracking unavailable');
 
-    final customer = task['customer_name']?.toString().trim();
+    final String customer = _firstNonEmpty(<dynamic>[
+      task['customer_name'],
+      task['recipient_name'],
+      task['buyer_name'],
+    ], fallback: 'Customer unavailable');
 
-    final address = task['delivery_address']?.toString().trim();
+    final String address = _firstNonEmpty(<dynamic>[
+      task['delivery_address'],
+      task['address'],
+    ], fallback: 'Delivery address unavailable');
 
-    final rawStatus = task['status']?.toString().trim() ?? '';
+    final String rawStatus = task['status']?.toString().trim() ?? '';
 
-    final status = _formatStatus(rawStatus);
+    final String status = _formatStatus(rawStatus);
 
-    final statusColor = _statusColor(rawStatus);
+    final Color statusColor = _statusColor(rawStatus);
 
     return Container(
       width: double.infinity,
@@ -773,9 +1319,7 @@ class _RiderHomeState extends State<RiderHome> {
 
                   children: [
                     Text(
-                      tracking == null || tracking.isEmpty
-                          ? 'Tracking unavailable'
-                          : tracking,
+                      tracking,
 
                       maxLines: 1,
 
@@ -784,19 +1328,17 @@ class _RiderHomeState extends State<RiderHome> {
                       style: RiderStyle.cardTitle,
                     ),
 
-                    if (customer != null && customer.isNotEmpty) ...[
-                      const SizedBox(height: 3),
+                    const SizedBox(height: 3),
 
-                      Text(
-                        customer,
+                    Text(
+                      customer,
 
-                        maxLines: 1,
+                      maxLines: 1,
 
-                        overflow: TextOverflow.ellipsis,
+                      overflow: TextOverflow.ellipsis,
 
-                        style: RiderStyle.small,
-                      ),
-                    ],
+                      style: RiderStyle.small,
+                    ),
                   ],
                 ),
               ),
@@ -817,9 +1359,7 @@ class _RiderHomeState extends State<RiderHome> {
 
                   style: TextStyle(
                     color: statusColor,
-
                     fontSize: 9,
-
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -845,9 +1385,7 @@ class _RiderHomeState extends State<RiderHome> {
 
               Expanded(
                 child: Text(
-                  address == null || address.isEmpty
-                      ? 'Delivery address unavailable'
-                      : address,
+                  address,
 
                   maxLines: 2,
 
@@ -861,6 +1399,18 @@ class _RiderHomeState extends State<RiderHome> {
         ],
       ),
     );
+  }
+
+  String _firstNonEmpty(List<dynamic> values, {required String fallback}) {
+    for (final dynamic value in values) {
+      final String cleaned = value?.toString().trim() ?? '';
+
+      if (cleaned.isNotEmpty && cleaned.toLowerCase() != 'null') {
+        return cleaned;
+      }
+    }
+
+    return fallback;
   }
 
   Widget _emptyShipmentState(String message) {
@@ -956,7 +1506,7 @@ class _RiderHomeState extends State<RiderHome> {
 
               children: [
                 const Text(
-                  'Dashboard data unavailable',
+                  'Unable to load rider data',
 
                   style: RiderStyle.cardTitle,
                 ),
@@ -973,7 +1523,9 @@ class _RiderHomeState extends State<RiderHome> {
           ),
 
           IconButton(
-            onPressed: _loadDashboard,
+            onPressed: () {
+              _loadDashboard(refresh: true);
+            },
 
             icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
           ),
@@ -998,7 +1550,7 @@ class _RiderHomeState extends State<RiderHome> {
             const SnackBar(
               behavior: SnackBarBehavior.floating,
 
-              content: Text('Rider notifications are not available yet.'),
+              content: Text('No new rider notifications.'),
             ),
           );
         },

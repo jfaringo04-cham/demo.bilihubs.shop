@@ -13,18 +13,15 @@ class RiderDeliveries extends StatefulWidget {
 
 class _RiderDeliveriesState extends State<RiderDeliveries> {
   bool _isLoading = true;
+  bool _isRefreshing = false;
 
   String? _errorMessage;
 
-  List<ParcelModel> _deliveries = [];
+  List<ParcelModel> _deliveries = <ParcelModel>[];
 
   String _selectedStatus = 'all';
 
-  // ============================================================
-  // STATUS OPTIONS
-  // ============================================================
-
-  final List<Map<String, String>> _statusOptions = const [
+  final List<Map<String, String>> _statusOptions = const <Map<String, String>>[
     {'value': 'all', 'label': 'All Statuses'},
     {'value': 'pending', 'label': 'Pending'},
     {'value': 'assigned', 'label': 'Assigned'},
@@ -45,75 +42,252 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   }
 
   // ============================================================
-  // LOAD RIDER DELIVERIES
+  // LOAD DELIVERIES
   // ============================================================
 
-  Future<void> _loadDeliveries() async {
-    if (mounted) {
-      setState(() {
+  Future<void> _loadDeliveries({bool refresh = false}) async {
+    if (!mounted) return;
+
+    setState(() {
+      if (refresh) {
+        _isRefreshing = true;
+      } else {
         _isLoading = true;
-        _errorMessage = null;
-      });
-    }
-
-    try {
-      final result = await ApiService.getRiderDeliveries();
-
-      if (!mounted) {
-        return;
       }
 
-      if (result['success'] == true) {
-        final dynamic rawData = result['data'];
+      _errorMessage = null;
+    });
 
-        final List<ParcelModel> parsedDeliveries = [];
+    try {
+      final Map<String, dynamic> result = await ApiService.getRiderDeliveries();
 
-        if (rawData is List) {
-          for (final item in rawData) {
-            try {
-              if (item is Map<String, dynamic>) {
-                parsedDeliveries.add(ParcelModel.fromJson(item));
-              } else if (item is Map) {
-                parsedDeliveries.add(
-                  ParcelModel.fromJson(Map<String, dynamic>.from(item)),
-                );
-              }
-            } catch (error) {
-              debugPrint('Failed to parse rider shipment: $error');
-            }
-          }
-        }
+      if (!mounted) return;
 
+      if (result['success'] != true) {
         setState(() {
-          _deliveries = parsedDeliveries;
           _isLoading = false;
-          _errorMessage = null;
+          _isRefreshing = false;
+
+          _errorMessage =
+              result['message']?.toString().trim().isNotEmpty == true
+              ? result['message'].toString().trim()
+              : 'Unable to load your deliveries.';
         });
 
         return;
       }
 
-      setState(() {
-        _deliveries = [];
-        _isLoading = false;
+      final List<Map<String, dynamic>> rawDeliveries = _extractDeliveryMaps(
+        result,
+      );
 
-        _errorMessage =
-            result['message']?.toString() ?? 'Unable to load your deliveries.';
+      final List<ParcelModel> parsedDeliveries = <ParcelModel>[];
+
+      for (final Map<String, dynamic> raw in rawDeliveries) {
+        try {
+          final Map<String, dynamic> normalized = _normalizeShipment(raw);
+
+          parsedDeliveries.add(ParcelModel.fromJson(normalized));
+        } catch (error) {
+          debugPrint('Failed to parse rider shipment: $error');
+        }
+      }
+
+      parsedDeliveries.sort((ParcelModel a, ParcelModel b) {
+        final DateTime? aDate = DateTime.tryParse(a.orderDate);
+
+        final DateTime? bDate = DateTime.tryParse(b.orderDate);
+
+        if (aDate == null && bDate == null) {
+          return 0;
+        }
+
+        if (aDate == null) {
+          return 1;
+        }
+
+        if (bDate == null) {
+          return -1;
+        }
+
+        return bDate.compareTo(aDate);
+      });
+
+      setState(() {
+        _deliveries = parsedDeliveries;
+
+        _isLoading = false;
+        _isRefreshing = false;
+        _errorMessage = null;
       });
     } catch (error) {
       debugPrint('Rider deliveries error: $error');
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       setState(() {
-        _deliveries = [];
         _isLoading = false;
+        _isRefreshing = false;
 
         _errorMessage = 'Unable to connect to the server. Please try again.';
       });
     }
+  }
+
+  // ============================================================
+  // EXTRACT DELIVERY MAPS
+  // ============================================================
+
+  List<Map<String, dynamic>> _extractDeliveryMaps(Map<String, dynamic> result) {
+    final List<Map<String, dynamic>> direct = _toMapList(result['data']);
+
+    if (direct.isNotEmpty) {
+      return direct;
+    }
+
+    final List<Map<String, dynamic>> directDeliveries = _toMapList(
+      result['deliveries'],
+    );
+
+    if (directDeliveries.isNotEmpty) {
+      return directDeliveries;
+    }
+
+    final List<Map<String, dynamic>> directOrders = _toMapList(
+      result['orders'],
+    );
+
+    if (directOrders.isNotEmpty) {
+      return directOrders;
+    }
+
+    final List<Map<String, dynamic>> directShipments = _toMapList(
+      result['shipments'],
+    );
+
+    if (directShipments.isNotEmpty) {
+      return directShipments;
+    }
+
+    final dynamic rawData = result['data'];
+
+    if (rawData is Map) {
+      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
+
+      final List<Map<String, dynamic>> nestedData = _toMapList(data['data']);
+
+      if (nestedData.isNotEmpty) {
+        return nestedData;
+      }
+
+      final List<Map<String, dynamic>> nestedDeliveries = _toMapList(
+        data['deliveries'],
+      );
+
+      if (nestedDeliveries.isNotEmpty) {
+        return nestedDeliveries;
+      }
+
+      final List<Map<String, dynamic>> nestedOrders = _toMapList(
+        data['orders'],
+      );
+
+      if (nestedOrders.isNotEmpty) {
+        return nestedOrders;
+      }
+
+      final List<Map<String, dynamic>> nestedShipments = _toMapList(
+        data['shipments'],
+      );
+
+      if (nestedShipments.isNotEmpty) {
+        return nestedShipments;
+      }
+    }
+
+    return <Map<String, dynamic>>[];
+  }
+
+  // ============================================================
+  // TO MAP LIST
+  // ============================================================
+
+  List<Map<String, dynamic>> _toMapList(dynamic value) {
+    if (value is! List) {
+      return <Map<String, dynamic>>[];
+    }
+
+    final List<Map<String, dynamic>> list = <Map<String, dynamic>>[];
+
+    for (final dynamic item in value) {
+      if (item is Map<String, dynamic>) {
+        list.add(Map<String, dynamic>.from(item));
+      } else if (item is Map) {
+        list.add(Map<String, dynamic>.from(item));
+      }
+    }
+
+    return list;
+  }
+
+  // ============================================================
+  // NORMALIZE SHIPMENT
+  // ============================================================
+
+  Map<String, dynamic> _normalizeShipment(Map<String, dynamic> raw) {
+    final Map<String, dynamic> map = Map<String, dynamic>.from(raw);
+
+    final dynamic nestedShipment = raw['shipment'];
+
+    if (nestedShipment is Map) {
+      map.addAll(Map<String, dynamic>.from(nestedShipment));
+    }
+
+    final dynamic nestedOrder = raw['order'];
+
+    if (nestedOrder is Map) {
+      final Map<String, dynamic> order = Map<String, dynamic>.from(nestedOrder);
+
+      map['order_number'] ??= order['order_number'] ?? order['number'];
+
+      map['created_at'] ??= order['created_at'];
+
+      map['customer_name'] ??= order['customer_name'];
+
+      map['customer_phone'] ??= order['customer_phone'];
+
+      map['delivery_address'] ??= order['delivery_address'];
+    }
+
+    map['id'] ??= map['shipment_id'] ?? map['order_id'] ?? 0;
+
+    map['shipment_id'] ??= map['id'];
+
+    map['tracking_number'] ??=
+        map['tracking_code'] ?? map['waybill_number'] ?? '';
+
+    map['customer_name'] ??= map['recipient_name'] ?? map['buyer_name'] ?? '';
+
+    map['customer_phone'] ??= map['phone'] ?? map['recipient_phone'] ?? '';
+
+    map['delivery_address'] ??= map['address'] ?? map['shipping_address'] ?? '';
+
+    map['rider_name'] ??= map['driver_name'] ?? '';
+
+    map['rider_id'] ??= map['driver_id'];
+
+    map['status'] ??=
+        map['shipment_status'] ?? map['delivery_status'] ?? 'pending';
+
+    map['order_date'] ??= map['created_at'] ?? map['assigned_at'] ?? '';
+
+    map['delivery_earnings'] ??= map['earnings'] ?? map['delivery_fee'] ?? 0;
+
+    map['latitude'] ??= map['rider_latitude'];
+
+    map['longitude'] ??= map['rider_longitude'];
+
+    return map;
   }
 
   // ============================================================
@@ -125,8 +299,8 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
       return _deliveries;
     }
 
-    return _deliveries.where((parcel) {
-      final status = _normalizeStatus(parcel.status);
+    return _deliveries.where((ParcelModel parcel) {
+      final String status = _normalizeStatus(parcel.status);
 
       if (_selectedStatus == 'pending') {
         return status == 'pending' || status == 'ready_for_pickup';
@@ -149,38 +323,72 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final double screenWidth = MediaQuery.of(context).size.width;
 
-    final horizontalPadding = screenWidth < 380 ? 14.0 : 18.0;
+    final double horizontalPadding = screenWidth < 380 ? 14 : 18;
 
-    final deliveries = _filteredDeliveries;
+    final List<ParcelModel> deliveries = _filteredDeliveries;
 
     return Scaffold(
       backgroundColor: RiderColors.background,
 
       appBar: AppBar(
         backgroundColor: RiderColors.white,
+
         elevation: 0,
+
         surfaceTintColor: Colors.transparent,
+
         automaticallyImplyLeading: false,
 
         titleSpacing: 18,
 
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+
           children: [
             Text('My Deliveries', style: RiderStyle.title),
+
             SizedBox(height: 2),
+
             Text('Manage your assigned shipments', style: RiderStyle.small),
           ],
         ),
 
         actions: [
-          IconButton(
-            tooltip: 'Refresh deliveries',
-            onPressed: _isLoading ? null : _loadDeliveries,
-            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
-          ),
+          if (_isRefreshing)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+
+              child: Center(
+                child: SizedBox(
+                  height: 19,
+                  width: 19,
+
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+
+                    color: RiderColors.primary,
+                  ),
+                ),
+              ),
+            )
+          else
+            IconButton(
+              tooltip: 'Refresh deliveries',
+
+              onPressed: _isLoading
+                  ? null
+                  : () {
+                      _loadDeliveries(refresh: true);
+                    },
+
+              icon: const Icon(
+                Icons.refresh_rounded,
+
+                color: RiderColors.primary,
+              ),
+            ),
 
           const SizedBox(width: 6),
         ],
@@ -188,6 +396,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
       body: SafeArea(
         top: false,
+
         child: Column(
           children: [
             // ==================================================
@@ -196,6 +405,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
             Container(
               width: double.infinity,
+
               color: RiderColors.white,
 
               padding: EdgeInsets.fromLTRB(
@@ -207,12 +417,14 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+
                 children: [
                   Row(
                     children: [
                       const Expanded(
                         child: Text(
                           'Assigned Shipments',
+
                           style: RiderStyle.sectionTitle,
                         ),
                       ),
@@ -223,16 +435,22 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                             horizontal: 10,
                             vertical: 5,
                           ),
+
                           decoration: BoxDecoration(
                             color: RiderColors.lightPurple,
+
                             borderRadius: BorderRadius.circular(20),
                           ),
+
                           child: Text(
                             '${deliveries.length} '
                             '${deliveries.length == 1 ? 'shipment' : 'shipments'}',
+
                             style: const TextStyle(
                               color: RiderColors.primary,
+
                               fontSize: 10,
+
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -244,15 +462,19 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                   DropdownButtonFormField<String>(
                     initialValue: _selectedStatus,
+
                     isExpanded: true,
 
                     decoration: InputDecoration(
                       filled: true,
+
                       fillColor: RiderColors.background,
 
                       prefixIcon: const Icon(
                         Icons.filter_list_rounded,
+
                         color: RiderColors.primary,
+
                         size: 20,
                       ),
 
@@ -263,31 +485,36 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(13),
+
                         borderSide: BorderSide.none,
                       ),
 
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(13),
+
                         borderSide: const BorderSide(color: RiderColors.border),
                       ),
 
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(13),
+
                         borderSide: const BorderSide(
                           color: RiderColors.primary,
+
                           width: 1.3,
                         ),
                       ),
                     ),
 
-                    items: _statusOptions.map((option) {
+                    items: _statusOptions.map((Map<String, String> option) {
                       return DropdownMenuItem<String>(
                         value: option['value'],
+
                         child: Text(option['label'] ?? ''),
                       );
                     }).toList(),
 
-                    onChanged: (value) {
+                    onChanged: (String? value) {
                       if (value == null) {
                         return;
                       }
@@ -306,7 +533,10 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
             // ==================================================
             Expanded(
               child: RefreshIndicator(
-                onRefresh: _loadDeliveries,
+                onRefresh: () {
+                  return _loadDeliveries(refresh: true);
+                },
+
                 child: _buildBody(horizontalPadding, deliveries),
               ),
             ),
@@ -351,8 +581,8 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
       itemCount: deliveries.length,
 
-      itemBuilder: (context, index) {
-        final parcel = deliveries[index];
+      itemBuilder: (BuildContext context, int index) {
+        final ParcelModel parcel = deliveries[index];
 
         return _deliveryCard(parcel);
       },
@@ -364,11 +594,11 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   // ============================================================
 
   Widget _deliveryCard(ParcelModel parcel) {
-    final status = _formatStatus(parcel.status);
+    final String status = _formatStatus(parcel.status);
 
-    final statusColor = _statusColor(parcel.status);
+    final Color statusColor = _statusColor(parcel.status);
 
-    final formattedDate = _formatDate(parcel.orderDate);
+    final String formattedDate = _formatDate(parcel.orderDate);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -381,12 +611,9 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
         crossAxisAlignment: CrossAxisAlignment.start,
 
         children: [
-          // ====================================================
-          // HEADER
-          // ====================================================
-
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
+
             children: [
               Container(
                 height: 45,
@@ -394,12 +621,15 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                 decoration: BoxDecoration(
                   color: RiderColors.lightPurple,
+
                   borderRadius: BorderRadius.circular(13),
                 ),
 
                 child: const Icon(
                   Icons.local_shipping_outlined,
+
                   color: RiderColors.primary,
+
                   size: 22,
                 ),
               ),
@@ -409,6 +639,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+
                   children: [
                     const Text('Tracking Number', style: RiderStyle.small),
 
@@ -417,10 +648,14 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                     Text(
                       _displayValue(
                         parcel.trackingNumber,
+
                         fallback: 'Tracking unavailable',
                       ),
+
                       maxLines: 1,
+
                       overflow: TextOverflow.ellipsis,
+
                       style: RiderStyle.cardTitle,
                     ),
                   ],
@@ -431,18 +666,27 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
               Container(
                 constraints: const BoxConstraints(maxWidth: 120),
+
                 padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.10),
+
                   borderRadius: BorderRadius.circular(20),
                 ),
+
                 child: Text(
                   status,
+
                   maxLines: 1,
+
                   overflow: TextOverflow.ellipsis,
+
                   style: TextStyle(
                     color: statusColor,
+
                     fontSize: 9,
+
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -452,31 +696,36 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
           const SizedBox(height: 17),
 
-          // ====================================================
-          // CUSTOMER
-          // ====================================================
           _infoRow(
             icon: Icons.person_outline_rounded,
+
             label: 'Customer',
+
             value: _displayValue(parcel.customerName),
           ),
 
           _infoRow(
             icon: Icons.phone_outlined,
+
             label: 'Contact',
+
             value: _displayValue(parcel.customerPhone),
           ),
 
           _infoRow(
             icon: Icons.location_on_outlined,
+
             label: 'Delivery Address',
+
             value: _displayValue(parcel.deliveryAddress),
           ),
 
           if (formattedDate.isNotEmpty)
             _infoRow(
               icon: Icons.calendar_today_outlined,
+
               label: 'Order Date',
+
               value: formattedDate,
             ),
 
@@ -486,11 +735,9 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
           const SizedBox(height: 8),
 
-          // ====================================================
-          // VIEW SHIPMENT
-          // ====================================================
           SizedBox(
             width: double.infinity,
+
             height: 47,
 
             child: OutlinedButton.icon(
@@ -504,13 +751,18 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
               style: OutlinedButton.styleFrom(
                 foregroundColor: RiderColors.primary,
+
                 backgroundColor: RiderColors.white,
+
                 side: const BorderSide(color: RiderColors.primary),
+
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
+
                 textStyle: const TextStyle(
                   fontSize: 12,
+
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -535,6 +787,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
+
         children: [
           Container(
             height: 34,
@@ -542,6 +795,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
             decoration: BoxDecoration(
               color: RiderColors.lightPurple,
+
               borderRadius: BorderRadius.circular(10),
             ),
 
@@ -553,6 +807,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+
               children: [
                 Text(label, style: RiderStyle.small),
 
@@ -560,8 +815,11 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                 Text(
                   value,
+
                   maxLines: label == 'Delivery Address' ? 3 : 2,
+
                   overflow: TextOverflow.ellipsis,
+
                   style: RiderStyle.cardTitle,
                 ),
               ],
@@ -579,13 +837,15 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   void _showShipmentDetails(ParcelModel parcel) {
     showModalBottomSheet<void>(
       context: context,
+
       isScrollControlled: true,
+
       backgroundColor: Colors.transparent,
 
       builder: (BuildContext sheetContext) {
-        final statusColor = _statusColor(parcel.status);
+        final Color statusColor = _statusColor(parcel.status);
 
-        final formattedDate = _formatDate(parcel.orderDate);
+        final String formattedDate = _formatDate(parcel.orderDate);
 
         return SafeArea(
           child: Container(
@@ -597,6 +857,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
             decoration: const BoxDecoration(
               color: RiderColors.white,
+
               borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
             ),
 
@@ -605,6 +866,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+
                 children: [
                   Center(
                     child: Container(
@@ -613,6 +875,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                       decoration: BoxDecoration(
                         color: RiderColors.border,
+
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
@@ -628,11 +891,13 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                         decoration: BoxDecoration(
                           color: RiderColors.lightPurple,
+
                           borderRadius: BorderRadius.circular(13),
                         ),
 
                         child: const Icon(
                           Icons.local_shipping_outlined,
+
                           color: RiderColors.primary,
                         ),
                       ),
@@ -642,9 +907,11 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
+
                           children: [
                             const Text(
                               'Shipment Details',
+
                               style: RiderStyle.sectionTitle,
                             ),
 
@@ -653,10 +920,14 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                             Text(
                               _displayValue(
                                 parcel.trackingNumber,
+
                                 fallback: 'Tracking unavailable',
                               ),
+
                               maxLines: 1,
+
                               overflow: TextOverflow.ellipsis,
+
                               style: RiderStyle.small,
                             ),
                           ],
@@ -670,15 +941,21 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                           horizontal: 9,
                           vertical: 6,
                         ),
+
                         decoration: BoxDecoration(
                           color: statusColor.withValues(alpha: 0.10),
+
                           borderRadius: BorderRadius.circular(20),
                         ),
+
                         child: Text(
                           _formatStatus(parcel.status),
+
                           style: TextStyle(
                             color: statusColor,
+
                             fontSize: 9,
+
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -751,12 +1028,15 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
       decoration: BoxDecoration(
         color: RiderColors.background,
+
         borderRadius: BorderRadius.circular(12),
+
         border: Border.all(color: RiderColors.border),
       ),
 
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+
         children: [
           Text(label, style: RiderStyle.small),
 
@@ -773,7 +1053,11 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   // ============================================================
 
   String _normalizeStatus(String status) {
-    return status.trim().toLowerCase().replaceAll(' ', '_');
+    return status
+        .trim()
+        .toLowerCase()
+        .replaceAll(' ', '_')
+        .replaceAll('-', '_');
   }
 
   // ============================================================
@@ -781,7 +1065,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   // ============================================================
 
   String _formatStatus(String status) {
-    final normalized = _normalizeStatus(status);
+    final String normalized = _normalizeStatus(status);
 
     if (normalized.isEmpty) {
       return 'Unknown';
@@ -810,11 +1094,11 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
         return 'Returned to Sorting Center';
 
       default:
-        final cleaned = normalized.replaceAll('_', ' ');
+        final String cleaned = normalized.replaceAll('_', ' ');
 
         return cleaned
             .split(RegExp(r'\s+'))
-            .map((word) {
+            .map((String word) {
               if (word.isEmpty) {
                 return word;
               }
@@ -831,7 +1115,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   // ============================================================
 
   Color _statusColor(String status) {
-    final normalized = _normalizeStatus(status);
+    final String normalized = _normalizeStatus(status);
 
     switch (normalized) {
       case 'delivered':
@@ -867,21 +1151,21 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   // ============================================================
 
   String _formatDate(String value) {
-    final cleaned = value.trim();
+    final String cleaned = value.trim();
 
     if (cleaned.isEmpty) {
       return '';
     }
 
-    final parsed = DateTime.tryParse(cleaned);
+    final DateTime? parsed = DateTime.tryParse(cleaned);
 
     if (parsed == null) {
       return cleaned;
     }
 
-    final local = parsed.toLocal();
+    final DateTime local = parsed.toLocal();
 
-    const months = [
+    const List<String> months = <String>[
       'Jan',
       'Feb',
       'Mar',
@@ -896,24 +1180,24 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
       'Dec',
     ];
 
-    final month = months[local.month - 1];
+    final String month = months[local.month - 1];
 
-    final hour = local.hour == 0
+    final int hour = local.hour == 0
         ? 12
         : local.hour > 12
         ? local.hour - 12
         : local.hour;
 
-    final minute = local.minute.toString().padLeft(2, '0');
+    final String minute = local.minute.toString().padLeft(2, '0');
 
-    final meridiem = local.hour >= 12 ? 'PM' : 'AM';
+    final String meridiem = local.hour >= 12 ? 'PM' : 'AM';
 
     return '$month ${local.day}, ${local.year} • '
         '$hour:$minute $meridiem';
   }
 
   // ============================================================
-  // LOADING STATE
+  // LOADING
   // ============================================================
 
   Widget _loadingState() {
@@ -939,7 +1223,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   }
 
   // ============================================================
-  // ERROR STATE
+  // ERROR
   // ============================================================
 
   Widget _errorState() {
@@ -958,12 +1242,15 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
             decoration: const BoxDecoration(
               color: RiderColors.lightPurple,
+
               shape: BoxShape.circle,
             ),
 
             child: const Icon(
               Icons.cloud_off_outlined,
+
               size: 40,
+
               color: RiderColors.primary,
             ),
           ),
@@ -973,10 +1260,14 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Text(
           'Unable to Load Deliveries',
+
           textAlign: TextAlign.center,
+
           style: TextStyle(
             fontWeight: FontWeight.w800,
+
             fontSize: 18,
+
             color: RiderColors.textDark,
           ),
         ),
@@ -985,7 +1276,9 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         Text(
           _errorMessage ?? 'Something went wrong.',
+
           textAlign: TextAlign.center,
+
           style: RiderStyle.small,
         ),
 
@@ -993,9 +1286,14 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         Center(
           child: ElevatedButton.icon(
-            onPressed: _loadDeliveries,
+            onPressed: () {
+              _loadDeliveries(refresh: true);
+            },
+
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+
             label: const Text('Retry', style: TextStyle(color: Colors.white)),
+
             style: RiderStyle.primaryButton,
           ),
         ),
@@ -1004,7 +1302,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   }
 
   // ============================================================
-  // EMPTY STATE
+  // EMPTY
   // ============================================================
 
   Widget _emptyState() {
@@ -1023,12 +1321,15 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
             decoration: const BoxDecoration(
               color: RiderColors.lightPurple,
+
               shape: BoxShape.circle,
             ),
 
             child: const Icon(
               Icons.local_shipping_outlined,
+
               size: 43,
+
               color: RiderColors.primary,
             ),
           ),
@@ -1038,10 +1339,14 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Text(
           'No Deliveries Assigned',
+
           textAlign: TextAlign.center,
+
           style: TextStyle(
             fontWeight: FontWeight.w800,
+
             fontSize: 18,
+
             color: RiderColors.textDark,
           ),
         ),
@@ -1050,7 +1355,9 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Text(
           'Shipments assigned to your rider account will appear here.',
+
           textAlign: TextAlign.center,
+
           style: RiderStyle.small,
         ),
       ],
@@ -1058,7 +1365,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   }
 
   // ============================================================
-  // NO FILTER RESULTS
+  // FILTER EMPTY
   // ============================================================
 
   Widget _noFilteredDeliveries() {
@@ -1072,7 +1379,9 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Icon(
           Icons.filter_alt_off_outlined,
+
           size: 55,
+
           color: RiderColors.textGrey,
         ),
 
@@ -1080,10 +1389,14 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Text(
           'No Deliveries Found',
+
           textAlign: TextAlign.center,
+
           style: TextStyle(
             fontSize: 17,
+
             fontWeight: FontWeight.w800,
+
             color: RiderColors.textDark,
           ),
         ),
@@ -1092,7 +1405,9 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
         const Text(
           'No assigned shipments match the selected status.',
+
           textAlign: TextAlign.center,
+
           style: RiderStyle.small,
         ),
 
@@ -1105,6 +1420,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                 _selectedStatus = 'all';
               });
             },
+
             child: const Text('Show All Deliveries'),
           ),
         ),
@@ -1117,8 +1433,12 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   // ============================================================
 
   String _displayValue(String value, {String fallback = 'Not available'}) {
-    final cleaned = value.trim();
+    final String cleaned = value.trim();
 
-    return cleaned.isEmpty ? fallback : cleaned;
+    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
+      return fallback;
+    }
+
+    return cleaned;
   }
 }

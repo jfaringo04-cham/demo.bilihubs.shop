@@ -36,7 +36,7 @@ class _RiderScannerState extends State<RiderScanner> {
       facing: CameraFacing.back,
       torchEnabled: false,
       detectionSpeed: DetectionSpeed.noDuplicates,
-      formats: const [BarcodeFormat.qrCode],
+      formats: const <BarcodeFormat>[BarcodeFormat.qrCode],
       autoZoom: true,
     );
 
@@ -46,7 +46,6 @@ class _RiderScannerState extends State<RiderScanner> {
   @override
   void dispose() {
     _scannerController.dispose();
-
     super.dispose();
   }
 
@@ -64,9 +63,7 @@ class _RiderScannerState extends State<RiderScanner> {
         child: Column(
           children: [
             Expanded(child: _cameraScanner()),
-
             _scannerControls(),
-
             _bottomPanel(),
           ],
         ),
@@ -96,11 +93,9 @@ class _RiderScannerState extends State<RiderScanner> {
               fontWeight: FontWeight.w800,
             ),
           ),
-
           SizedBox(height: 2),
-
           Text(
-            'Scan the BiliHub parcel waybill QR code',
+            'Scan the BiliHub parcel or website QR code',
             style: TextStyle(color: Colors.white60, fontSize: 11),
           ),
         ],
@@ -114,12 +109,12 @@ class _RiderScannerState extends State<RiderScanner> {
 
   Widget _cameraScanner() {
     return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = constraints.biggest;
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final Size size = constraints.biggest;
 
-        final scanSize = size.width * 0.64;
+        final double scanSize = size.width * 0.64;
 
-        final scanWindow = Rect.fromCenter(
+        final Rect scanWindow = Rect.fromCenter(
           center: Offset(size.width / 2, size.height * 0.43),
           width: scanSize,
           height: scanSize,
@@ -133,11 +128,11 @@ class _RiderScannerState extends State<RiderScanner> {
               fit: BoxFit.cover,
               scanWindow: scanWindow,
               onDetect: _handleDetection,
-              errorBuilder: (context, error) {
-                return _cameraError(error);
-              },
+              errorBuilder:
+                  (BuildContext context, MobileScannerException error) {
+                    return _cameraError(error);
+                  },
             ),
-
             ScanWindowOverlay(
               controller: _scannerController,
               scanWindow: scanWindow,
@@ -146,7 +141,6 @@ class _RiderScannerState extends State<RiderScanner> {
               borderRadius: BorderRadius.circular(16),
               color: Colors.black.withValues(alpha: 0.58),
             ),
-
             Positioned(
               left: 0,
               right: 0,
@@ -175,10 +169,8 @@ class _RiderScannerState extends State<RiderScanner> {
                       ),
                     ),
                   ),
-
                   if (_scannedCode != null) ...[
                     const SizedBox(height: 8),
-
                     Container(
                       constraints: BoxConstraints(maxWidth: size.width * 0.80),
                       padding: const EdgeInsets.symmetric(
@@ -190,7 +182,7 @@ class _RiderScannerState extends State<RiderScanner> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
-                        _scannedCode!,
+                        _displayQrValue(_scannedCode!),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
@@ -213,7 +205,7 @@ class _RiderScannerState extends State<RiderScanner> {
 
   String get _scannerGuideText {
     if (_isProcessingScan) {
-      return 'Verifying waybill...';
+      return 'Verifying BiliHub QR...';
     }
 
     if (_foundParcel != null) {
@@ -221,14 +213,14 @@ class _RiderScannerState extends State<RiderScanner> {
     }
 
     if (_scanError != null) {
-      return 'Unable to verify waybill';
+      return 'Unable to verify QR code';
     }
 
     if (_hasScanned) {
       return 'QR code detected';
     }
 
-    return 'Place the waybill QR code inside the frame';
+    return 'Place the BiliHub QR code inside the frame';
   }
 
   // ============================================================
@@ -240,94 +232,107 @@ class _RiderScannerState extends State<RiderScanner> {
       return;
     }
 
-    final barcode = capture.barcodes.first;
+    final Barcode barcode = capture.barcodes.first;
 
     if (barcode.format != BarcodeFormat.qrCode) {
       return;
     }
 
-    final value = barcode.rawValue;
+    final String? rawValue = barcode.rawValue;
 
-    if (value == null || value.trim().isEmpty) {
+    if (rawValue == null || rawValue.trim().isEmpty) {
       return;
     }
 
-    final qrValue = value.trim();
+    final String qrPayload = rawValue.trim();
 
     setState(() {
-      _scannedCode = qrValue;
+      _scannedCode = qrPayload;
 
       _hasScanned = true;
-
       _isProcessingScan = true;
 
       _scanError = null;
-
       _scanMessage = null;
-
       _scanType = null;
 
       _foundParcel = null;
     });
 
-    await _scannerController.stop();
+    try {
+      await _scannerController.stop();
+    } catch (error) {
+      debugPrint('Unable to stop scanner: $error');
+    }
 
-    await _processScannedWaybill(qrValue);
+    // IMPORTANT:
+    // Send the COMPLETE QR payload to Laravel.
+    //
+    // Do not extract only the tracking number.
+    //
+    // Laravel ScannerController verifies:
+    // t  = tracking_number
+    // q  = qr_token
+    // so = seller_order_id
+    await _processScannedWaybill(qrPayload);
   }
 
   // ============================================================
   // SEND QR TO LARAVEL
   // ============================================================
 
-  Future<void> _processScannedWaybill(String qrValue) async {
-    final result = await ApiService.scanRiderWaybill(qrPayload: qrValue);
-
-    if (!mounted) {
-      return;
-    }
-
-    if (result['success'] != true) {
-      final message = result['message']?.toString().trim();
-
-      setState(() {
-        _isProcessingScan = false;
-
-        _foundParcel = null;
-
-        _scanError = message != null && message.isNotEmpty
-            ? message
-            : 'Unable to verify the scanned waybill.';
-      });
-
-      _showScanError(_scanError!);
-
-      return;
-    }
-
-    final dynamic rawShipment = result['shipment'];
-
-    if (rawShipment is! Map) {
-      setState(() {
-        _isProcessingScan = false;
-
-        _foundParcel = null;
-
-        _scanError = 'The server verified the QR code but returned invalid shipment data.';
-      });
-
-      _showScanError(_scanError!);
-
-      return;
-    }
-
+  Future<void> _processScannedWaybill(String qrPayload) async {
     try {
-      final parcel = ParcelModel.fromJson(
+      final Map<String, dynamic> result = await ApiService.scanRiderWaybill(
+        qrPayload: qrPayload,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      if (result['success'] != true) {
+        final String message = result['message']?.toString().trim() ?? '';
+
+        setState(() {
+          _isProcessingScan = false;
+          _foundParcel = null;
+
+          _scanError = message.isNotEmpty
+              ? message
+              : 'Unable to verify the scanned BiliHub QR code.';
+        });
+
+        _showScanError(_scanError!);
+
+        return;
+      }
+
+      final dynamic rawShipment = result['shipment'];
+
+      if (rawShipment is! Map) {
+        setState(() {
+          _isProcessingScan = false;
+
+          _foundParcel = null;
+
+          _scanError = 'The QR code was verified but the server returned invalid shipment information.';
+        });
+
+        _showScanError(_scanError!);
+
+        return;
+      }
+
+      final Map<String, dynamic> shipmentData = _normalizeShipment(
         Map<String, dynamic>.from(rawShipment),
       );
 
-      final message = result['message']?.toString().trim();
+      final ParcelModel parcel = ParcelModel.fromJson(shipmentData);
 
-      final scanType = result['scan_type']?.toString().trim();
+      final String message = result['message']?.toString().trim() ?? '';
+
+      final String scanType = result['scan_type']?.toString().trim() ?? '';
 
       setState(() {
         _foundParcel = parcel;
@@ -336,26 +341,143 @@ class _RiderScannerState extends State<RiderScanner> {
 
         _scanError = null;
 
-        _scanMessage = message != null && message.isNotEmpty
+        _scanMessage = message.isNotEmpty
             ? message
             : 'Waybill verified successfully.';
 
-        _scanType = scanType != null && scanType.isNotEmpty ? scanType : null;
+        _scanType = scanType.isNotEmpty ? scanType : null;
       });
 
       _showScanSuccess(parcel.trackingNumber, _scanMessage!);
-    } catch (e) {
+    } catch (error) {
+      debugPrint('Rider scanner error: $error');
+
+      if (!mounted) {
+        return;
+      }
+
       setState(() {
         _isProcessingScan = false;
 
         _foundParcel = null;
 
-        _scanError =
-            'Unable to read shipment information returned by the server.';
+        _scanError = 'Unable to process the scanned QR code. Please try again.';
       });
 
       _showScanError(_scanError!);
     }
+  }
+
+  // ============================================================
+  // NORMALIZE SHIPMENT RESPONSE
+  // ============================================================
+
+  Map<String, dynamic> _normalizeShipment(Map<String, dynamic> raw) {
+    final Map<String, dynamic> data = Map<String, dynamic>.from(raw);
+
+    final dynamic nestedShipment = raw['shipment'];
+
+    if (nestedShipment is Map) {
+      data.addAll(Map<String, dynamic>.from(nestedShipment));
+    }
+
+    final dynamic order = raw['order'];
+
+    if (order is Map) {
+      final Map<String, dynamic> orderMap = Map<String, dynamic>.from(order);
+
+      data['customer_name'] ??=
+          orderMap['customer_name'] ??
+          orderMap['buyer_name'] ??
+          orderMap['name'];
+
+      data['customer_phone'] ??=
+          orderMap['customer_phone'] ??
+          orderMap['phone'] ??
+          orderMap['mobile_number'];
+
+      data['delivery_address'] ??=
+          orderMap['delivery_address'] ?? orderMap['address'];
+
+      data['order_date'] ??= orderMap['order_date'] ?? orderMap['created_at'];
+    }
+
+    data['id'] ??= data['shipment_id'] ?? data['order_id'] ?? 0;
+
+    data['tracking_number'] ??=
+        data['tracking'] ??
+        data['tracking_code'] ??
+        data['waybill_number'] ??
+        '';
+
+    data['customer_name'] ??=
+        data['recipient_name'] ?? data['buyer_name'] ?? '';
+
+    data['customer_phone'] ??=
+        data['phone'] ?? data['mobile_number'] ?? data['recipient_phone'] ?? '';
+
+    data['delivery_address'] ??=
+        data['address'] ??
+        data['shipping_address'] ??
+        data['recipient_address'] ??
+        '';
+
+    final dynamic rider = data['rider'];
+
+    if (rider is Map) {
+      data['rider_name'] ??= rider['name'];
+
+      data['rider_id'] ??= rider['id'];
+    }
+
+    data['rider_name'] ??= '';
+
+    data['rider_id'] ??= null;
+
+    data['status'] ??= data['shipment_status'] ?? data['delivery_status'] ?? '';
+
+    data['order_date'] ??= data['created_at'] ?? data['assigned_at'] ?? '';
+
+    data['delivery_earnings'] ??= data['earnings'] ?? data['delivery_fee'] ?? 0;
+
+    data['latitude'] ??= data['lat'];
+
+    data['longitude'] ??= data['lng'] ?? data['lon'];
+
+    return data;
+  }
+
+  // ============================================================
+  // QR DISPLAY
+  // ============================================================
+
+  String _displayQrValue(String rawValue) {
+    final String value = rawValue.trim();
+
+    if (value.isEmpty) {
+      return 'BiliHub QR';
+    }
+
+    // This is display-only.
+    // The complete original payload is still sent to Laravel.
+
+    try {
+      final Uri? uri = Uri.tryParse(value);
+
+      if (uri != null &&
+          (uri.scheme.toLowerCase() == 'http' ||
+              uri.scheme.toLowerCase() == 'https')) {
+        return 'BiliHub Website QR';
+      }
+    } catch (_) {
+      // Keep original display handling below.
+    }
+
+    if (value.startsWith('{') && value.endsWith('}')) {
+      return 'BiliHub Waybill QR';
+    }
+
+    return value;
   }
 
   // ============================================================
@@ -377,16 +499,16 @@ class _RiderScannerState extends State<RiderScanner> {
         content: Row(
           children: [
             const Icon(Icons.check_circle_rounded, color: Colors.white),
-
             const SizedBox(width: 10),
-
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    trackingNumber,
+                    trackingNumber.trim().isNotEmpty
+                        ? trackingNumber
+                        : 'BiliHub Waybill',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -394,9 +516,7 @@ class _RiderScannerState extends State<RiderScanner> {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-
                   const SizedBox(height: 2),
-
                   Text(
                     message,
                     maxLines: 2,
@@ -457,9 +577,7 @@ class _RiderScannerState extends State<RiderScanner> {
               size: 32,
             ),
           ),
-
           const SizedBox(height: 16),
-
           const Text(
             'Camera unavailable',
             style: TextStyle(
@@ -468,20 +586,20 @@ class _RiderScannerState extends State<RiderScanner> {
               fontWeight: FontWeight.w800,
             ),
           ),
-
           const SizedBox(height: 8),
-
           const Text(
             'Please allow camera permission and try again.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white70, fontSize: 12),
           ),
-
           const SizedBox(height: 20),
-
           ElevatedButton.icon(
             onPressed: () async {
-              await _scannerController.start();
+              try {
+                await _scannerController.start();
+              } catch (scanError) {
+                debugPrint('Scanner start error: $scanError');
+              }
             },
             icon: const Icon(Icons.refresh_rounded),
             label: const Text('Try Again'),
@@ -516,27 +634,29 @@ class _RiderScannerState extends State<RiderScanner> {
                 ? Icons.flash_on_rounded
                 : Icons.flash_off_rounded,
             label: 'Flash',
-            onTap: () async {
-              await _scannerController.toggleTorch();
-
-              if (mounted) {
-                setState(() {});
-              }
-            },
+            onTap: _toggleTorch,
           ),
-
           const SizedBox(width: 18),
-
           _scannerControlButton(
             icon: Icons.refresh_rounded,
             label: 'Reset',
-            onTap: () {
-              _resetScanner();
-            },
+            onTap: _resetScanner,
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _toggleTorch() async {
+    try {
+      await _scannerController.toggleTorch();
+
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (error) {
+      debugPrint('Torch error: $error');
+    }
   }
 
   Widget _scannerControlButton({
@@ -555,9 +675,7 @@ class _RiderScannerState extends State<RiderScanner> {
           child: Row(
             children: [
               Icon(icon, color: Colors.white, size: 20),
-
               const SizedBox(width: 7),
-
               Text(
                 label,
                 style: const TextStyle(
@@ -582,6 +700,10 @@ class _RiderScannerState extends State<RiderScanner> {
       return;
     }
 
+    if (!mounted) {
+      return;
+    }
+
     setState(() {
       _scannedCode = null;
 
@@ -590,15 +712,17 @@ class _RiderScannerState extends State<RiderScanner> {
       _foundParcel = null;
 
       _scanError = null;
-
       _scanMessage = null;
-
       _scanType = null;
 
       _isProcessingScan = false;
     });
 
-    await _scannerController.start();
+    try {
+      await _scannerController.start();
+    } catch (error) {
+      debugPrint('Scanner reset error: $error');
+    }
   }
 
   // ============================================================
@@ -608,7 +732,7 @@ class _RiderScannerState extends State<RiderScanner> {
   Widget _bottomPanel() {
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(maxHeight: 335),
+      constraints: const BoxConstraints(maxHeight: 350),
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
       decoration: const BoxDecoration(
         color: RiderColors.white,
@@ -626,7 +750,7 @@ class _RiderScannerState extends State<RiderScanner> {
   }
 
   // ============================================================
-  // CHECKING
+  // CHECKING PANEL
   // ============================================================
 
   Widget _checkingPanel() {
@@ -635,15 +759,11 @@ class _RiderScannerState extends State<RiderScanner> {
       child: Column(
         children: [
           CircularProgressIndicator(color: RiderColors.primary),
-
           SizedBox(height: 12),
-
-          Text('Verifying Waybill...', style: RiderStyle.cardTitle),
-
+          Text('Verifying BiliHub QR...', style: RiderStyle.cardTitle),
           SizedBox(height: 3),
-
           Text(
-            'Please wait while BiliHub verifies the QR code and records the shipment.',
+            'Please wait while BiliHub securely verifies the waybill and Rider assignment.',
             textAlign: TextAlign.center,
             style: RiderStyle.small,
           ),
@@ -667,9 +787,7 @@ class _RiderScannerState extends State<RiderScanner> {
             borderRadius: BorderRadius.circular(10),
           ),
         ),
-
         const SizedBox(height: 14),
-
         Container(
           height: 48,
           width: 48,
@@ -687,25 +805,20 @@ class _RiderScannerState extends State<RiderScanner> {
             size: 27,
           ),
         ),
-
         const SizedBox(height: 9),
-
         Text(
           _scanError != null ? 'Unable to Scan' : 'Ready to Scan',
           style: RiderStyle.cardTitle,
         ),
-
         const SizedBox(height: 3),
-
         Text(
-          _scanError ?? 'Point your camera at the QR code printed on the BiliHub waybill.',
+          _scanError ??
+              'Point your camera at the original BiliHub waybill QR code.',
           textAlign: TextAlign.center,
           style: RiderStyle.small,
         ),
-
         if (_scannedCode != null) ...[
           const SizedBox(height: 10),
-
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -713,26 +826,28 @@ class _RiderScannerState extends State<RiderScanner> {
               color: RiderColors.background,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Text(
-              _scannedCode!,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: RiderStyle.small,
+            child: Column(
+              children: [
+                const Text('Scanned QR', style: RiderStyle.cardTitle),
+                const SizedBox(height: 4),
+                Text(
+                  _displayQrValue(_scannedCode!),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: RiderStyle.small,
+                ),
+              ],
             ),
           ),
         ],
-
         if (_scanError != null) ...[
           const SizedBox(height: 12),
-
           SizedBox(
             width: double.infinity,
             height: 48,
             child: ElevatedButton.icon(
-              onPressed: () {
-                _resetScanner();
-              },
+              onPressed: _resetScanner,
               style: RiderStyle.primaryButton,
               icon: const Icon(
                 Icons.qr_code_scanner_rounded,
@@ -764,9 +879,7 @@ class _RiderScannerState extends State<RiderScanner> {
             ),
           ),
         ),
-
         const SizedBox(height: 14),
-
         const Row(
           children: [
             Icon(
@@ -774,19 +887,15 @@ class _RiderScannerState extends State<RiderScanner> {
               color: RiderColors.success,
               size: 28,
             ),
-
             SizedBox(width: 10),
-
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Waybill Verified', style: RiderStyle.sectionTitle),
-
                   SizedBox(height: 2),
-
                   Text(
-                    'The shipment has been recorded successfully.',
+                    'The secure BiliHub QR has been verified successfully.',
                     style: RiderStyle.small,
                   ),
                 ],
@@ -794,10 +903,8 @@ class _RiderScannerState extends State<RiderScanner> {
             ),
           ],
         ),
-
         if (_scanMessage != null) ...[
           const SizedBox(height: 12),
-
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(11),
@@ -808,39 +915,29 @@ class _RiderScannerState extends State<RiderScanner> {
             child: Text(_scanMessage!, style: RiderStyle.small),
           ),
         ],
-
         const SizedBox(height: 14),
-
         _infoRow('Tracking Number', parcel.trackingNumber),
-
         _infoRow(
           'Customer',
           parcel.customerName.isNotEmpty
               ? parcel.customerName
               : 'Not available',
         ),
-
         _infoRow(
           'Address',
           parcel.deliveryAddress.isNotEmpty
               ? parcel.deliveryAddress
               : 'Not available',
         ),
-
         _infoRow('Status', _formatStatus(parcel.status)),
-
         if (_scanType != null)
           _infoRow('Scan Type', _formatScanType(_scanType!)),
-
         const SizedBox(height: 8),
-
         SizedBox(
           width: double.infinity,
           height: 50,
           child: ElevatedButton.icon(
-            onPressed: () {
-              _resetScanner();
-            },
+            onPressed: _resetScanner,
             style: RiderStyle.primaryButton,
             icon: const Icon(
               Icons.qr_code_scanner_rounded,
@@ -861,7 +958,7 @@ class _RiderScannerState extends State<RiderScanner> {
   // ============================================================
 
   String _formatStatus(String status) {
-    final value = status.trim();
+    final String value = status.trim().replaceAll('-', '_');
 
     if (value.isEmpty) {
       return 'Not available';
@@ -869,10 +966,11 @@ class _RiderScannerState extends State<RiderScanner> {
 
     return value
         .split('_')
-        .where((part) => part.trim().isNotEmpty)
+        .where((String part) => part.trim().isNotEmpty)
         .map(
-          (part) =>
-              '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
+          (String part) =>
+              '${part[0].toUpperCase()}'
+              '${part.substring(1).toLowerCase()}',
         )
         .join(' ');
   }
@@ -905,9 +1003,7 @@ class _RiderScannerState extends State<RiderScanner> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(width: 105, child: Text(title, style: RiderStyle.small)),
-
           const SizedBox(width: 8),
-
           Expanded(
             child: Text(
               value.trim().isNotEmpty ? value : 'Not available',

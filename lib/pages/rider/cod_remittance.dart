@@ -1,42 +1,266 @@
 import 'package:flutter/material.dart';
 
+import '../../sevices/api_services.dart';
 import '../../styles/rider_style.dart';
 
 class CodRemittance extends StatefulWidget {
   const CodRemittance({super.key});
 
   @override
-  State<CodRemittance> createState() =>
-      _CodRemittanceState();
+  State<CodRemittance> createState() => _CodRemittanceState();
 }
 
-class _CodRemittanceState
-    extends State<CodRemittance> {
-  bool _isLoading = false;
+class _CodRemittanceState extends State<CodRemittance> {
+  bool _isLoading = true;
+  bool _isRefreshing = false;
 
-  final List<Map<String, dynamic>> _availableCollections =
-      <Map<String, dynamic>>[];
+  String? _errorMessage;
 
-  final List<Map<String, dynamic>> _remittanceHistory =
-      <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _availableCollections = <Map<String, dynamic>>[];
+
+  List<Map<String, dynamic>> _remittanceHistory = <Map<String, dynamic>>[];
 
   final Set<int> _selectedPaymentIds = <int>{};
+
+  @override
+  void initState() {
+    super.initState();
+
+    _loadRemittanceData();
+  }
+
+  // ============================================================
+  // LOAD REMITTANCE DATA
+  // ============================================================
+
+  Future<void> _loadRemittanceData({bool refresh = false}) async {
+    if (!mounted) return;
+
+    setState(() {
+      if (refresh) {
+        _isRefreshing = true;
+      } else {
+        _isLoading = true;
+      }
+
+      _errorMessage = null;
+    });
+
+    try {
+      final Map<String, dynamic> result = await ApiService.getRiderEarnings();
+
+      if (!mounted) return;
+
+      if (result['success'] != true) {
+        setState(() {
+          _availableCollections = <Map<String, dynamic>>[];
+
+          _remittanceHistory = <Map<String, dynamic>>[];
+
+          _selectedPaymentIds.clear();
+
+          _isLoading = false;
+          _isRefreshing = false;
+
+          final String message = result['message']?.toString().trim() ?? '';
+
+          _errorMessage = message.isNotEmpty
+              ? message
+              : 'Unable to load COD remittance data.';
+        });
+
+        return;
+      }
+
+      final Map<String, dynamic> data = _extractDataMap(result);
+
+      final List<Map<String, dynamic>> collections = _extractCollections(data);
+
+      final List<Map<String, dynamic>> history = _extractHistory(data);
+
+      setState(() {
+        _availableCollections = collections;
+        _remittanceHistory = history;
+
+        _selectedPaymentIds.removeWhere(
+          (int id) => !_availableCollections.any(
+            (Map<String, dynamic> item) => _toInt(item['id']) == id,
+          ),
+        );
+
+        _isLoading = false;
+        _isRefreshing = false;
+        _errorMessage = null;
+      });
+    } catch (error) {
+      debugPrint('COD remittance load error: $error');
+
+      if (!mounted) return;
+
+      setState(() {
+        _availableCollections = <Map<String, dynamic>>[];
+
+        _remittanceHistory = <Map<String, dynamic>>[];
+
+        _selectedPaymentIds.clear();
+
+        _isLoading = false;
+        _isRefreshing = false;
+
+        _errorMessage = 'Unable to connect to the server. Please try again.';
+      });
+    }
+  }
+
+  // ============================================================
+  // EXTRACT DATA
+  // ============================================================
+
+  Map<String, dynamic> _extractDataMap(Map<String, dynamic> result) {
+    final dynamic rawData = result['data'];
+
+    if (rawData is Map<String, dynamic>) {
+      return Map<String, dynamic>.from(rawData);
+    }
+
+    if (rawData is Map) {
+      return Map<String, dynamic>.from(rawData);
+    }
+
+    return Map<String, dynamic>.from(result);
+  }
+
+  // ============================================================
+  // EXTRACT COLLECTIONS
+  // ============================================================
+
+  List<Map<String, dynamic>> _extractCollections(Map<String, dynamic> data) {
+    final List<dynamic> candidates = <dynamic>[
+      data['available_cod_collections'],
+      data['available_collections'],
+      data['cod_collections'],
+      data['collections'],
+      data['unremitted_payments'],
+      data['available_payments'],
+    ];
+
+    for (final dynamic candidate in candidates) {
+      final List<Map<String, dynamic>> parsed = _toMapList(candidate);
+
+      if (parsed.isNotEmpty) {
+        return parsed.map(_normalizeCollection).toList();
+      }
+    }
+
+    return <Map<String, dynamic>>[];
+  }
+
+  // ============================================================
+  // EXTRACT HISTORY
+  // ============================================================
+
+  List<Map<String, dynamic>> _extractHistory(Map<String, dynamic> data) {
+    final List<dynamic> candidates = <dynamic>[
+      data['remittance_history'],
+      data['remittances'],
+      data['cod_remittances'],
+      data['history'],
+    ];
+
+    for (final dynamic candidate in candidates) {
+      final List<Map<String, dynamic>> parsed = _toMapList(candidate);
+
+      if (parsed.isNotEmpty) {
+        return parsed.map(_normalizeHistory).toList();
+      }
+    }
+
+    return <Map<String, dynamic>>[];
+  }
+
+  // ============================================================
+  // TO MAP LIST
+  // ============================================================
+
+  List<Map<String, dynamic>> _toMapList(dynamic value) {
+    if (value is! List) {
+      return <Map<String, dynamic>>[];
+    }
+
+    final List<Map<String, dynamic>> list = <Map<String, dynamic>>[];
+
+    for (final dynamic item in value) {
+      if (item is Map<String, dynamic>) {
+        list.add(Map<String, dynamic>.from(item));
+      } else if (item is Map) {
+        list.add(Map<String, dynamic>.from(item));
+      }
+    }
+
+    return list;
+  }
+
+  // ============================================================
+  // NORMALIZE COLLECTION
+  // ============================================================
+
+  Map<String, dynamic> _normalizeCollection(Map<String, dynamic> raw) {
+    final Map<String, dynamic> map = Map<String, dynamic>.from(raw);
+
+    map['id'] ??=
+        map['payment_id'] ?? map['collection_id'] ?? map['shipment_id'] ?? 0;
+
+    map['tracking_number'] ??=
+        map['tracking_code'] ?? map['waybill_number'] ?? map['shipment'] ?? '';
+
+    map['payment_reference'] ??=
+        map['reference'] ?? map['payment_ref'] ?? map['payment'] ?? '';
+
+    map['amount'] ??=
+        map['cod_amount'] ?? map['collected_amount'] ?? map['cash_amount'] ?? 0;
+
+    map['logistics_name'] ??= map['logistics'] ?? map['courier_name'] ?? '';
+
+    map['collected_at'] ??=
+        map['paid_at'] ?? map['delivered_at'] ?? map['created_at'] ?? '';
+
+    return map;
+  }
+
+  // ============================================================
+  // NORMALIZE HISTORY
+  // ============================================================
+
+  Map<String, dynamic> _normalizeHistory(Map<String, dynamic> raw) {
+    final Map<String, dynamic> map = Map<String, dynamic>.from(raw);
+
+    map['reference'] ??=
+        map['remittance_reference'] ??
+        map['reference_number'] ??
+        map['code'] ??
+        '';
+
+    map['status'] ??= map['remittance_status'] ?? 'pending';
+
+    map['submitted_at'] ??= map['created_at'] ?? map['date'] ?? '';
+
+    map['payments_count'] ??=
+        map['payment_count'] ?? map['collections_count'] ?? 0;
+
+    map['amount'] ??= map['total_amount'] ?? map['remittance_amount'] ?? 0;
+
+    return map;
+  }
 
   // ============================================================
   // SUMMARY VALUES
   // ============================================================
 
   String get _availableCashText {
-    if (_availableCollections.isEmpty) {
-      return '—';
-    }
-
     double total = 0;
 
-    for (final item in _availableCollections) {
-      final amount = _toDouble(
-        item['amount'],
-      );
+    for (final Map<String, dynamic> item in _availableCollections) {
+      final double? amount = _toDouble(item['amount']);
 
       if (amount != null) {
         total += amount;
@@ -47,57 +271,44 @@ class _CodRemittanceState
   }
 
   String get _availablePaymentsText {
-    if (_availableCollections.isEmpty) {
-      return '—';
-    }
-
     return _availableCollections.length.toString();
   }
 
   String get _pendingRemittancesText {
-    if (_remittanceHistory.isEmpty) {
-      return '—';
+    int pendingCount = 0;
+
+    for (final Map<String, dynamic> item in _remittanceHistory) {
+      final String status =
+          item['status']?.toString().trim().toLowerCase().replaceAll(
+            ' ',
+            '_',
+          ) ??
+          '';
+
+      if (status == 'pending' ||
+          status == 'submitted' ||
+          status == 'for_verification') {
+        pendingCount++;
+      }
     }
-
-    final pendingCount =
-        _remittanceHistory.where(
-      (item) {
-        final status =
-            item['status']
-                ?.toString()
-                .trim()
-                .toLowerCase();
-
-        return status == 'pending' ||
-            status == 'submitted' ||
-            status == 'for_verification';
-      },
-    ).length;
 
     return pendingCount.toString();
   }
 
   String get _selectedAmountText {
-    if (_selectedPaymentIds.isEmpty) {
-      return '₱0.00';
-    }
-
     double total = 0;
 
-    for (final item in _availableCollections) {
-      final id = _toInt(
-        item['id'],
-      );
+    for (final Map<String, dynamic> item in _availableCollections) {
+      final int? id = _toInt(item['id']);
 
-      if (id != null &&
-          _selectedPaymentIds.contains(id)) {
-        final amount = _toDouble(
-          item['amount'],
-        );
+      if (id == null || !_selectedPaymentIds.contains(id)) {
+        continue;
+      }
 
-        if (amount != null) {
-          total += amount;
-        }
+      final double? amount = _toDouble(item['amount']);
+
+      if (amount != null) {
+        total += amount;
       }
     }
 
@@ -108,85 +319,116 @@ class _CodRemittanceState
   // HELPERS
   // ============================================================
 
-  double? _toDouble(
-    dynamic value,
-  ) {
+  double? _toDouble(dynamic value) {
     if (value is num) {
       return value.toDouble();
     }
 
-    return double.tryParse(
-      value?.toString() ?? '',
-    );
+    if (value == null) {
+      return null;
+    }
+
+    final String cleaned = value
+        .toString()
+        .replaceAll(',', '')
+        .replaceAll('₱', '')
+        .trim();
+
+    return double.tryParse(cleaned);
   }
 
-  int? _toInt(
-    dynamic value,
-  ) {
+  int? _toInt(dynamic value) {
     if (value is int) {
       return value;
     }
 
-    return int.tryParse(
-      value?.toString() ?? '',
-    );
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(value?.toString() ?? '');
   }
 
-  String _money(
-    dynamic value,
-  ) {
-    final amount =
-        _toDouble(value);
+  String _money(dynamic value) {
+    final double? amount = _toDouble(value);
 
     if (amount == null) {
-      return '—';
+      return '₱0.00';
     }
 
     return '₱${amount.toStringAsFixed(2)}';
   }
 
-  String _displayValue(
-    dynamic value, {
-    String fallback = 'Not available',
-  }) {
-    final text =
-        value?.toString().trim() ?? '';
+  String _displayValue(dynamic value, {String fallback = 'Not available'}) {
+    final String text = value?.toString().trim() ?? '';
 
-    return text.isEmpty
-        ? fallback
-        : text;
+    if (text.isEmpty || text.toLowerCase() == 'null') {
+      return fallback;
+    }
+
+    return text;
   }
 
-  String _formatStatus(
-    dynamic value,
-  ) {
-    final text =
-        value?.toString().trim() ?? '';
+  String _formatStatus(dynamic value) {
+    final String text = value?.toString().trim() ?? '';
 
     if (text.isEmpty) {
       return 'Unknown';
     }
 
-    return text
-        .replaceAll('_', ' ')
+    final String cleaned = text.replaceAll('_', ' ').replaceAll('-', ' ');
+
+    return cleaned
         .split(RegExp(r'\s+'))
-        .map(
-          (word) =>
-              word.isEmpty
-                  ? word
-                  : '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
-        )
+        .map((String word) {
+          if (word.isEmpty) {
+            return word;
+          }
+
+          return '${word[0].toUpperCase()}'
+              '${word.substring(1).toLowerCase()}';
+        })
         .join(' ');
   }
 
-  Color _statusColor(
-    dynamic value,
-  ) {
-    final status =
-        value
-            ?.toString()
-            .trim()
-            .toLowerCase();
+  String _formatDate(dynamic value) {
+    final String raw = value?.toString().trim() ?? '';
+
+    if (raw.isEmpty) {
+      return 'Not available';
+    }
+
+    final DateTime? parsed = DateTime.tryParse(raw);
+
+    if (parsed == null) {
+      return raw;
+    }
+
+    final DateTime local = parsed.toLocal();
+
+    const List<String> months = <String>[
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    final String month = months[local.month - 1];
+
+    return '$month ${local.day}, ${local.year}';
+  }
+
+  Color _statusColor(dynamic value) {
+    final String status =
+        value?.toString().trim().toLowerCase().replaceAll(' ', '_') ?? '';
 
     switch (status) {
       case 'confirmed':
@@ -211,86 +453,34 @@ class _CodRemittanceState
   }
 
   // ============================================================
-  // REFRESH
-  // ============================================================
-
-  Future<void> _refresh() async {
-    if (!mounted) return;
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    await Future<void>.delayed(
-      const Duration(milliseconds: 250),
-    );
-
-    if (!mounted) return;
-
-    setState(() {
-      _isLoading = false;
-    });
-
-    ScaffoldMessenger.of(context)
-        .hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context)
-        .showSnackBar(
-      const SnackBar(
-        behavior:
-            SnackBarBehavior.floating,
-
-        content: Text(
-          'COD Remittance API is not connected yet.',
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
   // BUILD
   // ============================================================
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
-    final width =
-        MediaQuery.of(context).size.width;
+  Widget build(BuildContext context) {
+    final double width = MediaQuery.of(context).size.width;
 
-    final horizontalPadding =
-        width < 380 ? 14.0 : 18.0;
+    final double horizontalPadding = width < 380 ? 14 : 18;
 
     return Scaffold(
-      backgroundColor:
-          RiderColors.background,
+      backgroundColor: RiderColors.background,
 
       appBar: AppBar(
-        backgroundColor:
-            RiderColors.white,
+        backgroundColor: RiderColors.white,
 
         elevation: 0,
 
-        surfaceTintColor:
-            Colors.transparent,
+        surfaceTintColor: Colors.transparent,
 
-        iconTheme:
-            const IconThemeData(
-          color:
-              RiderColors.textDark,
-        ),
+        iconTheme: const IconThemeData(color: RiderColors.textDark),
 
         titleSpacing: 18,
 
         title: const Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
 
           children: [
-            Text(
-              'COD Cash Remittance',
-              style: RiderStyle.title,
-            ),
+            Text('COD Cash Remittance', style: RiderStyle.title),
 
             SizedBox(height: 2),
 
@@ -302,21 +492,39 @@ class _CodRemittanceState
         ),
 
         actions: [
-          IconButton(
-            tooltip: 'Refresh',
+          if (_isRefreshing)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
 
-            onPressed:
-                _isLoading
-                    ? null
-                    : _refresh,
+              child: Center(
+                child: SizedBox(
+                  height: 19,
+                  width: 19,
 
-            icon: const Icon(
-              Icons.refresh_rounded,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
 
-              color:
-                  RiderColors.primary,
+                    color: RiderColors.primary,
+                  ),
+                ),
+              ),
+            )
+          else
+            IconButton(
+              tooltip: 'Refresh',
+
+              onPressed: _isLoading
+                  ? null
+                  : () {
+                      _loadRemittanceData(refresh: true);
+                    },
+
+              icon: const Icon(
+                Icons.refresh_rounded,
+
+                color: RiderColors.primary,
+              ),
             ),
-          ),
 
           const SizedBox(width: 5),
         ],
@@ -326,19 +534,16 @@ class _CodRemittanceState
         top: false,
 
         child: RefreshIndicator(
-          onRefresh:
-              _refresh,
+          onRefresh: () {
+            return _loadRemittanceData(refresh: true);
+          },
 
-          child:
-              SingleChildScrollView(
-            physics:
-                const AlwaysScrollableScrollPhysics(
-              parent:
-                  BouncingScrollPhysics(),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
             ),
 
-            padding:
-                EdgeInsets.fromLTRB(
+            padding: EdgeInsets.fromLTRB(
               horizontalPadding,
               14,
               horizontalPadding,
@@ -346,10 +551,16 @@ class _CodRemittanceState
             ),
 
             child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
 
               children: [
+                if (_isLoading) _loadingCard(),
+
+                if (!_isLoading && _errorMessage != null) _errorCard(),
+
+                if (_isLoading || _errorMessage != null)
+                  const SizedBox(height: 16),
+
                 _securityBadge(),
 
                 const SizedBox(height: 16),
@@ -377,43 +588,27 @@ class _CodRemittanceState
 
   Widget _securityBadge() {
     return Align(
-      alignment:
-          Alignment.centerRight,
+      alignment: Alignment.centerRight,
 
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(
-          horizontal: 11,
-          vertical: 7,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
 
-        decoration:
-            BoxDecoration(
-          color:
-              RiderColors.white,
+        decoration: BoxDecoration(
+          color: RiderColors.white,
 
-          borderRadius:
-              BorderRadius.circular(
-            20,
-          ),
+          borderRadius: BorderRadius.circular(20),
 
-          border:
-              Border.all(
-            color:
-                RiderColors.border,
-          ),
+          border: Border.all(color: RiderColors.border),
         ),
 
         child: const Row(
-          mainAxisSize:
-              MainAxisSize.min,
+          mainAxisSize: MainAxisSize.min,
 
           children: [
             Icon(
               Icons.verified_user_outlined,
 
-              color:
-                  RiderColors.primary,
+              color: RiderColors.primary,
 
               size: 15,
             ),
@@ -424,13 +619,11 @@ class _CodRemittanceState
               'Secure Cash Tracking',
 
               style: TextStyle(
-                color:
-                    RiderColors.textDark,
+                color: RiderColors.textDark,
 
                 fontSize: 10,
 
-                fontWeight:
-                    FontWeight.w700,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ],
@@ -445,16 +638,10 @@ class _CodRemittanceState
 
   Widget _summaryCards() {
     return Column(
-      crossAxisAlignment:
-          CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
 
       children: [
-        const Text(
-          'Remittance Summary',
-
-          style:
-              RiderStyle.sectionTitle,
-        ),
+        const Text('Remittance Summary', style: RiderStyle.sectionTitle),
 
         const SizedBox(height: 12),
 
@@ -462,23 +649,17 @@ class _CodRemittanceState
           children: [
             Expanded(
               child: _summaryCard(
-                title:
-                    'Available Cash',
+                title: 'Available Cash',
 
-                value:
-                    _availableCashText,
+                value: _availableCashText,
 
-                subtitle:
-                    'Eligible for remittance',
+                subtitle: 'Eligible for remittance',
 
-                icon:
-                    Icons.payments_outlined,
+                icon: Icons.payments_outlined,
 
-                background:
-                    RiderColors.lightGreen,
+                background: RiderColors.lightGreen,
 
-                iconColor:
-                    RiderColors.success,
+                iconColor: RiderColors.success,
               ),
             ),
 
@@ -486,23 +667,17 @@ class _CodRemittanceState
 
             Expanded(
               child: _summaryCard(
-                title:
-                    'Available Payments',
+                title: 'Available Payments',
 
-                value:
-                    _availablePaymentsText,
+                value: _availablePaymentsText,
 
-                subtitle:
-                    'Delivered COD payments',
+                subtitle: 'Delivered COD payments',
 
-                icon:
-                    Icons.receipt_long_outlined,
+                icon: Icons.receipt_long_outlined,
 
-                background:
-                    RiderColors.lightBlue,
+                background: RiderColors.lightBlue,
 
-                iconColor:
-                    RiderColors.primary,
+                iconColor: RiderColors.primary,
               ),
             ),
           ],
@@ -511,23 +686,17 @@ class _CodRemittanceState
         const SizedBox(height: 10),
 
         _summaryCard(
-          title:
-              'Pending Remittances',
+          title: 'Pending Remittances',
 
-          value:
-              _pendingRemittancesText,
+          value: _pendingRemittancesText,
 
-          subtitle:
-              'Waiting for verification',
+          subtitle: 'Waiting for verification',
 
-          icon:
-              Icons.hourglass_top_rounded,
+          icon: Icons.hourglass_top_rounded,
 
-          background:
-              RiderColors.lightOrange,
+          background: RiderColors.lightOrange,
 
-          iconColor:
-              RiderColors.warning,
+          iconColor: RiderColors.warning,
 
           wide: true,
         ),
@@ -545,176 +714,125 @@ class _CodRemittanceState
     bool wide = false,
   }) {
     return Container(
-      width:
-          double.infinity,
+      width: double.infinity,
 
-      constraints:
-          BoxConstraints(
-        minHeight:
-            wide ? 92 : 120,
-      ),
+      constraints: BoxConstraints(minHeight: wide ? 92 : 120),
 
-      padding:
-          const EdgeInsets.all(
-        14,
-      ),
+      padding: const EdgeInsets.all(14),
 
-      decoration:
-          RiderStyle.card,
+      decoration: RiderStyle.card,
 
-      child:
-          wide
-              ? Row(
-                  children: [
-                    Container(
-                      height: 42,
-                      width: 42,
+      child: wide
+          ? Row(
+              children: [
+                Container(
+                  height: 42,
+                  width: 42,
 
-                      decoration:
-                          BoxDecoration(
-                        color:
-                            background,
+                  decoration: BoxDecoration(
+                    color: background,
 
-                        borderRadius:
-                            BorderRadius.circular(
-                          12,
-                        ),
-                      ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
 
-                      child: Icon(
-                        icon,
-                        color: iconColor,
-                        size: 21,
-                      ),
-                    ),
-
-                    const SizedBox(width: 12),
-
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment:
-                            CrossAxisAlignment.start,
-
-                        children: [
-                          Text(
-                            title,
-                            style:
-                                RiderStyle.small,
-                          ),
-
-                          const SizedBox(height: 3),
-
-                          Text(
-                            value,
-
-                            maxLines: 1,
-
-                            overflow:
-                                TextOverflow.ellipsis,
-
-                            style:
-                                const TextStyle(
-                              color:
-                                  RiderColors.textDark,
-
-                              fontSize: 20,
-
-                              fontWeight:
-                                  FontWeight.w800,
-                            ),
-                          ),
-
-                          const SizedBox(height: 2),
-
-                          Text(
-                            subtitle,
-
-                            style:
-                                RiderStyle.small,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                )
-              : Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-
-                  children: [
-                    Container(
-                      height: 38,
-                      width: 38,
-
-                      decoration:
-                          BoxDecoration(
-                        color:
-                            background,
-
-                        borderRadius:
-                            BorderRadius.circular(
-                          11,
-                        ),
-                      ),
-
-                      child: Icon(
-                        icon,
-                        color: iconColor,
-                        size: 20,
-                      ),
-                    ),
-
-                    const Spacer(),
-
-                    Text(
-                      title,
-
-                      maxLines: 2,
-
-                      overflow:
-                          TextOverflow.ellipsis,
-
-                      style:
-                          RiderStyle.small,
-                    ),
-
-                    const SizedBox(height: 3),
-
-                    Text(
-                      value,
-
-                      maxLines: 1,
-
-                      overflow:
-                          TextOverflow.ellipsis,
-
-                      style:
-                          const TextStyle(
-                        color:
-                            RiderColors.textDark,
-
-                        fontSize: 19,
-
-                        fontWeight:
-                            FontWeight.w800,
-                      ),
-                    ),
-
-                    const SizedBox(height: 2),
-
-                    Text(
-                      subtitle,
-
-                      maxLines: 1,
-
-                      overflow:
-                          TextOverflow.ellipsis,
-
-                      style:
-                          RiderStyle.small,
-                    ),
-                  ],
+                  child: Icon(icon, color: iconColor, size: 21),
                 ),
+
+                const SizedBox(width: 12),
+
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+
+                    children: [
+                      Text(title, style: RiderStyle.small),
+
+                      const SizedBox(height: 3),
+
+                      Text(
+                        value,
+
+                        maxLines: 1,
+
+                        overflow: TextOverflow.ellipsis,
+
+                        style: const TextStyle(
+                          color: RiderColors.textDark,
+
+                          fontSize: 20,
+
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+
+                      const SizedBox(height: 2),
+
+                      Text(subtitle, style: RiderStyle.small),
+                    ],
+                  ),
+                ),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+
+              children: [
+                Container(
+                  height: 38,
+                  width: 38,
+
+                  decoration: BoxDecoration(
+                    color: background,
+
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+
+                  child: Icon(icon, color: iconColor, size: 20),
+                ),
+
+                const Spacer(),
+
+                Text(
+                  title,
+
+                  maxLines: 2,
+
+                  overflow: TextOverflow.ellipsis,
+
+                  style: RiderStyle.small,
+                ),
+
+                const SizedBox(height: 3),
+
+                Text(
+                  value,
+
+                  maxLines: 1,
+
+                  overflow: TextOverflow.ellipsis,
+
+                  style: const TextStyle(
+                    color: RiderColors.textDark,
+
+                    fontSize: 19,
+
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+
+                const SizedBox(height: 2),
+
+                Text(
+                  subtitle,
+
+                  maxLines: 1,
+
+                  overflow: TextOverflow.ellipsis,
+
+                  style: RiderStyle.small,
+                ),
+              ],
+            ),
     );
   }
 
@@ -724,36 +842,28 @@ class _CodRemittanceState
 
   Widget _availableCollectionsSection() {
     return Container(
-      width:
-          double.infinity,
+      width: double.infinity,
 
-      padding:
-          const EdgeInsets.all(
-        16,
-      ),
+      padding: const EdgeInsets.all(16),
 
-      decoration:
-          RiderStyle.card,
+      decoration: RiderStyle.card,
 
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
 
         children: [
           const Text(
             'Available COD Collections',
 
-            style:
-                RiderStyle.sectionTitle,
+            style: RiderStyle.sectionTitle,
           ),
 
           const SizedBox(height: 4),
 
           const Text(
-            'Select payments belonging to the same logistics company.',
+            'Select delivered COD payments to prepare for remittance.',
 
-            style:
-                RiderStyle.small,
+            style: RiderStyle.small,
           ),
 
           const SizedBox(height: 16),
@@ -761,65 +871,41 @@ class _CodRemittanceState
           if (_availableCollections.isEmpty)
             _emptyCollectionsState()
           else
-            ..._availableCollections.map(
-              (item) =>
-                  _collectionCard(
-                item,
-              ),
-            ),
+            ..._availableCollections.map((Map<String, dynamic> item) {
+              return _collectionCard(item);
+            }),
 
           if (_availableCollections.isNotEmpty) ...[
             const SizedBox(height: 12),
 
             Container(
-              width:
-                  double.infinity,
+              width: double.infinity,
 
-              padding:
-                  const EdgeInsets.all(
-                13,
-              ),
+              padding: const EdgeInsets.all(13),
 
-              decoration:
-                  BoxDecoration(
-                color:
-                    RiderColors.background,
+              decoration: BoxDecoration(
+                color: RiderColors.background,
 
-                borderRadius:
-                    BorderRadius.circular(
-                  13,
-                ),
+                borderRadius: BorderRadius.circular(13),
 
-                border:
-                    Border.all(
-                  color:
-                      RiderColors.border,
-                ),
+                border: Border.all(color: RiderColors.border),
               ),
 
               child: Row(
                 children: [
                   const Expanded(
-                    child: Text(
-                      'Selected Amount',
-
-                      style:
-                          RiderStyle.cardTitle,
-                    ),
+                    child: Text('Selected Amount', style: RiderStyle.cardTitle),
                   ),
 
                   Text(
                     _selectedAmountText,
 
-                    style:
-                        const TextStyle(
-                      color:
-                          RiderColors.primary,
+                    style: const TextStyle(
+                      color: RiderColors.primary,
 
                       fontSize: 17,
 
-                      fontWeight:
-                          FontWeight.w800,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ],
@@ -829,33 +915,20 @@ class _CodRemittanceState
             const SizedBox(height: 12),
 
             SizedBox(
-              width:
-                  double.infinity,
+              width: double.infinity,
 
-              height:
-                  48,
+              height: 48,
 
-              child:
-                  ElevatedButton.icon(
-                onPressed:
-                    _selectedPaymentIds.isEmpty
-                        ? null
-                        : _submitRemittance,
+              child: ElevatedButton.icon(
+                onPressed: _selectedPaymentIds.isEmpty
+                    ? null
+                    : _submitRemittance,
 
-                icon:
-                    const Icon(
-                  Icons.send_rounded,
+                icon: const Icon(Icons.send_rounded, size: 18),
 
-                  size: 18,
-                ),
+                label: const Text('Submit Remittance'),
 
-                label:
-                    const Text(
-                  'Submit Remittance',
-                ),
-
-                style:
-                    RiderStyle.primaryButton,
+                style: RiderStyle.primaryButton,
               ),
             ),
           ],
@@ -866,30 +939,16 @@ class _CodRemittanceState
 
   Widget _emptyCollectionsState() {
     return Container(
-      width:
-          double.infinity,
+      width: double.infinity,
 
-      padding:
-          const EdgeInsets.symmetric(
-        vertical: 28,
-        horizontal: 16,
-      ),
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
 
-      decoration:
-          BoxDecoration(
-        color:
-            RiderColors.background,
+      decoration: BoxDecoration(
+        color: RiderColors.background,
 
-        borderRadius:
-            BorderRadius.circular(
-          15,
-        ),
+        borderRadius: BorderRadius.circular(15),
 
-        border:
-            Border.all(
-          color:
-              RiderColors.border,
-        ),
+        border: Border.all(color: RiderColors.border),
       ),
 
       child: const Column(
@@ -897,8 +956,7 @@ class _CodRemittanceState
           Icon(
             Icons.check_circle_outline_rounded,
 
-            color:
-                RiderColors.textGrey,
+            color: RiderColors.textGrey,
 
             size: 38,
           ),
@@ -908,126 +966,86 @@ class _CodRemittanceState
           Text(
             'No COD collections available for remittance.',
 
-            textAlign:
-                TextAlign.center,
+            textAlign: TextAlign.center,
 
-            style:
-                RiderStyle.small,
+            style: RiderStyle.small,
           ),
         ],
       ),
     );
   }
 
-  Widget _collectionCard(
-    Map<String, dynamic> item,
-  ) {
-    final id =
-        _toInt(
-          item['id'],
-        ) ??
-        0;
+  Widget _collectionCard(Map<String, dynamic> item) {
+    final int id = _toInt(item['id']) ?? 0;
 
-    final selected =
-        _selectedPaymentIds.contains(
-      id,
-    );
+    final bool selected = _selectedPaymentIds.contains(id);
 
     return Container(
-      margin:
-          const EdgeInsets.only(
-        bottom: 10,
-      ),
+      margin: const EdgeInsets.only(bottom: 10),
 
-      padding:
-          const EdgeInsets.all(
-        13,
-      ),
+      padding: const EdgeInsets.all(13),
 
-      decoration:
-          BoxDecoration(
-        color:
-            selected
-                ? RiderColors.lightPurple
-                : RiderColors.background,
+      decoration: BoxDecoration(
+        color: selected ? RiderColors.lightPurple : RiderColors.background,
 
-        borderRadius:
-            BorderRadius.circular(
-          14,
-        ),
+        borderRadius: BorderRadius.circular(14),
 
-        border:
-            Border.all(
-          color:
-              selected
-                  ? RiderColors.primary
-                  : RiderColors.border,
+        border: Border.all(
+          color: selected ? RiderColors.primary : RiderColors.border,
         ),
       ),
 
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
 
         children: [
           Row(
             children: [
               Checkbox(
-                value:
-                    selected,
+                value: selected,
 
-                onChanged:
-                    (value) {
-                  setState(() {
-                    if (value == true) {
-                      _selectedPaymentIds.add(
-                        id,
-                      );
-                    } else {
-                      _selectedPaymentIds.remove(
-                        id,
-                      );
-                    }
-                  });
-                },
+                onChanged: id <= 0
+                    ? null
+                    : (bool? value) {
+                        setState(() {
+                          if (value == true) {
+                            _selectedPaymentIds.add(id);
+                          } else {
+                            _selectedPaymentIds.remove(id);
+                          }
+                        });
+                      },
               ),
 
               Expanded(
                 child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
 
                   children: [
                     Text(
                       _displayValue(
-                        item['tracking_number'] ??
-                            item['shipment'],
-                        fallback:
-                            'Shipment unavailable',
+                        item['tracking_number'],
+
+                        fallback: 'Shipment unavailable',
                       ),
 
-                      maxLines:
-                          1,
+                      maxLines: 1,
 
-                      overflow:
-                          TextOverflow.ellipsis,
+                      overflow: TextOverflow.ellipsis,
 
-                      style:
-                          RiderStyle.cardTitle,
+                      style: RiderStyle.cardTitle,
                     ),
 
                     const SizedBox(height: 3),
 
                     Text(
                       _displayValue(
-                        item['payment_reference'] ??
-                            item['payment'],
-                        fallback:
-                            'Payment reference unavailable',
+                        item['payment_reference'],
+
+                        fallback: 'Payment reference unavailable',
                       ),
 
-                      style:
-                          RiderStyle.small,
+                      style: RiderStyle.small,
                     ),
                   ],
                 ),
@@ -1036,19 +1054,14 @@ class _CodRemittanceState
               const SizedBox(width: 8),
 
               Text(
-                _money(
-                  item['amount'],
-                ),
+                _money(item['amount']),
 
-                style:
-                    const TextStyle(
-                  color:
-                      RiderColors.primary,
+                style: const TextStyle(
+                  color: RiderColors.primary,
 
                   fontSize: 16,
 
-                  fontWeight:
-                      FontWeight.w800,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],
@@ -1056,61 +1069,38 @@ class _CodRemittanceState
 
           const SizedBox(height: 10),
 
-          _detailRow(
-            'Logistics',
-            _displayValue(
-              item['logistics_name'] ??
-                  item['logistics'],
-            ),
-          ),
+          _detailRow('Logistics', _displayValue(item['logistics_name'])),
 
-          _detailRow(
-            'Collected',
-            _displayValue(
-              item['collected_at'],
-            ),
-          ),
+          _detailRow('Collected', _formatDate(item['collected_at'])),
         ],
       ),
     );
   }
 
   // ============================================================
-  // REMITTANCE HISTORY
+  // HISTORY
   // ============================================================
 
   Widget _remittanceHistorySection() {
     return Container(
-      width:
-          double.infinity,
+      width: double.infinity,
 
-      padding:
-          const EdgeInsets.all(
-        16,
-      ),
+      padding: const EdgeInsets.all(16),
 
-      decoration:
-          RiderStyle.card,
+      decoration: RiderStyle.card,
 
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
 
         children: [
-          const Text(
-            'Remittance History',
-
-            style:
-                RiderStyle.sectionTitle,
-          ),
+          const Text('Remittance History', style: RiderStyle.sectionTitle),
 
           const SizedBox(height: 4),
 
           const Text(
             'Track submitted, confirmed, and rejected cash remittances.',
 
-            style:
-                RiderStyle.small,
+            style: RiderStyle.small,
           ),
 
           const SizedBox(height: 16),
@@ -1118,12 +1108,9 @@ class _CodRemittanceState
           if (_remittanceHistory.isEmpty)
             _emptyHistoryState()
           else
-            ..._remittanceHistory.map(
-              (item) =>
-                  _historyCard(
-                item,
-              ),
-            ),
+            ..._remittanceHistory.map((Map<String, dynamic> item) {
+              return _historyCard(item);
+            }),
         ],
       ),
     );
@@ -1131,103 +1118,56 @@ class _CodRemittanceState
 
   Widget _emptyHistoryState() {
     return Container(
-      width:
-          double.infinity,
+      width: double.infinity,
 
-      padding:
-          const EdgeInsets.symmetric(
-        vertical: 26,
-        horizontal: 16,
-      ),
+      padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 16),
 
-      decoration:
-          BoxDecoration(
-        color:
-            RiderColors.background,
+      decoration: BoxDecoration(
+        color: RiderColors.background,
 
-        borderRadius:
-            BorderRadius.circular(
-          15,
-        ),
+        borderRadius: BorderRadius.circular(15),
 
-        border:
-            Border.all(
-          color:
-              RiderColors.border,
-        ),
+        border: Border.all(color: RiderColors.border),
       ),
 
       child: const Column(
         children: [
-          Icon(
-            Icons.history_rounded,
-
-            color:
-                RiderColors.textGrey,
-
-            size: 38,
-          ),
+          Icon(Icons.history_rounded, color: RiderColors.textGrey, size: 38),
 
           SizedBox(height: 9),
 
           Text(
             'No remittance history yet.',
 
-            textAlign:
-                TextAlign.center,
+            textAlign: TextAlign.center,
 
-            style:
-                RiderStyle.small,
+            style: RiderStyle.small,
           ),
         ],
       ),
     );
   }
 
-  Widget _historyCard(
-    Map<String, dynamic> item,
-  ) {
-    final status =
-        _formatStatus(
-      item['status'],
-    );
+  Widget _historyCard(Map<String, dynamic> item) {
+    final String status = _formatStatus(item['status']);
 
-    final statusColor =
-        _statusColor(
-      item['status'],
-    );
+    final Color statusColor = _statusColor(item['status']);
 
     return Container(
-      margin:
-          const EdgeInsets.only(
-        bottom: 10,
-      ),
+      margin: const EdgeInsets.only(bottom: 10),
 
-      padding:
-          const EdgeInsets.all(
-        13,
-      ),
+      padding: const EdgeInsets.all(13),
 
-      decoration:
-          BoxDecoration(
-        color:
-            RiderColors.background,
+      decoration: BoxDecoration(
+        color: RiderColors.background,
 
-        borderRadius:
-            BorderRadius.circular(
-          14,
-        ),
+        borderRadius: BorderRadius.circular(14),
 
-        border:
-            Border.all(
-          color:
-              RiderColors.border,
-        ),
+        border: Border.all(color: RiderColors.border),
       ),
 
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
 
         children: [
           Row(
@@ -1236,53 +1176,38 @@ class _CodRemittanceState
                 child: Text(
                   _displayValue(
                     item['reference'],
-                    fallback:
-                        'Reference unavailable',
+
+                    fallback: 'Reference unavailable',
                   ),
 
                   maxLines: 1,
 
-                  overflow:
-                      TextOverflow.ellipsis,
+                  overflow: TextOverflow.ellipsis,
 
-                  style:
-                      RiderStyle.cardTitle,
+                  style: RiderStyle.cardTitle,
                 ),
               ),
 
               const SizedBox(width: 8),
 
               Container(
-                padding:
-                    const EdgeInsets.symmetric(
-                  horizontal: 9,
-                  vertical: 5,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
 
-                decoration:
-                    BoxDecoration(
-                  color:
-                      statusColor.withValues(
-                    alpha: 0.10,
-                  ),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.10),
 
-                  borderRadius:
-                      BorderRadius.circular(
-                    20,
-                  ),
+                  borderRadius: BorderRadius.circular(20),
                 ),
 
                 child: Text(
                   status,
 
                   style: TextStyle(
-                    color:
-                        statusColor,
+                    color: statusColor,
 
                     fontSize: 9,
 
-                    fontWeight:
-                        FontWeight.w800,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
@@ -1291,27 +1216,14 @@ class _CodRemittanceState
 
           const SizedBox(height: 12),
 
-          _detailRow(
-            'Submitted',
-            _displayValue(
-              item['submitted_at'],
-            ),
-          ),
+          _detailRow('Submitted', _formatDate(item['submitted_at'])),
 
           _detailRow(
             'Payments',
-            _displayValue(
-              item['payments_count'] ??
-                  item['payments'],
-            ),
+            _displayValue(item['payments_count'], fallback: '0'),
           ),
 
-          _detailRow(
-            'Amount',
-            _money(
-              item['amount'],
-            ),
-          ),
+          _detailRow('Amount', _money(item['amount'])),
         ],
       ),
     );
@@ -1321,40 +1233,102 @@ class _CodRemittanceState
   // DETAIL ROW
   // ============================================================
 
-  Widget _detailRow(
-    String label,
-    String value,
-  ) {
+  Widget _detailRow(String label, String value) {
     return Padding(
-      padding:
-          const EdgeInsets.only(
-        bottom: 7,
-      ),
+      padding: const EdgeInsets.only(bottom: 7),
 
       child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
 
         children: [
-          SizedBox(
-            width: 82,
-
-            child: Text(
-              label,
-
-              style:
-                  RiderStyle.small,
-            ),
-          ),
+          SizedBox(width: 82, child: Text(label, style: RiderStyle.small)),
 
           const SizedBox(width: 8),
 
+          Expanded(child: Text(value, style: RiderStyle.cardTitle)),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // SUBMIT REMITTANCE
+  // ============================================================
+
+  void _submitRemittance() {
+    if (_selectedPaymentIds.isEmpty) {
+      return;
+    }
+
+    showDialog<void>(
+      context: context,
+
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+
+          title: const Text(
+            'Submit Remittance',
+
+            style: RiderStyle.sectionTitle,
+          ),
+
+          content: Text(
+            'You selected ${_selectedPaymentIds.length} payment(s) '
+            'with a total amount of $_selectedAmountText.\n\n'
+            'The final remittance submission will be enabled once the Laravel Rider remittance endpoint is connected.',
+
+            style: RiderStyle.small,
+          ),
+
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+              },
+
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ============================================================
+  // LOADING
+  // ============================================================
+
+  Widget _loadingCard() {
+    return Container(
+      width: double.infinity,
+
+      padding: const EdgeInsets.all(16),
+
+      decoration: RiderStyle.card,
+
+      child: const Row(
+        children: [
+          SizedBox(
+            height: 22,
+            width: 22,
+
+            child: CircularProgressIndicator(
+              strokeWidth: 2.2,
+
+              color: RiderColors.primary,
+            ),
+          ),
+
+          SizedBox(width: 12),
+
           Expanded(
             child: Text(
-              value,
+              'Loading COD remittance data...',
 
-              style:
-                  RiderStyle.cardTitle,
+              style: RiderStyle.small,
             ),
           ),
         ],
@@ -1363,22 +1337,41 @@ class _CodRemittanceState
   }
 
   // ============================================================
-  // SUBMIT
+  // ERROR
   // ============================================================
 
-  void _submitRemittance() {
-    ScaffoldMessenger.of(context)
-        .hideCurrentSnackBar();
+  Widget _errorCard() {
+    return Container(
+      width: double.infinity,
 
-    ScaffoldMessenger.of(context)
-        .showSnackBar(
-      const SnackBar(
-        behavior:
-            SnackBarBehavior.floating,
+      padding: const EdgeInsets.all(16),
 
-        content: Text(
-          'COD remittance submission will be enabled once the Rider remittance API is connected.',
-        ),
+      decoration: RiderStyle.card,
+
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+
+        children: [
+          const Icon(Icons.info_outline_rounded, color: RiderColors.warning),
+
+          const SizedBox(width: 10),
+
+          Expanded(
+            child: Text(
+              _errorMessage ?? 'Unable to load COD remittance data.',
+
+              style: RiderStyle.small,
+            ),
+          ),
+
+          IconButton(
+            onPressed: () {
+              _loadRemittanceData(refresh: true);
+            },
+
+            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
+          ),
+        ],
       ),
     );
   }
