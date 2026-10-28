@@ -167,6 +167,22 @@ Route::middleware('auth')->group(function () {
             [\App\Http\Controllers\Admin\SellerWithdrawalController::class, 'reject']
         )->name('seller-withdrawals.reject');
 
+
+        Route::get(
+            '/logistic-withdrawals',
+            [\App\Http\Controllers\Admin\LogisticWithdrawalController::class, 'index']
+        )->name('logistic-withdrawals.index');
+
+        Route::post(
+            '/logistic-withdrawals/{withdrawal}/paid',
+            [\App\Http\Controllers\Admin\LogisticWithdrawalController::class, 'markPaid']
+        )->name('logistic-withdrawals.paid');
+
+        Route::post(
+            '/logistic-withdrawals/{withdrawal}/reject',
+            [\App\Http\Controllers\Admin\LogisticWithdrawalController::class, 'reject']
+        )->name('logistic-withdrawals.reject');
+
         Route::post(
             '/seller-settlements/{settlement}/approve',
             [SellerSettlementController::class, 'approve']
@@ -631,6 +647,9 @@ Route::middleware('auth')->group(function () {
 
 
         Route::get('/wallet', [\App\Http\Controllers\Logistic\WalletController::class, 'index'])->name('wallet');
+
+        Route::post('/wallet/withdraw', [\App\Http\Controllers\Logistic\WalletController::class, 'withdraw'])
+            ->name('wallet.withdraw');
 
         Route::get('/cod-remittances', [LogisticCodRemittanceController::class, 'index'])
 

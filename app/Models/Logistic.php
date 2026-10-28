@@ -115,6 +115,11 @@ class Logistic extends Model
         );
     }
 
+    public function withdrawals(): HasMany
+    {
+        return $this->hasMany(LogisticWithdrawal::class);
+    }
+
     public function getLogoUrlAttribute(): ?string
     {
         if (!$this->logo) {

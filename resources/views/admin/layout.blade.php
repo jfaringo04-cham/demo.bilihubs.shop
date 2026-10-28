@@ -115,6 +115,23 @@
                 </span>
               @endif
             </a>
+            @php
+                $logisticWithdrawalPendingCount = 0;
+
+                if (\Illuminate\Support\Facades\Schema::hasTable('logistic_withdrawals')) {
+                    $logisticWithdrawalPendingCount = \App\Models\LogisticWithdrawal::query()
+                        ->where('status', 'pending')
+                        ->count();
+                }
+            @endphp
+            <a href="{{ route('admin.logistic-withdrawals.index') }}"
+              class="nav-link {{ request()->routeIs('admin.logistic-withdrawals.*') ? 'active' : '' }}">
+              <i class="bi bi-truck me-2"></i>
+              Logistics Withdrawals
+              @if($logisticWithdrawalPendingCount > 0)
+                <span class="badge bg-danger ms-auto">{{ $logisticWithdrawalPendingCount }}</span>
+              @endif
+            </a>
             <a class="nav-link {{ request()->routeIs('admin.registrations.*') ? 'active' : '' }}" href="{{ route('admin.registrations.index') }}">
               <i class="bi bi-clipboard-check"></i> Registrations
             </a>

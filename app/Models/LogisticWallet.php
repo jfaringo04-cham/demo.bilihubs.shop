@@ -11,10 +11,12 @@ class LogisticWallet extends Model
     protected $fillable = [
         'logistic_id',
         'available_balance_minor',
+        'pending_balance_minor',
     ];
 
     protected $casts = [
         'available_balance_minor' => 'integer',
+        'pending_balance_minor' => 'integer',
     ];
 
     public function logistic(): BelongsTo
@@ -25,5 +27,10 @@ class LogisticWallet extends Model
     public function transactions(): HasMany
     {
         return $this->hasMany(LogisticWalletTransaction::class);
+    }
+
+    public function withdrawals(): HasMany
+    {
+        return $this->hasMany(LogisticWithdrawal::class);
     }
 }

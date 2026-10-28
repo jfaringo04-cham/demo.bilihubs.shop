@@ -100,6 +100,7 @@ class ShippingEarningsSplitTest extends TestCase
             $table->id();
             $table->unsignedBigInteger('logistic_id')->unique();
             $table->bigInteger('available_balance_minor')->default(0);
+            $table->bigInteger('pending_balance_minor')->default(0);
             $table->timestamps();
         });
 
