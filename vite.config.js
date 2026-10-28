@@ -18,6 +18,7 @@ export default defineConfig({
                 'resources/css/seller/products.css',
                 'resources/css/seller/storefront.css',
                 'resources/css/buyer/home.css',
+                'resources/css/buyer/profile.css',
                 'resources/css/auth/login.css',
                 'resources/css/auth/social-role.css',
                 'resources/css/logistics/logistics-layout.css',
