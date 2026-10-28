@@ -630,6 +630,8 @@ Route::middleware('auth')->group(function () {
 
 
 
+        Route::get('/wallet', [\App\Http\Controllers\Logistic\WalletController::class, 'index'])->name('wallet');
+
         Route::get('/cod-remittances', [LogisticCodRemittanceController::class, 'index'])
 
             ->name('cod-remittances.index');

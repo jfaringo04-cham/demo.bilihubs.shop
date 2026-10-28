@@ -67,6 +67,14 @@
 
         <div class="sidebar-label">FINANCE</div>
 
+        <a href="{{ route('logistic.wallet') }}"
+          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.wallet') ? 'active' : '' }}">
+          <span class="sidebar-icon">
+            <i class="bi bi-wallet2"></i>
+          </span>
+          <span>Wallet</span>
+        </a>
+
         <a href="{{ route('logistic.cod-remittances.index') }}"
           class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.cod-remittances.*') ? 'active' : '' }}">
           <span class="sidebar-icon">

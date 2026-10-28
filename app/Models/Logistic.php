@@ -98,6 +98,23 @@ class Logistic extends Model
         return $this->hasMany(Hub::class);
     }
 
+    public function wallet()
+    {
+        return $this->hasOne(LogisticWallet::class);
+    }
+
+    public function walletTransactions()
+    {
+        return $this->hasManyThrough(
+            LogisticWalletTransaction::class,
+            LogisticWallet::class,
+            'logistic_id',
+            'logistic_wallet_id',
+            'id',
+            'id'
+        );
+    }
+
     public function getLogoUrlAttribute(): ?string
     {
         if (!$this->logo) {

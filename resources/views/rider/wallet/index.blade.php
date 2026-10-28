@@ -1,7 +1,7 @@
 @extends('rider.layout')
 @section('content')
 <div class="container-fluid py-4">
-<h2>Rider Wallet</h2><p class="text-muted">₱{{ number_format($deliveryEarningMinor/100,2) }} per delivered shipment.</p>
+<h2>Rider Wallet</h2><p class="text-muted">Pickup: ₱{{ number_format($pickupEarningMinor/100,2) }} · Final delivery: ₱{{ number_format($deliveryEarningMinor/100,2) }} per confirmed shipment.</p>
 @if(session('success'))<div class="alert alert-success">{{ session('success') }}</div>@endif
 @if($errors->any())<div class="alert alert-danger"><ul class="mb-0">@foreach($errors->all() as $e)<li>{{ $e }}</li>@endforeach</ul></div>@endif
 <div class="row g-3 mb-4">

@@ -21,7 +21,7 @@ class WalletController extends Controller
         $withdrawals = $wallet->withdrawals()->latest()->limit(10)->get();
 
         $totalEarnedMinor = (int) $wallet->transactions()
-            ->where('type', 'delivery_credit')
+            ->whereIn('type', $walletService->earningTransactionTypes())
             ->sum('amount_minor');
 
         $totalWithdrawnMinor = (int) $wallet->withdrawals()
@@ -33,7 +33,8 @@ class WalletController extends Controller
             ->exists();
 
         $minimumWithdrawalMinor = (int) config('rider_wallet.minimum_withdrawal_minor', 10000);
-        $deliveryEarningMinor = (int) config('rider_wallet.delivery_earning_minor', 4000);
+        $pickupEarningMinor = (int) config('rider_wallet.pickup_earning_minor', 1500);
+        $deliveryEarningMinor = (int) config('rider_wallet.delivery_earning_minor', 2500);
 
         return view('rider.wallet.index', compact(
             'wallet',
@@ -43,6 +44,7 @@ class WalletController extends Controller
             'totalWithdrawnMinor',
             'hasPendingWithdrawal',
             'minimumWithdrawalMinor',
+            'pickupEarningMinor',
             'deliveryEarningMinor'
         ));
     }

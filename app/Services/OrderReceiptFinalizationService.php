@@ -29,6 +29,7 @@ class OrderReceiptFinalizationService
             $order->save();
 
             $this->creditRiders($order);
+            $this->creditLogistics($order);
             $this->retrySellerSettlements($order);
 
             return $order->fresh();
@@ -115,6 +116,38 @@ class OrderReceiptFinalizationService
             ->get()
             ->each(fn (Shipment $shipment) =>
                 $walletService->creditDeliveredShipment($shipment)
+            );
+    }
+
+    public function creditLogistics(Order $order): void
+    {
+        if (!$order->confirmed_received_at) {
+            return;
+        }
+
+        if (
+            !Schema::hasTable('logistic_wallets')
+            || !Schema::hasTable('logistic_wallet_transactions')
+        ) {
+            return;
+        }
+
+        $sellerOrderIds = SellerOrder::query()
+            ->where('order_id', $order->id)
+            ->pluck('id');
+
+        if ($sellerOrderIds->isEmpty()) {
+            return;
+        }
+
+        $walletService = app(LogisticWalletService::class);
+
+        Shipment::query()
+            ->whereIn('seller_order_id', $sellerOrderIds)
+            ->where('status', 'delivered')
+            ->get()
+            ->each(fn (Shipment $shipment) =>
+                $walletService->creditConfirmedShipment($shipment)
             );
     }
 

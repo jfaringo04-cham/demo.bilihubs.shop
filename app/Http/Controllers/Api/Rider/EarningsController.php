@@ -15,8 +15,7 @@ class EarningsController extends Controller
      *
      * GET /api/rider/earnings
      *
-     * Earnings are based ONLY on actual wallet transactions
-     * with type "delivery_credit".
+     * Earnings are based ONLY on actual pickup/final-delivery wallet credits.
      *
      * No earnings are calculated or hardcoded here.
      */
@@ -82,21 +81,15 @@ class EarningsController extends Controller
             | A delivery does NOT automatically become an earning just
             | because the shipment status is "delivered".
             |
-            | RiderWalletService creates a delivery_credit only after
+            | RiderWalletService creates pickup/final credits only after
             | the order is confirmed received according to the official
             | BiliHub wallet rules.
             |
             */
 
             $deliveryCredits = RiderWalletTransaction::query()
-                ->where(
-                    'rider_wallet_id',
-                    $wallet->id
-                )
-                ->where(
-                    'type',
-                    'delivery_credit'
-                );
+                ->where('rider_wallet_id', $wallet->id)
+                ->whereIn('type', $walletService->earningTransactionTypes());
 
             /*
             |--------------------------------------------------------------------------
@@ -162,46 +155,35 @@ class EarningsController extends Controller
             |--------------------------------------------------------------------------
             */
 
-            $todayDeliveries = (
-                clone $deliveryCredits
-            )
-                ->where(
-                    'created_at',
-                    '>=',
-                    $startOfToday
-                )
-                ->count();
+            $todayDeliveries = (clone $deliveryCredits)
+                ->where('created_at', '>=', $startOfToday)
+                ->whereNotNull('shipment_id')
+                ->distinct()
+                ->count('shipment_id');
 
-            $weekDeliveries = (
-                clone $deliveryCredits
-            )
-                ->where(
-                    'created_at',
-                    '>=',
-                    $startOfWeek
-                )
-                ->count();
+            $weekDeliveries = (clone $deliveryCredits)
+                ->where('created_at', '>=', $startOfWeek)
+                ->whereNotNull('shipment_id')
+                ->distinct()
+                ->count('shipment_id');
 
-            $monthDeliveries = (
-                clone $deliveryCredits
-            )
-                ->where(
-                    'created_at',
-                    '>=',
-                    $startOfMonth
-                )
-                ->count();
+            $monthDeliveries = (clone $deliveryCredits)
+                ->where('created_at', '>=', $startOfMonth)
+                ->whereNotNull('shipment_id')
+                ->distinct()
+                ->count('shipment_id');
 
-            $totalDeliveries = (
-                clone $deliveryCredits
-            )->count();
+            $totalDeliveries = (clone $deliveryCredits)
+                ->whereNotNull('shipment_id')
+                ->distinct()
+                ->count('shipment_id');
 
             /*
             |--------------------------------------------------------------------------
             | AVERAGE EARNING
             |--------------------------------------------------------------------------
             |
-            | Average amount of actual delivery_credit transactions.
+            | Average earning per shipment credited to this rider.
             |
             */
 
@@ -299,6 +281,14 @@ class EarningsController extends Controller
                         'earnings' =>
                             (int) $transaction->amount_minor
                             / 100,
+
+                        'earning_type' => $transaction->type,
+
+                        'earning_role' =>
+                            data_get($transaction->meta, 'rider_role')
+                            ?? ($transaction->type === 'pickup_credit'
+                                ? 'pickup'
+                                : 'final_delivery'),
 
                         /*
                         |--------------------------------------------------------------------------

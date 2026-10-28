@@ -3,23 +3,26 @@
 return [
     /*
     |--------------------------------------------------------------------------
-    | Rider Delivery Pay
+    | Rider Shipping-Fee Earnings
     |--------------------------------------------------------------------------
     |
-    | BiliHub rider delivery pay is funded from the shipment/store shipping
-    | fee, not from seller merchandise earnings and not from admin commission.
+    | BiliHub rider earnings are funded only from the shipping fee allocated
+    | to the seller/shipment. Seller merchandise earnings and platform/admin
+    | commission are not touched by this wallet split.
     |
-    | 5000 = ₱50.00 per successful confirmed delivery.
+    | Default ₱50 shipment split:
+    | - Pickup rider:       ₱15.00
+    | - Final delivery:     ₱25.00
+    | - Logistics provider:  ₱10.00
     |
-    | The actual credit is capped by the SellerOrder shipping fee, so the rider
-    | can never be paid more than the shipping fee attached to that parcel.
-    |
-    | Example:
-    | Shipping fee ₱65.00 -> Rider ₱50.00 -> Remaining ₱15.00 logistics/platform
-    | Shipping fee ₱120.00 -> Rider ₱50.00 -> Remaining ₱70.00 logistics/platform
+    | Credits are still released only after the buyer confirms the order as
+    | received (manual or automatic). The combined rider payout is always
+    | capped by the SellerOrder shipping fee.
     |
     */
-    'delivery_earning_minor' => 5000,
+    'pickup_earning_minor' => 1500,
+    'delivery_earning_minor' => 2500,
+    'logistics_earning_minor' => 1000,
     'delivery_earning_source' => 'shipping_fee',
 
     // Minimum rider withdrawal, in centavos.
