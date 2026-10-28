@@ -183,6 +183,7 @@ if (!$product->seller_id) {
     'label' => $address->label,
     'address_line1' => $address->address_line1,
     'address_line2' => $address->address_line2,
+    'barangay' => $address->barangay,
     'city' => $address->city,
     'province' => $address->province,
     'postal_code' => $address->postal_code,
@@ -489,6 +490,7 @@ Shipment::whereIn(
         ->only([
             'address_line1',
             'address_line2',
+            'barangay',
             'city',
             'province',
             'postal_code',

@@ -1367,20 +1367,29 @@ class DashboardController extends Controller
                 $shipment = $sellerOrder->shipment;
 
                 if (!$shipment) {
-                    $hub = \App\Services\HubAssignmentService::findBestHubForSellerOrder(
+                    $route = \App\Services\HubAssignmentService::findRoutingHubsForSellerOrder(
                         $sellerOrder
                     );
 
-                    if (!$hub) {
-                        abort(422, 'No logistics hub is available for this seller order.');
+                    $originHub = $route['origin'];
+                    $destinationHub = $route['destination'];
+
+                    if (!$originHub || !$destinationHub) {
+                        abort(
+                            422,
+                            'No valid origin/destination logistics hubs are available for this seller order.'
+                        );
                     }
 
                     $trackingNumber = 'SPE-' . strtoupper(uniqid());
 
                     $shipment = \App\Models\Shipment::create([
                         'seller_order_id' => $sellerOrder->id,
-                        'logistic_id' => $hub->logistic_id,
-                        'hub_id' => $hub->id,
+                        'logistic_id' => $originHub->logistic_id,
+                        'hub_id' => $originHub->id,
+                        'origin_hub_id' => $originHub->id,
+                        'destination_hub_id' => $destinationHub->id,
+                        'routing_status' => 'awaiting_pickup',
                         'tracking_number' => $trackingNumber,
                         'tracking_code' => $trackingNumber,
                         'status' => 'pending',
@@ -1389,8 +1398,17 @@ class DashboardController extends Controller
                             $seller
                         ),
                         'delivery_address' => $order->shipping_address,
-                        'notes' => 'Assigned to hub ' . $hub->name,
+                        'notes' => 'Route: '
+                            . $originHub->name
+                            . ' -> '
+                            . $destinationHub->name,
                     ]);
+
+                    if (!$sellerOrder->logistic_id) {
+                        $sellerOrder->update([
+                            'logistic_id' => $originHub->logistic_id,
+                        ]);
+                    }
                 }
 
                 $sellerOrder->update([

@@ -19,6 +19,7 @@
         <tr>
           <th class="border-0">Hub Name</th>
           <th class="border-0">Address</th>
+          <th class="border-0">Barangay Coverage</th>
           <th class="border-0">Contact</th>
           <th class="border-0">Riders</th>
           <th class="border-0">Status</th>
@@ -30,6 +31,12 @@
           <tr>
             <td class="fw-medium">{{ $hub->name }}</td>
             <td class="text-muted">{{ $hub->address }}</td>
+            <td class="text-muted">
+              {{ $hub->barangay ?? 'Not set' }}
+              @if($hub->city || $hub->province)
+                <br><small>{{ collect([$hub->city, $hub->province])->filter()->implode(', ') }}</small>
+              @endif
+            </td>
             <td class="text-muted">{{ $hub->contact_person ?? 'N/A' }}<br><small>{{ $hub->phone ?? '' }}</small></td>
             <td><span class="badge bg-info">{{ $hub->riders->count() }} riders</span></td>
             <td>
@@ -46,7 +53,7 @@
             </td>
           </tr>
         @empty
-          <tr><td colspan="6" class="text-center text-muted py-4">No hubs found. Create your first hub to get started.</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-4">No hubs found. Create your first hub to get started.</td></tr>
         @endforelse
       </tbody>
     </table>

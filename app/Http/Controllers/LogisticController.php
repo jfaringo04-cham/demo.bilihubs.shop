@@ -754,6 +754,7 @@ class LogisticController extends Controller
         $pendingShipments = $logistic->shipments()
             ->where('sorting_status', 'pending')
             ->where('status', 'at_sorting_center')
+            ->whereNotIn('routing_status', ['at_origin_hub', 'in_hub_transfer'])
             ->whereNotNull('pickup_rider_id')
             ->whereNotNull('picked_up_at')
             ->whereNotNull('at_sorting_center_at')
@@ -789,26 +790,21 @@ class LogisticController extends Controller
     {
         $logistic = Auth::user()->ownedLogistic;
 
-        $isFailedReturn =
-            $shipment->status === 'failed_return_at_sorting_center';
+        $isFailedReturn = $shipment->status === 'failed_return_at_sorting_center';
 
         if (!$isFailedReturn) {
             if (
-                $shipment->status !== 'at_sorting_center' ||
+                !in_array($shipment->status, ['in_transit', 'at_sorting_center'], true) ||
                 !$shipment->pickup_rider_id ||
-                !$shipment->picked_up_at ||
-                !$shipment->at_sorting_center_at
+                !$shipment->picked_up_at
             ) {
                 throw new \RuntimeException(
-                    'The pickup rider must collect and deliver the parcel to the sorting center before it can be received.'
+                    'The pickup rider must collect the parcel before it can be received at the origin hub.'
                 );
             }
         }
 
-        if (
-            !$logistic ||
-            (int) $shipment->logistic_id !== (int) $logistic->id
-        ) {
+        if (!$logistic || (int) $shipment->logistic_id !== (int) $logistic->id) {
             abort(403, 'Shipment does not belong to your logistics company.');
         }
 
@@ -821,107 +817,110 @@ class LogisticController extends Controller
                         ->firstOrFail();
 
                     if ((int) $shipment->logistic_id !== (int) $logistic->id) {
-                        throw new \RuntimeException(
-                            'Shipment logistics ownership has changed.'
-                        );
-                    }
-
-                    if ($shipment->received_by_sorting_center) {
-                        throw new \RuntimeException(
-                            'This shipment has already been received.'
-                        );
+                        throw new \RuntimeException('Shipment logistics ownership has changed.');
                     }
 
                     $shipment->loadMissing([
                         'sellerOrder.order',
                         'sellerOrder.seller',
                         'hub',
+                        'originHub',
+                        'destinationHub',
                     ]);
 
                     $sellerOrder = $shipment->sellerOrder;
                     $order = $sellerOrder?->order;
 
                     if (!$sellerOrder || !$order) {
-                        throw new \RuntimeException(
-                            'Shipment is not linked to a valid seller order.'
-                        );
+                        throw new \RuntimeException('Shipment is not linked to a valid seller order.');
                     }
 
-                    $isFailedReturn =
-                        $shipment->status === 'failed_return_at_sorting_center';
+                    $isFailedReturn = $shipment->status === 'failed_return_at_sorting_center';
 
+                    if ($isFailedReturn) {
+                        if ($shipment->received_by_sorting_center) {
+                            throw new \RuntimeException('This shipment has already been received.');
+                        }
 
-                    if (
-                        !$isFailedReturn &&
-                        !in_array(
-                            $shipment->status,
-                            ['in_transit', 'at_sorting_center'],
-                            true
-                        )
-                    ) {
-                        throw new \RuntimeException(
-                            'Shipment must be in transit or handed over to the sorting center before receipt.'
-                        );
-                    }
+                        $riderIdToRelease = $shipment->rider_id;
+                        if (!$riderIdToRelease) {
+                            throw new \RuntimeException('Failed-return parcel has no assigned delivery rider.');
+                        }
 
+                        $this->releaseRiderCapacity($riderIdToRelease, false);
 
-
-                    $riderIdToRelease = $isFailedReturn
-                        ? $shipment->rider_id
-                        : $shipment->pickup_rider_id;
-
-                    if ($isFailedReturn && !$riderIdToRelease) {
-                        throw new \RuntimeException(
-                            'Failed-return parcel has no assigned delivery rider.'
-                        );
-                    }
-
-                    if ($riderIdToRelease) {
-                        $rider = \App\Models\User::query()
-                            ->whereKey($riderIdToRelease)
-                            ->lockForUpdate()
-                            ->firstOrFail();
-
-                        $newLoad = max(
-                            0,
-                            (int) $rider->current_load - 1
-                        );
-
-                        $capacity = $rider->max_capacity;
-
-                        $rider->update([
-                            'current_load' => $newLoad,
-                            'availability_status' => $capacity === null
-                                || $newLoad < (int) $capacity
-                                ? 'available'
-                                : 'busy',
+                        $shipment->update([
+                            'sorting_status' => 'received',
+                            'received_at' => now(),
+                            'at_sorting_center_at' => now(),
+                            'received_by_sorting_center' => true,
+                            'rider_id' => null,
+                            'status' => 'failed_return_at_sorting_center',
+                            'failed_return_received_at' => now(),
                         ]);
 
-                        if (!$isFailedReturn) {
-                            $rider->increment('daily_pickups_completed');
-                        }
+                        return [
+                            'order' => $order,
+                            'seller_order' => $sellerOrder,
+                            'hub_name' => $shipment->hub?->name ?? 'Sorting Center',
+                            'transfer_required' => false,
+                        ];
                     }
 
+                    if ($shipment->origin_hub_received_at !== null) {
+                        throw new \RuntimeException('This parcel has already been received at its origin hub.');
+                    }
 
-                    $shipment->update([
-                        'sorting_status' => 'received',
-                        'received_at' => now(),
-                        'at_sorting_center_at' => now(),
-                        'received_by_sorting_center' => true,
-                        'rider_id' => null,
-                        'status' => $isFailedReturn
-                            ? 'failed_return_at_sorting_center'
-                            : 'at_sorting_center',
-                        ...($isFailedReturn
-                            ? ['failed_return_received_at' => now()]
-                            : []),
-                    ]);
+                    $originHubId = (int) ($shipment->origin_hub_id ?: $shipment->hub_id);
+                    $destinationHubId = (int) ($shipment->destination_hub_id ?: $originHubId);
+
+                    if (!$originHubId || !$destinationHubId) {
+                        throw new \RuntimeException('Shipment route is incomplete. Assign origin and destination hubs first.');
+                    }
+
+                    if ((int) $shipment->hub_id !== $originHubId) {
+                        throw new \RuntimeException('Parcel must be received by its assigned origin hub.');
+                    }
+
+                    if ($shipment->pickup_rider_id) {
+                        $this->releaseRiderCapacity((int) $shipment->pickup_rider_id, true);
+                    }
+
+                    $sameHub = $originHubId === $destinationHubId;
+                    $now = now();
+
+                    if ($sameHub) {
+                        $shipment->update([
+                            'hub_id' => $destinationHubId,
+                            'routing_status' => 'at_destination_hub',
+                            'origin_hub_received_at' => $now,
+                            'destination_hub_received_at' => $now,
+                            'sorting_status' => 'received',
+                            'received_at' => $now,
+                            'at_sorting_center_at' => $now,
+                            'received_by_sorting_center' => true,
+                            'rider_id' => null,
+                            'status' => 'at_sorting_center',
+                        ]);
+                    } else {
+                        $shipment->update([
+                            'hub_id' => $originHubId,
+                            'routing_status' => 'at_origin_hub',
+                            'origin_hub_received_at' => $now,
+                            'sorting_status' => 'pending',
+                            'received_at' => null,
+                            'at_sorting_center_at' => $now,
+                            'received_by_sorting_center' => false,
+                            'rider_id' => null,
+                            'status' => 'at_sorting_center',
+                        ]);
+                    }
 
                     return [
                         'order' => $order,
                         'seller_order' => $sellerOrder,
-                        'hub_name' => $shipment->hub?->name
-                            ?? 'Sorting Center',
+                        'hub_name' => $shipment->originHub?->name ?? $shipment->hub?->name ?? 'Origin Hub',
+                        'transfer_required' => !$sameHub,
                     ];
                 }
             );
@@ -929,8 +928,7 @@ class LogisticController extends Controller
             return back()->with('error', $e->getMessage());
         }
 
-        app(\App\Services\OrderFlowSyncService::class)
-            ->syncShipment($shipment);
+        app(\App\Services\OrderFlowSyncService::class)->syncShipment($shipment->fresh());
 
         $order = $result['order'];
         $sellerOrder = $result['seller_order'];
@@ -939,9 +937,8 @@ class LogisticController extends Controller
         if ($sellerOrder->seller?->user_id) {
             $this->createNotification(
                 $sellerOrder->seller->user_id,
-                'Parcel Received at Sorting Center',
-                'Parcel #' . $sellerOrder->id
-                    . ' from order ' . $order->order_number
+                'Parcel Received at Hub',
+                'Parcel #' . $sellerOrder->id . ' from order ' . $order->order_number
                     . ' has arrived at ' . $hubName . '.',
                 'shipment',
                 route('seller.orders.show', $order)
@@ -951,9 +948,8 @@ class LogisticController extends Controller
         if ($order->user_id) {
             $this->createNotification(
                 $order->user_id,
-                'Parcel Received at Sorting Center',
-                'Parcel #' . $sellerOrder->id
-                    . ' from order ' . $order->order_number
+                'Parcel Received at Hub',
+                'Parcel #' . $sellerOrder->id . ' from order ' . $order->order_number
                     . ' has arrived at ' . $hubName . '.',
                 'delivery',
                 route('orders.show', $order)
@@ -962,11 +958,85 @@ class LogisticController extends Controller
 
         return back()->with(
             'success',
-            'Shipment received. Pickup rider capacity released.'
+            $result['transfer_required']
+                ? 'Parcel received at origin hub. It is ready for inter-hub dispatch.'
+                : 'Parcel received at destination hub. It is ready for sorting.'
         );
     }
 
+    private function releaseRiderCapacity(int $riderId, bool $countPickup): void
+    {
+        $rider = \App\Models\User::query()
+            ->whereKey($riderId)
+            ->lockForUpdate()
+            ->firstOrFail();
 
+        $newLoad = max(0, (int) $rider->current_load - 1);
+        $capacity = $rider->max_capacity;
+
+        $rider->update([
+            'current_load' => $newLoad,
+            'availability_status' => $capacity === null || $newLoad < (int) $capacity
+                ? 'available'
+                : 'busy',
+        ]);
+
+        if ($countPickup) {
+            $rider->increment('daily_pickups_completed');
+        }
+    }
+
+    public function hubTransfers()
+    {
+        $logistic = Auth::user()->ownedLogistic;
+        if (!$logistic) {
+            return redirect()->route('home')->with('error', 'No logistics company found for your account.');
+        }
+
+        $atOrigin = Shipment::query()
+            ->where('logistic_id', $logistic->id)
+            ->where('routing_status', 'at_origin_hub')
+            ->with(['sellerOrder.order.user', 'originHub', 'destinationHub'])
+            ->latest()
+            ->get();
+
+        $inTransfer = Shipment::query()
+            ->where('logistic_id', $logistic->id)
+            ->where('routing_status', 'in_hub_transfer')
+            ->with(['sellerOrder.order.user', 'originHub', 'destinationHub'])
+            ->latest()
+            ->get();
+
+        return view('logistic.hub-transfers', compact('logistic', 'atOrigin', 'inTransfer'));
+    }
+
+    public function dispatchHubTransfer(Shipment $shipment)
+    {
+        $logistic = Auth::user()->ownedLogistic;
+        abort_unless($logistic && (int) $shipment->logistic_id === (int) $logistic->id, 403);
+
+        try {
+            \App\Services\HubTransferService::dispatch($shipment);
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with('success', 'Parcel dispatched from origin hub to destination hub.');
+    }
+
+    public function receiveDestinationHub(Shipment $shipment)
+    {
+        $logistic = Auth::user()->ownedLogistic;
+        abort_unless($logistic && (int) $shipment->logistic_id === (int) $logistic->id, 403);
+
+        try {
+            \App\Services\HubTransferService::receiveAtDestination($shipment);
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with('success', 'Parcel received at destination hub and is ready for sorting.');
+    }
 
     public function scanShipment(Request $request, Shipment $shipment)
     {
@@ -1002,6 +1072,10 @@ class LogisticController extends Controller
                     if ((int) $lockedShipment->logistic_id !== (int) $logistic->id) {
                         throw new \RuntimeException('Shipment ownership changed.');
                     }
+
+                    \App\Services\HubTransferService::ensureAtDestinationForSorting(
+                        $lockedShipment
+                    );
 
                     if (
                         !$lockedShipment->received_by_sorting_center ||
@@ -1058,6 +1132,10 @@ class LogisticController extends Controller
                         throw new \RuntimeException('Shipment ownership changed.');
                     }
 
+                    \App\Services\HubTransferService::ensureAtDestinationForSorting(
+                        $lockedShipment
+                    );
+
                     if (
                         !$lockedShipment->received_by_sorting_center ||
                         $lockedShipment->sorting_status !== 'scanned'
@@ -1101,6 +1179,10 @@ class LogisticController extends Controller
                     if ((int) $lockedShipment->logistic_id !== (int) $logistic->id) {
                         throw new \RuntimeException('Shipment ownership changed.');
                     }
+
+                    \App\Services\HubTransferService::ensureAtDestinationForSorting(
+                        $lockedShipment
+                    );
 
                     if (
                         !$lockedShipment->received_by_sorting_center ||
@@ -1678,6 +1760,10 @@ class LogisticController extends Controller
             })
             ->where('logistic_status', 'approved')
             ->where('status', User::STATUS_ACTIVE)
+            ->where(
+                'hub_id',
+                $shipment->destination_hub_id ?: $shipment->hub_id
+            )
             ->where('availability_status', 'available')
             ->where('max_capacity', '>', 0)
             ->whereColumn('current_load', '<', 'max_capacity')
@@ -2156,6 +2242,9 @@ class LogisticController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'address' => ['required', 'string', 'max:500'],
             'api_address' => ['nullable', 'string', 'max:500'],
+            'barangay' => ['required', 'string', 'max:255'],
+            'city' => ['required', 'string', 'max:255'],
+            'province' => ['required', 'string', 'max:255'],
             'contact_person' => ['nullable', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:255'],
             'status' => ['required', 'in:active,inactive'],
@@ -2168,6 +2257,9 @@ class LogisticController extends Controller
             'name' => $validated['name'],
             'address' => $validated['address'],
             'api_address' => $validated['api_address'] ?? null,
+            'barangay' => $validated['barangay'],
+            'city' => $validated['city'],
+            'province' => $validated['province'],
             'latitude' => $geocoded['lat'] ?? null,
             'longitude' => $geocoded['lng'] ?? null,
             'contact_person' => $validated['contact_person'],
@@ -2209,6 +2301,9 @@ class LogisticController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'address' => ['required', 'string', 'max:500'],
             'api_address' => ['nullable', 'string', 'max:500'],
+            'barangay' => ['required', 'string', 'max:255'],
+            'city' => ['required', 'string', 'max:255'],
+            'province' => ['required', 'string', 'max:255'],
             'contact_person' => ['nullable', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:255'],
             'status' => ['required', 'in:active,inactive'],
@@ -2223,6 +2318,15 @@ class LogisticController extends Controller
 
         $hub->update($validated);
 
+        \App\Services\RiderHubAssignmentService::syncHubRiderZones($hub);
+
+        if ($hub->status === 'active') {
+            \App\Services\PickupOfferService::retryPendingForHub(
+                (int) $logistic->id,
+                (int) $hub->id
+            );
+        }
+
         return back()->with('success', 'Hub updated successfully.');
     }
 
@@ -2234,7 +2338,7 @@ class LogisticController extends Controller
             return redirect()->route('logistic.hubs')->with('error', 'Hub not found.');
         }
 
-        $hub->riders()->update(['hub_id' => null]);
+        $hub->riders()->update(['hub_id' => null, 'assigned_zone' => null]);
         $hub->delete();
 
         return redirect()->route('logistic.hubs')->with('success', 'Hub deleted successfully.');
@@ -2279,7 +2383,14 @@ class LogisticController extends Controller
             return back()->with('error', 'Rider not found or already assigned to a hub.');
         }
 
-        $rider->update(['hub_id' => $hub->id]);
+        \App\Services\RiderHubAssignmentService::assign($rider, $hub);
+
+        if ($rider->availability_status === 'available') {
+            \App\Services\PickupOfferService::retryPendingForHub(
+                (int) $logistic->id,
+                (int) $hub->id
+            );
+        }
 
         return back()->with('success', 'Rider assigned to hub successfully.');
     }
@@ -2304,7 +2415,7 @@ class LogisticController extends Controller
             return back()->with('error', 'Rider not found in this hub.');
         }
 
-        $rider->update(['hub_id' => null]);
+        \App\Services\RiderHubAssignmentService::unassign($rider);
 
         return back()->with('success', 'Rider unassigned from hub successfully.');
     }

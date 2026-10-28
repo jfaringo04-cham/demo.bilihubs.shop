@@ -857,6 +857,22 @@ class DashboardController extends Controller
 
         $rider = Auth::user();
 
+        // Keep legacy rider records aligned with their assigned hub barangay.
+        \App\Services\RiderHubAssignmentService::syncRiderToCurrentHub($rider);
+
+        // Also retry shipments that never received an offer because no eligible
+        // rider existed when the seller first marked the order ready for pickup.
+        if (
+            $rider->availability_status === 'available' &&
+            $rider->logistic_id !== null &&
+            $rider->hub_id !== null
+        ) {
+            \App\Services\PickupOfferService::retryPendingForHub(
+                (int) $rider->logistic_id,
+                (int) $rider->hub_id
+            );
+        }
+
         $query = \App\Models\Shipment::query()
 
             ->whereHas('sellerOrder.order')
@@ -2270,6 +2286,15 @@ class DashboardController extends Controller
         $rider->update([
             'availability_status' => $validated['availability_status'],
         ]);
+
+        if ($validated['availability_status'] === 'available') {
+            \App\Services\RiderHubAssignmentService::syncRiderToCurrentHub($rider);
+
+            \App\Services\PickupOfferService::retryPendingForHub(
+                (int) $rider->logistic_id,
+                (int) $rider->hub_id
+            );
+        }
 
         return back()->with(
             'success',

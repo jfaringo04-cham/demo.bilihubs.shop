@@ -69,6 +69,18 @@ class PickupRiderAssignmentService
                 );
             }
 
+            $pickupHubId = $lockedShipment->origin_hub_id
+                ?: $lockedShipment->hub_id;
+
+            if (
+                !$pickupHubId ||
+                (int) $lockedRider->hub_id !== (int) $pickupHubId
+            ) {
+                throw new RuntimeException(
+                    'Pickup rider must belong to the shipment origin hub.'
+                );
+            }
+
             if ($lockedRider->availability_status !== 'available') {
                 throw new RuntimeException(
                     'Rider is unavailable.'
@@ -86,7 +98,6 @@ class PickupRiderAssignmentService
 
             $lockedShipment->update([
                 'pickup_rider_id' => $lockedRider->id,
-                'rider_id' => $lockedRider->id,
                 'status' => 'assigned',
             ]);
 

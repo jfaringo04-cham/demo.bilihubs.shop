@@ -11,6 +11,9 @@ class Shipment extends Model
     protected $fillable = [
         'logistic_id',
         'hub_id',
+        'origin_hub_id',
+        'destination_hub_id',
+        'routing_status',
         'rider_id',
         'pickup_rider_id',
         'rider_profile_id',
@@ -39,6 +42,9 @@ class Shipment extends Model
         'sorting_status',
         'rack_number',
         'received_at',
+        'origin_hub_received_at',
+        'transfer_dispatched_at',
+        'destination_hub_received_at',
         'scanned_at',
         'scanned_at_seller',
         'scanned_by_rider_id',
@@ -62,6 +68,9 @@ class Shipment extends Model
 
         // Sorting center timestamps
         'received_at' => 'datetime',
+        'origin_hub_received_at' => 'datetime',
+        'transfer_dispatched_at' => 'datetime',
+        'destination_hub_received_at' => 'datetime',
         'scanned_at' => 'datetime',
         'sorted_at' => 'datetime',
         'staged_at' => 'datetime',
@@ -111,6 +120,16 @@ class Shipment extends Model
         return $this->belongsTo(Hub::class);
     }
 
+    public function originHub(): BelongsTo
+    {
+        return $this->belongsTo(Hub::class, 'origin_hub_id');
+    }
+
+    public function destinationHub(): BelongsTo
+    {
+        return $this->belongsTo(Hub::class, 'destination_hub_id');
+    }
+
     public function rider(): BelongsTo
     {
         return $this->belongsTo(User::class, 'rider_id');
@@ -142,7 +161,17 @@ class Shipment extends Model
             ['label' => 'Created', 'timestamp' => $this->created_at, 'class' => 'primary'],
         ];
 
-        if ($this->sorting_status === 'received' || $this->sorting_status === 'scanned' || $this->sorting_status === 'sorted' || $this->sorting_status === 'staged') {
+        if ($this->origin_hub_received_at) {
+            $steps[] = ['label' => 'Received at Origin Hub', 'timestamp' => $this->origin_hub_received_at, 'class' => 'info'];
+        }
+
+        if ($this->transfer_dispatched_at) {
+            $steps[] = ['label' => 'Dispatched to Destination Hub', 'timestamp' => $this->transfer_dispatched_at, 'class' => 'primary'];
+        }
+
+        if ($this->destination_hub_received_at) {
+            $steps[] = ['label' => 'Received at Destination Hub', 'timestamp' => $this->destination_hub_received_at, 'class' => 'success'];
+        } elseif ($this->sorting_status === 'received' || $this->sorting_status === 'scanned' || $this->sorting_status === 'sorted' || $this->sorting_status === 'staged') {
             $steps[] = ['label' => 'Received at Hub', 'timestamp' => $this->received_at, 'class' => 'info'];
         }
 

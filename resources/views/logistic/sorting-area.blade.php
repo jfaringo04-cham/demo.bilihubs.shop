@@ -67,7 +67,10 @@ $availableDeliveryRiders = $eligibleDeliveryRiders
 
     <h1 class="h2"><i class="bi bi-box-seam"></i> Sorting Area - {{ $logistic->company_name }}</h1>
 
-    <a href="{{ route('logistic.shipments') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Shipments</a>
+    <div class="d-flex gap-2">
+      <a href="{{ route('logistic.hub-transfers') }}" class="btn btn-outline-primary"><i class="bi bi-arrow-left-right"></i> Hub Transfers</a>
+      <a href="{{ route('logistic.shipments') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Shipments</a>
+    </div>
 
   </div>
 

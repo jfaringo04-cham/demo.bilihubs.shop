@@ -34,8 +34,23 @@
                         <div class="col-12">
                             <label for="api_address" class="form-label">Hub API Address / Location</label>
                             <input type="text" name="api_address" id="api_address" class="form-control" value="{{ old('api_address') }}" placeholder="Enter hub API address or full location for auto-assignment">
-                            <small class="text-muted">This address will be used to match orders near your hub for rider assignment.</small>
+                            <small class="text-muted">Coordinates are used only as fallback. Barangay coverage below is the primary routing rule.</small>
                             @error('api_address') <div class="text-danger">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="col-md-4">
+                            <label for="barangay" class="form-label">Barangay Coverage <span class="text-danger">*</span></label>
+                            <input type="text" name="barangay" id="barangay" class="form-control" value="{{ old('barangay') }}" required>
+                            @error('barangay') <div class="text-danger">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="col-md-4">
+                            <label for="city" class="form-label">City / Municipality <span class="text-danger">*</span></label>
+                            <input type="text" name="city" id="city" class="form-control" value="{{ old('city') }}" required>
+                            @error('city') <div class="text-danger">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="col-md-4">
+                            <label for="province" class="form-label">Province <span class="text-danger">*</span></label>
+                            <input type="text" name="province" id="province" class="form-control" value="{{ old('province') }}" required>
+                            @error('province') <div class="text-danger">{{ $message }}</div> @enderror
                         </div>
                         <div class="col-md-6">
                             <label for="contact_person" class="form-label">Contact Person</label>

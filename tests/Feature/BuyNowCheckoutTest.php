@@ -270,6 +270,18 @@ class BuyNowCheckoutTest extends TestCase
 
             $table->foreignId('hub_id')->nullable();
 
+            $table->foreignId('origin_hub_id')->nullable();
+
+            $table->foreignId('destination_hub_id')->nullable();
+
+            $table->string('routing_status')->default('awaiting_pickup');
+
+            $table->timestamp('origin_hub_received_at')->nullable();
+
+            $table->timestamp('transfer_dispatched_at')->nullable();
+
+            $table->timestamp('destination_hub_received_at')->nullable();
+
             $table->foreignId('rider_id')->nullable();
 
             $table->string('tracking_number')->unique();

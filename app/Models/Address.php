@@ -12,6 +12,7 @@ class Address extends Model
         'label',
         'address_line1',
         'address_line2',
+        'barangay',
         'city',
         'province',
         'postal_code',

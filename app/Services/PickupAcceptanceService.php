@@ -66,9 +66,11 @@ class PickupAcceptanceService
                 throw new RuntimeException('Rider is not eligible for this pickup.');
             }
 
+            $pickupHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
+
             if (
-                !$shipment->hub_id ||
-                (int) $lockedRider->hub_id !== (int) $shipment->hub_id
+                !$pickupHubId ||
+                (int) $lockedRider->hub_id !== (int) $pickupHubId
             ) {
                 throw new RuntimeException(
                     'Rider must belong to the shipment pickup hub.'

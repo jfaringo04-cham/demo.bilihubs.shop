@@ -689,6 +689,10 @@ Route::middleware('auth')->group(function () {
 
         Route::get('/sorting-area', [LogisticController::class, 'sortingArea'])->name('sorting-area');
 
+        Route::get('/hub-transfers', [LogisticController::class, 'hubTransfers'])->name('hub-transfers');
+        Route::post('/shipments/{shipment}/dispatch-transfer', [LogisticController::class, 'dispatchHubTransfer'])->name('shipments.dispatch-transfer');
+        Route::post('/shipments/{shipment}/receive-destination', [LogisticController::class, 'receiveDestinationHub'])->name('shipments.receive-destination');
+
         Route::post('/shipments/{shipment}/receive', [LogisticController::class, 'receiveShipment'])->name('shipments.receive');
 
         Route::post('/shipments/{shipment}/scan', [LogisticController::class, 'scanShipment'])->name('shipments.scan');

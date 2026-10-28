@@ -15,15 +15,25 @@ class SellerPickupZoneService
 
         $address = $sellerOrder->seller?->pickupAddress;
 
-        // Prefer the seller's configured pickup address.
+        // Barangay is now the primary pickup zone.
+        if ($address && filled($address->barangay)) {
+            return self::normalize($address->barangay);
+        }
+
+        $owner = $sellerOrder->seller?->owner;
+
+        $barangay = $owner?->barangay_name ?: $owner?->barangay;
+
+        if (filled($barangay)) {
+            return self::normalize($barangay);
+        }
+
+        // Backward compatibility for existing data that has no barangay yet.
         if ($address && filled($address->city)) {
             return self::normalize($address->city);
         }
 
-        // Fall back to the seller owner's municipality.
-        $owner = $sellerOrder->seller?->owner;
-
-        $municipality = $owner?->municipality_name;
+        $municipality = $owner?->municipality_name ?: $owner?->municipality;
 
         return filled($municipality)
             ? self::normalize($municipality)

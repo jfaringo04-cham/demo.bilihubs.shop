@@ -3,114 +3,188 @@
 namespace App\Services;
 
 use App\Models\Hub;
-use App\Models\Logistic;
 use App\Models\Order;
 use App\Models\SellerOrder;
-use App\Models\User;
 use App\Models\Shipment;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 
 class HubAssignmentService
 {
     /**
-     * Legacy order-level hub lookup.
-     * Kept temporarily for compatibility with existing controllers/services.
+     * Legacy order-level lookup retained for compatibility.
      */
     public static function findBestHubForOrder(Order $order): ?Hub
     {
-        $sellerLat = null;
-        $sellerLng = null;
+        $order->loadMissing([
+            'sellerOrders.seller.owner',
+            'sellerOrders.seller.pickupAddress',
+        ]);
 
-        $seller = $order->items->first()?->product?->user ?? null;
+        $sellerOrder = $order->sellerOrders->first();
 
-        if ($seller) {
-            $sellerLat = $seller->latitude ?? null;
-            $sellerLng = $seller->longitude ?? null;
-        }
-
-        if (!$sellerLat || !$sellerLng) {
-            $customerLat = $order->customer_latitude;
-            $customerLng = $order->customer_longitude;
-
-            if ($customerLat && $customerLng) {
-                $sellerLat = $customerLat;
-                $sellerLng = $customerLng;
-            }
-        }
-
-        if (!$sellerLat || !$sellerLng) {
-            return self::fallbackHub();
-        }
-
-        return self::findBestHubByCoordinates($sellerLat, $sellerLng);
+        return $sellerOrder
+            ? self::findBestHubForSellerOrder($sellerOrder)
+            : self::fallbackHub();
     }
 
     /**
-     * Seller-order-level hub lookup.
+     * Legacy single-hub lookup.
      *
-     * Each SellerOrder represents one seller/shop parcel, so hub selection
-     * is based on that parcel's seller pickup location.
+     * For new shipments this returns the origin hub. Call
+     * findRoutingHubsForSellerOrder() when both ends are needed.
      */
     public static function findBestHubForSellerOrder(SellerOrder $sellerOrder): ?Hub
     {
+        return self::findRoutingHubsForSellerOrder($sellerOrder)['origin'] ?? null;
+    }
+
+    /**
+     * Resolve the pickup/origin hub and buyer/destination hub.
+     *
+     * Priority:
+     * 1. Exact barangay coverage.
+     * 2. Same city/province coverage.
+     * 3. Nearest active hub by coordinates.
+     * 4. Existing active hub fallback.
+     *
+     * Destination hub is kept inside the same logistics company as the
+     * selected origin hub so one shipment stays under one provider.
+     *
+     * @return array{origin:?Hub,destination:?Hub}
+     */
+    public static function findRoutingHubsForSellerOrder(SellerOrder $sellerOrder): array
+    {
         $sellerOrder->loadMissing([
-            'order',
+            'order.user',
             'seller.owner',
             'seller.pickupAddress',
         ]);
 
-        $seller = $sellerOrder->seller;
-        $owner = $seller?->owner;
-        $pickupAddress = $seller?->pickupAddress;
+        $originLocality = self::sellerLocality($sellerOrder);
+        $destinationLocality = self::destinationLocality($sellerOrder);
 
-        $sellerLat = $pickupAddress?->latitude;
-        $sellerLng = $pickupAddress?->longitude;
+        $origin = self::findHubByLocality(
+            barangay: $originLocality['barangay'],
+            city: $originLocality['city'],
+            province: $originLocality['province'],
+        );
 
-        if (!$sellerLat || !$sellerLng) {
-            $sellerLat = $owner?->latitude;
-            $sellerLng = $owner?->longitude;
+        if (!$origin) {
+            $origin = self::findNearestHub(
+                $originLocality['latitude'],
+                $originLocality['longitude']
+            );
         }
 
-        if (!$sellerLat || !$sellerLng) {
-            $sellerLat = $sellerOrder->order?->customer_latitude;
-            $sellerLng = $sellerOrder->order?->customer_longitude;
+        if (!$origin) {
+            $origin = self::fallbackHub();
         }
 
-        if (!$sellerLat || !$sellerLng) {
-            return self::fallbackHub();
+        if (!$origin) {
+            return [
+                'origin' => null,
+                'destination' => null,
+            ];
         }
 
-        return self::findBestHubByCoordinates((float) $sellerLat, (float) $sellerLng);
+        $destination = self::findHubByLocality(
+            barangay: $destinationLocality['barangay'],
+            city: $destinationLocality['city'],
+            province: $destinationLocality['province'],
+            logisticId: (int) $origin->logistic_id,
+        );
+
+        if (!$destination) {
+            $destination = self::findNearestHub(
+                $destinationLocality['latitude'],
+                $destinationLocality['longitude'],
+                (int) $origin->logistic_id,
+            );
+        }
+
+        // A logistics company may initially have only one configured hub.
+        // Keep the old flow working until more barangay hubs are created.
+        $destination ??= $origin;
+
+        return [
+            'origin' => $origin,
+            'destination' => $destination,
+        ];
     }
 
-    public static function findBestHubByCoordinates(float $lat, float $lng): ?Hub
-    {
-        $hubs = Hub::where('status', 'active')
-            ->whereNotNull('latitude')
-            ->whereNotNull('longitude')
-            ->get();
+    public static function findHubByLocality(
+        ?string $barangay,
+        ?string $city,
+        ?string $province,
+        ?int $logisticId = null
+    ): ?Hub {
+        $barangay = self::normalize($barangay);
+        $city = self::normalize($city);
+        $province = self::normalize($province);
 
-        if ($hubs->isEmpty()) {
-            return self::fallbackHub();
+        $base = Hub::query()
+            ->where('status', 'active');
+
+        if ($logisticId !== null) {
+            $base->where('logistic_id', $logisticId);
         }
 
-        $bestHub = null;
-        $bestDistance = null;
+        if ($barangay !== null) {
+            $exact = (clone $base)
+                ->whereRaw('LOWER(TRIM(barangay)) = ?', [$barangay]);
 
-        foreach ($hubs as $hub) {
-            $distance = self::calculateDistance($lat, $lng, $hub->latitude, $hub->longitude);
+            self::applyOptionalLocality($exact, 'city', $city);
+            self::applyOptionalLocality($exact, 'province', $province);
 
-            if ($bestDistance === null || $distance < $bestDistance) {
-                $bestDistance = $distance;
-                $bestHub = $hub;
+            $hub = $exact->orderBy('id')->first();
+
+            if ($hub) {
+                return $hub;
             }
         }
 
-        return $bestHub;
+        if ($city !== null) {
+            $cityQuery = (clone $base)
+                ->whereRaw('LOWER(TRIM(city)) = ?', [$city]);
+
+            self::applyOptionalLocality($cityQuery, 'province', $province);
+
+            $hub = $cityQuery->orderBy('id')->first();
+
+            if ($hub) {
+                return $hub;
+            }
+        }
+
+        if ($province !== null) {
+            return (clone $base)
+                ->whereRaw('LOWER(TRIM(province)) = ?', [$province])
+                ->orderBy('id')
+                ->first();
+        }
+
+        return null;
     }
 
-    public static function fallbackHub(): ?Hub
+    public static function findBestHubByCoordinates(
+        float $lat,
+        float $lng,
+        ?int $logisticId = null
+    ): ?Hub {
+        return self::findNearestHub($lat, $lng, $logisticId);
+    }
+
+    public static function fallbackHub(?int $logisticId = null): ?Hub
     {
-        return Hub::where('status', 'active')->first();
+        return Hub::query()
+            ->where('status', 'active')
+            ->when(
+                $logisticId !== null,
+                fn (Builder $query) => $query->where('logistic_id', $logisticId)
+            )
+            ->orderBy('id')
+            ->first();
     }
 
     public static function calculateDistance($lat1, $lng1, $lat2, $lng2)
@@ -120,21 +194,15 @@ class HubAssignmentService
         $dLat = deg2rad($lat2 - $lat1);
         $dLng = deg2rad($lng2 - $lng1);
 
-        $a = sin($dLat / 2) * sin($dLat / 2) +
-             cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
-             sin($dLng / 2) * sin($dLng / 2);
+        $a = sin($dLat / 2) * sin($dLat / 2)
+            + cos(deg2rad($lat1)) * cos(deg2rad($lat2))
+            * sin($dLng / 2) * sin($dLng / 2);
 
         $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
 
         return $earthRadius * $c;
     }
 
-    /**
-     * Compatibility entry point for callers that still pass a parent Order.
-     *
-     * The actual shipment/rider assignment is now performed per SellerOrder
-     * so a multi-seller Order never creates one shared order-level shipment.
-     */
     public static function autoAssignRiderToOrder(Order $order): ?User
     {
         $order->loadMissing('sellerOrders');
@@ -153,14 +221,16 @@ class HubAssignmentService
     }
 
     /**
-     * Assign a hub/rider to one SellerOrder parcel.
-     * Creates a shipment only for that SellerOrder when one does not exist.
+     * Create a routed shipment for one seller parcel.
+     *
+     * Rider assignment is intentionally separate:
+     * - pickup rider belongs to origin_hub_id
+     * - final rider belongs to destination_hub_id
      */
-
     public static function autoAssignRiderToSellerOrder(SellerOrder $sellerOrder): ?User
     {
         $sellerOrder->loadMissing([
-            'order',
+            'order.user',
             'seller.owner',
             'seller.pickupAddress',
             'shipment',
@@ -168,20 +238,15 @@ class HubAssignmentService
 
         $order = $sellerOrder->order;
 
-        if (!$order) {
+        if (!$order || $sellerOrder->shipment) {
             return null;
         }
 
-        $existingShipment = $sellerOrder->shipment;
+        $route = self::findRoutingHubsForSellerOrder($sellerOrder);
+        $originHub = $route['origin'];
+        $destinationHub = $route['destination'];
 
-        // Never reassign an existing shipment's hub or rider.
-        if ($existingShipment) {
-            return null;
-        }
-
-        $hub = self::findBestHubForSellerOrder($sellerOrder);
-
-        if (!$hub) {
+        if (!$originHub || !$destinationHub) {
             return null;
         }
 
@@ -193,6 +258,7 @@ class HubAssignmentService
             ? implode(', ', array_filter([
                 $pickupAddress->address_line1 ?? null,
                 $pickupAddress->address_line2 ?? null,
+                $pickupAddress->barangay ?? null,
                 $pickupAddress->city ?? null,
                 $pickupAddress->province ?? null,
                 $pickupAddress->postal_code ?? null,
@@ -201,16 +267,17 @@ class HubAssignmentService
             : implode(', ', array_filter([
                 $owner?->business_name,
                 $owner?->street_address,
-                $owner?->barangay,
-                $owner?->municipality,
-                $owner?->province,
+                $owner?->barangay_name ?: $owner?->barangay,
+                $owner?->municipality_name ?: $owner?->municipality,
+                $owner?->province_name ?: $owner?->province,
             ]));
 
         \Illuminate\Support\Facades\DB::transaction(
             function () use (
                 $sellerOrder,
                 $order,
-                $hub,
+                $originHub,
+                $destinationHub,
                 $pickupAddressText
             ) {
                 $lockedSellerOrder = SellerOrder::query()
@@ -218,41 +285,42 @@ class HubAssignmentService
                     ->lockForUpdate()
                     ->firstOrFail();
 
-                // Avoid creating a duplicate shipment.
-                $shipmentExists = Shipment::query()
+                if (Shipment::query()
                     ->where('seller_order_id', $lockedSellerOrder->id)
-                    ->exists();
-
-                if ($shipmentExists) {
+                    ->exists()) {
                     return;
                 }
 
                 Shipment::create([
                     'seller_order_id' => $lockedSellerOrder->id,
-                    'logistic_id' => $hub->logistic_id,
-                    'hub_id' => $hub->id,
+                    'logistic_id' => $originHub->logistic_id,
+
+                    // Legacy hub_id remains the current processing hub.
+                    'hub_id' => $originHub->id,
+                    'origin_hub_id' => $originHub->id,
+                    'destination_hub_id' => $destinationHub->id,
+                    'routing_status' => 'awaiting_pickup',
+
                     'tracking_number' => 'SPE-' . strtoupper(uniqid()),
                     'status' => 'pending',
-                    'pickup_address' => $pickupAddressText
-                        ?: 'Seller address',
+                    'pickup_address' => $pickupAddressText ?: 'Seller address',
                     'delivery_address' => $order->shipping_address,
-                    'notes' => 'Hub assigned based on seller pickup location: '
-                        . $hub->name,
+                    'notes' => 'Route: '
+                        . $originHub->name
+                        . ' -> '
+                        . $destinationHub->name,
                 ]);
 
                 if (!$lockedSellerOrder->logistic_id) {
                     $lockedSellerOrder->update([
-                        'logistic_id' => $hub->logistic_id,
+                        'logistic_id' => $originHub->logistic_id,
                     ]);
                 }
             }
         );
 
-        // Pickup rider is assigned separately by Logistics.
-        // Delivery rider is assigned only after staging.
         return null;
     }
-
 
     public static function findBestRiderForHub(Hub $hub): ?User
     {
@@ -262,6 +330,130 @@ class HubAssignmentService
             ->where('hub_id', $hub->id)
             ->where('availability_status', 'available')
             ->whereColumn('current_load', '<', 'max_capacity')
+            ->orderBy('current_load')
+            ->orderBy('id')
             ->first();
+    }
+
+    private static function findNearestHub(
+        ?float $lat,
+        ?float $lng,
+        ?int $logisticId = null
+    ): ?Hub {
+        if ($lat === null || $lng === null) {
+            return null;
+        }
+
+        $hubs = Hub::query()
+            ->where('status', 'active')
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->when(
+                $logisticId !== null,
+                fn (Builder $query) => $query->where('logistic_id', $logisticId)
+            )
+            ->get();
+
+        $bestHub = null;
+        $bestDistance = null;
+
+        foreach ($hubs as $hub) {
+            $distance = self::calculateDistance(
+                $lat,
+                $lng,
+                (float) $hub->latitude,
+                (float) $hub->longitude
+            );
+
+            if ($bestDistance === null || $distance < $bestDistance) {
+                $bestDistance = $distance;
+                $bestHub = $hub;
+            }
+        }
+
+        return $bestHub;
+    }
+
+    private static function sellerLocality(SellerOrder $sellerOrder): array
+    {
+        $seller = $sellerOrder->seller;
+        $pickup = $seller?->pickupAddress;
+        $owner = $seller?->owner;
+
+        return [
+            'barangay' => $pickup?->barangay
+                ?: $owner?->barangay_name
+                ?: $owner?->barangay,
+            'city' => $pickup?->city
+                ?: $owner?->municipality_name
+                ?: $owner?->municipality,
+            'province' => $pickup?->province
+                ?: $owner?->province_name
+                ?: $owner?->province,
+            'latitude' => self::floatOrNull(
+                $pickup?->latitude ?? $owner?->latitude
+            ),
+            'longitude' => self::floatOrNull(
+                $pickup?->longitude ?? $owner?->longitude
+            ),
+        ];
+    }
+
+    private static function destinationLocality(SellerOrder $sellerOrder): array
+    {
+        $order = $sellerOrder->order;
+        $shipping = is_array($order?->shipping_address)
+            ? $order->shipping_address
+            : [];
+
+        $buyer = $order?->user;
+
+        return [
+            'barangay' => $shipping['barangay'] ?? null
+                ?: $buyer?->barangay_name
+                ?: $buyer?->barangay,
+            'city' => $shipping['city'] ?? null
+                ?: $shipping['municipality'] ?? null
+                ?: $buyer?->municipality_name
+                ?: $buyer?->municipality,
+            'province' => $shipping['province'] ?? null
+                ?: $buyer?->province_name
+                ?: $buyer?->province,
+            'latitude' => self::floatOrNull(
+                $shipping['latitude'] ?? $order?->customer_latitude
+            ),
+            'longitude' => self::floatOrNull(
+                $shipping['longitude'] ?? $order?->customer_longitude
+            ),
+        ];
+    }
+
+    private static function applyOptionalLocality(
+        Builder $query,
+        string $column,
+        ?string $value
+    ): void {
+        if ($value !== null) {
+            $query->whereRaw(
+                'LOWER(TRIM(' . $column . ')) = ?',
+                [$value]
+            );
+        }
+    }
+
+    private static function normalize(?string $value): ?string
+    {
+        if (blank($value)) {
+            return null;
+        }
+
+        return mb_strtolower(trim($value));
+    }
+
+    private static function floatOrNull(mixed $value): ?float
+    {
+        return is_numeric($value)
+            ? (float) $value
+            : null;
     }
 }

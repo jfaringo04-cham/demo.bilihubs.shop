@@ -13,6 +13,9 @@ class Hub extends Model
         'name',
         'address',
         'api_address',
+        'barangay',
+        'city',
+        'province',
         'latitude',
         'longitude',
         'contact_person',
@@ -38,5 +41,15 @@ class Hub extends Model
     public function shipments(): HasMany
     {
         return $this->hasMany(Shipment::class);
+    }
+
+    public function originShipments(): HasMany
+    {
+        return $this->hasMany(Shipment::class, 'origin_hub_id');
+    }
+
+    public function destinationShipments(): HasMany
+    {
+        return $this->hasMany(Shipment::class, 'destination_hub_id');
     }
 }

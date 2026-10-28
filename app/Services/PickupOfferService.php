@@ -43,6 +43,47 @@ class PickupOfferService
     }
 
 
+    /**
+     * Retry pickup-offer generation for ready-for-pickup shipments in a hub.
+     *
+     * This covers cases where no eligible rider existed when the seller first
+     * marked the order ready, but a rider later comes online or is assigned to
+     * the correct barangay hub.
+     */
+    public static function retryPendingForHub(int $logisticId, int $hubId): int
+    {
+        $shipments = Shipment::query()
+            ->where('logistic_id', $logisticId)
+            ->where('status', 'pending')
+            ->whereNull('pickup_rider_id')
+            ->whereNull('rider_id')
+            ->where('received_by_sorting_center', false)
+            ->whereNull('picked_up_at')
+            ->whereHas('sellerOrder', function ($query) {
+                $query->where('status', 'ready_for_pickup');
+            })
+            ->where(function ($query) use ($hubId) {
+                $query->where('origin_hub_id', $hubId)
+                    ->orWhere(function ($fallback) use ($hubId) {
+                        $fallback->whereNull('origin_hub_id')
+                            ->where('hub_id', $hubId);
+                    });
+            })
+            ->orderBy('id')
+            ->get();
+
+        $offered = 0;
+
+        foreach ($shipments as $shipment) {
+            if (self::offerNext($shipment)) {
+                $offered++;
+            }
+        }
+
+        return $offered;
+    }
+
+
     public static function offerNext(Shipment $shipment): ?PickupRequest
     {
         return DB::transaction(function () use ($shipment) {
@@ -65,7 +106,7 @@ class PickupOfferService
                 $shipment->status !== 'pending' ||
                 !$shipment->seller_order_id ||
                 !$shipment->logistic_id ||
-                !$shipment->hub_id ||
+                !($shipment->origin_hub_id ?: $shipment->hub_id) ||
                 $shipment->pickup_rider_id !== null ||
                 $shipment->rider_id !== null ||
                 $shipment->received_by_sorting_center ||
@@ -108,7 +149,7 @@ class PickupOfferService
                 ->where('status', User::STATUS_ACTIVE)
                 ->where('logistic_status', 'approved')
                 ->where('logistic_id', $shipment->logistic_id)
-                ->where('hub_id', $shipment->hub_id)
+                ->where('hub_id', $shipment->origin_hub_id ?: $shipment->hub_id)
                 ->where('availability_status', 'available')
                 ->where('max_capacity', '>', 0)
                 ->whereColumn('current_load', '<', 'max_capacity')

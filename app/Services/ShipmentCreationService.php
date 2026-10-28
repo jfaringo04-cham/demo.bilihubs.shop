@@ -36,7 +36,7 @@ class ShipmentCreationService
         }
 
         $lockedSellerOrder->load([
-            'order',
+            'order.user',
             'seller.owner',
             'seller.pickupAddress',
         ]);
@@ -46,14 +46,18 @@ class ShipmentCreationService
         $owner = $seller?->owner;
         $pickupAddress = $seller?->pickupAddress;
 
-        $hub = HubAssignmentService::findBestHubForSellerOrder(
+        $route = HubAssignmentService::findRoutingHubsForSellerOrder(
             $lockedSellerOrder
         );
+
+        $originHub = $route['origin'];
+        $destinationHub = $route['destination'];
 
         $pickup = $pickupAddress
             ? collect([
                 $pickupAddress->address_line1,
                 $pickupAddress->address_line2,
+                $pickupAddress->barangay,
                 $pickupAddress->city,
                 $pickupAddress->province,
                 $pickupAddress->postal_code,
@@ -62,9 +66,9 @@ class ShipmentCreationService
             : collect([
                 $owner?->business_name,
                 $owner?->street_address,
-                $owner?->barangay,
-                $owner?->municipality,
-                $owner?->province,
+                $owner?->barangay_name ?: $owner?->barangay,
+                $owner?->municipality_name ?: $owner?->municipality,
+                $owner?->province_name ?: $owner?->province,
             ])->filter()->implode(', ');
 
         $address = $order->shipping_address;
@@ -73,32 +77,41 @@ class ShipmentCreationService
             ? (
                 $address['address'] ??
                 collect($address)
-                ->only([
-                    'address_line1',
-                    'address_line2',
-                    'city',
-                    'province',
-                    'postal_code',
-                    'country',
-                ])
-                ->filter()
-                ->implode(', ')
+                    ->only([
+                        'address_line1',
+                        'address_line2',
+                        'barangay',
+                        'city',
+                        'province',
+                        'postal_code',
+                        'country',
+                    ])
+                    ->filter()
+                    ->implode(', ')
             )
             : (string) $address;
 
         Shipment::create([
             'seller_order_id' => $lockedSellerOrder->id,
-            'logistic_id' => $hub?->logistic_id,
-            'hub_id' => $hub?->id,
+            'logistic_id' => $originHub?->logistic_id,
+            'hub_id' => $originHub?->id,
+            'origin_hub_id' => $originHub?->id,
+            'destination_hub_id' => $destinationHub?->id,
+            'routing_status' => 'awaiting_pickup',
             'tracking_number' => 'SPE-' . Str::upper(Str::random(10)),
             'tracking_code' => 'SPE-' . Str::upper(Str::random(12)),
             'status' => 'pending',
             'pickup_address' => $pickup ?: 'Seller address',
             'delivery_address' => $delivery ?: 'Delivery address unavailable',
-            'notes' => $hub
-                ? 'Auto-assigned hub based on seller pickup location: '
-                . $hub->name
-                : 'Awaiting logistic assignment',
+            'notes' => $originHub && $destinationHub
+                ? 'Route: ' . $originHub->name . ' -> ' . $destinationHub->name
+                : 'Awaiting logistics hub routing',
         ]);
+
+        if (!$lockedSellerOrder->logistic_id && $originHub) {
+            $lockedSellerOrder->update([
+                'logistic_id' => $originHub->logistic_id,
+            ]);
+        }
     }
 }

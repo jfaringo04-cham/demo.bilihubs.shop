@@ -17,7 +17,7 @@ class RiderAssignmentService
     {
         if (
             $shipment->logistic_id === null ||
-            $shipment->hub_id === null ||
+            ($shipment->destination_hub_id === null && $shipment->hub_id === null) ||
             $shipment->rider_id !== null ||
             !$shipment->delivery_zone ||
             $shipment->sorting_status !== 'staged' ||
@@ -33,7 +33,7 @@ class RiderAssignmentService
             ->where('status', User::STATUS_ACTIVE)
             ->where('logistic_status', 'approved')
             ->where('logistic_id', $shipment->logistic_id)
-            ->where('hub_id', $shipment->hub_id)
+            ->where('hub_id', $shipment->destination_hub_id ?: $shipment->hub_id)
             ->where('availability_status', 'available')
             ->where('max_capacity', '>', 0)
             ->whereColumn('current_load', '<', 'max_capacity')
@@ -168,18 +168,21 @@ class RiderAssignmentService
                 );
             }
 
-            // Final-mile rider must belong to the sorting hub.
+            // Final-mile rider must belong to the destination barangay hub.
+            $destinationHubId = $lockedShipment->destination_hub_id
+                ?: $lockedShipment->hub_id;
+
             if (
-                !$lockedShipment->hub_id ||
-                (int) $lockedRider->hub_id
-                !== (int) $lockedShipment->hub_id
+                !$destinationHubId ||
+                (int) $lockedRider->hub_id !== (int) $destinationHubId
             ) {
                 throw new RuntimeException(
-                    'Delivery rider must belong to the shipment sorting hub.'
+                    'Delivery rider must belong to the shipment destination hub.'
                 );
             }
 
-            // Prevent assignment to the wrong delivery zone.
+            // Keep legacy delivery-zone validation only when both values exist.
+            // Hub membership is the primary dispatch boundary now.
             $shipmentZone = mb_strtolower(
                 trim((string) $lockedShipment->delivery_zone)
             );
@@ -189,12 +192,12 @@ class RiderAssignmentService
             );
 
             if (
-                $shipmentZone === '' ||
-                $riderZone === '' ||
+                $shipmentZone !== '' &&
+                $riderZone !== '' &&
                 $shipmentZone !== $riderZone
             ) {
                 throw new RuntimeException(
-                    'Delivery rider must be assigned to the shipment delivery zone.'
+                    'Delivery rider is assigned to a different delivery zone.'
                 );
             }
 
