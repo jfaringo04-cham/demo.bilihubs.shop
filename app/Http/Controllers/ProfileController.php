@@ -64,22 +64,42 @@ class ProfileController extends Controller
         $user->phone = $validated['phone'] ?? null;
         $user->address = $validated['address'] ?? null;
 
+        /*
+        |--------------------------------------------------------------------------
+        | Remove Profile Photo
+        |--------------------------------------------------------------------------
+        */
         if ($request->boolean('remove_profile_photo')) {
             if ($user->profile_photo_path) {
-                Storage::disk('public')->delete($user->profile_photo_path);
+                $this->deleteProfilePhoto($user->profile_photo_path);
             }
 
             $user->profile_photo_path = null;
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Upload New Profile Photo to S3
+        |--------------------------------------------------------------------------
+        */
         if ($request->hasFile('profile_photo')) {
             if ($user->profile_photo_path) {
-                Storage::disk('public')->delete($user->profile_photo_path);
+                $this->deleteProfilePhoto($user->profile_photo_path);
             }
 
-            $user->profile_photo_path = $request
+            $path = $request
                 ->file('profile_photo')
-                ->store('profile-pictures', 'public');
+                ->store('profile-pictures', 's3');
+
+            if (!$path) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        'profile_photo' => 'Unable to upload profile photo. Please try again.',
+                    ]);
+            }
+
+            $user->profile_photo_path = $path;
         }
 
         $user->save();
@@ -90,15 +110,66 @@ class ProfileController extends Controller
     public function updatePassword(Request $request)
     {
         $validated = $request->validateWithBag('passwordUpdate', [
-            'current_password' => ['required', 'current_password'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'current_password' => [
+                'required',
+                'current_password',
+            ],
+            'password' => [
+                'required',
+                'string',
+                'min:8',
+                'confirmed',
+            ],
         ]);
 
         $user = Auth::user();
+
         $user->password = $validated['password'];
         $user->save();
 
-        return back()->with('password_success', 'Password changed successfully.');
+        return back()->with(
+            'password_success',
+            'Password changed successfully.'
+        );
     }
 
+    private function deleteProfilePhoto(?string $path): void
+    {
+        if (!$path) {
+            return;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Delete from S3
+        |--------------------------------------------------------------------------
+        |
+        | New profile photos are stored here.
+        |
+        */
+        try {
+            if (Storage::disk('s3')->exists($path)) {
+                Storage::disk('s3')->delete($path);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Delete old local copy if present
+        |--------------------------------------------------------------------------
+        |
+        | This keeps compatibility with profile photos uploaded before we moved
+        | profile storage to S3.
+        |
+        */
+        try {
+            if (Storage::disk('public')->exists($path)) {
+                Storage::disk('public')->delete($path);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
 }
