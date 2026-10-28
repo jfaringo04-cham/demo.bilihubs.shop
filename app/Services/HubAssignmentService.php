@@ -42,16 +42,22 @@ class HubAssignmentService
     /**
      * Resolve the pickup/origin hub and buyer/destination hub.
      *
-     * Priority:
+     * Deterministic fallback priority:
      * 1. Exact barangay coverage.
-     * 2. Same city/province coverage.
-     * 3. Nearest active hub by coordinates.
-     * 4. Existing active hub fallback.
+     * 2. Same city/municipality coverage.
+     * 3. Same province coverage.
+     * 4. Explicitly configured default hub.
+     * 5. Unresolved (no silent/random hub assignment).
      *
      * Destination hub is kept inside the same logistics company as the
      * selected origin hub so one shipment stays under one provider.
      *
-     * @return array{origin:?Hub,destination:?Hub}
+     * @return array{
+     *     origin:?Hub,
+     *     destination:?Hub,
+     *     origin_match:string,
+     *     destination_match:string
+     * }
      */
     public static function findRoutingHubsForSellerOrder(SellerOrder $sellerOrder): array
     {
@@ -63,62 +69,83 @@ class HubAssignmentService
 
         $originLocality = self::sellerLocality($sellerOrder);
         $destinationLocality = self::destinationLocality($sellerOrder);
+        $preferredLogisticId = $sellerOrder->logistic_id
+            ? (int) $sellerOrder->logistic_id
+            : null;
 
-        $origin = self::findHubByLocality(
+        $originResolution = self::resolveHubByLocality(
             barangay: $originLocality['barangay'],
             city: $originLocality['city'],
             province: $originLocality['province'],
+            logisticId: $preferredLogisticId,
         );
 
-        if (!$origin) {
-            $origin = self::findNearestHub(
-                $originLocality['latitude'],
-                $originLocality['longitude']
-            );
-        }
+        $origin = $originResolution['hub'];
+        $originMatch = $originResolution['match'];
 
         if (!$origin) {
-            $origin = self::fallbackHub();
+            $origin = self::fallbackHub($preferredLogisticId);
+            $originMatch = $origin ? 'default_hub' : 'unresolved';
         }
 
         if (!$origin) {
             return [
                 'origin' => null,
                 'destination' => null,
+                'origin_match' => 'unresolved',
+                'destination_match' => 'unresolved',
             ];
         }
 
-        $destination = self::findHubByLocality(
+        $destinationResolution = self::resolveHubByLocality(
             barangay: $destinationLocality['barangay'],
             city: $destinationLocality['city'],
             province: $destinationLocality['province'],
             logisticId: (int) $origin->logistic_id,
         );
 
-        if (!$destination) {
-            $destination = self::findNearestHub(
-                $destinationLocality['latitude'],
-                $destinationLocality['longitude'],
-                (int) $origin->logistic_id,
-            );
-        }
+        $destination = $destinationResolution['hub'];
+        $destinationMatch = $destinationResolution['match'];
 
-        // A logistics company may initially have only one configured hub.
-        // Keep the old flow working until more barangay hubs are created.
-        $destination ??= $origin;
+        if (!$destination) {
+            $destination = self::fallbackHub((int) $origin->logistic_id);
+            $destinationMatch = $destination ? 'default_hub' : 'unresolved';
+        }
 
         return [
             'origin' => $origin,
             'destination' => $destination,
+            'origin_match' => $originMatch,
+            'destination_match' => $destinationMatch,
         ];
     }
 
+    /**
+     * Backward-compatible hub lookup that returns only the hub model.
+     */
     public static function findHubByLocality(
         ?string $barangay,
         ?string $city,
         ?string $province,
         ?int $logisticId = null
     ): ?Hub {
+        return self::resolveHubByLocality(
+            $barangay,
+            $city,
+            $province,
+            $logisticId
+        )['hub'];
+    }
+
+    /**
+     * @return array{hub:?Hub,match:string}
+     */
+    public static function resolveHubByLocality(
+        ?string $barangay,
+        ?string $city,
+        ?string $province,
+        ?int $logisticId = null
+    ): array {
         $barangay = self::normalize($barangay);
         $city = self::normalize($city);
         $province = self::normalize($province);
@@ -140,7 +167,7 @@ class HubAssignmentService
             $hub = $exact->orderBy('id')->first();
 
             if ($hub) {
-                return $hub;
+                return ['hub' => $hub, 'match' => 'exact_barangay'];
             }
         }
 
@@ -153,18 +180,22 @@ class HubAssignmentService
             $hub = $cityQuery->orderBy('id')->first();
 
             if ($hub) {
-                return $hub;
+                return ['hub' => $hub, 'match' => 'city_fallback'];
             }
         }
 
         if ($province !== null) {
-            return (clone $base)
+            $hub = (clone $base)
                 ->whereRaw('LOWER(TRIM(province)) = ?', [$province])
                 ->orderBy('id')
                 ->first();
+
+            if ($hub) {
+                return ['hub' => $hub, 'match' => 'province_fallback'];
+            }
         }
 
-        return null;
+        return ['hub' => null, 'match' => 'unresolved'];
     }
 
     public static function findBestHubByCoordinates(
@@ -177,14 +208,25 @@ class HubAssignmentService
 
     public static function fallbackHub(?int $logisticId = null): ?Hub
     {
-        return Hub::query()
+        $query = Hub::query()
             ->where('status', 'active')
+            ->where('is_default', true)
             ->when(
                 $logisticId !== null,
                 fn (Builder $query) => $query->where('logistic_id', $logisticId)
             )
-            ->orderBy('id')
-            ->first();
+            ->orderBy('id');
+
+        if ($logisticId !== null) {
+            return $query->first();
+        }
+
+        // Without a known logistics provider, only use a global default when
+        // there is exactly one active default hub. Multiple defaults belong to
+        // different companies and choosing one silently would be arbitrary.
+        $defaults = $query->limit(2)->get();
+
+        return $defaults->count() === 1 ? $defaults->first() : null;
     }
 
     public static function calculateDistance($lat1, $lng1, $lat2, $lng2)
@@ -245,6 +287,8 @@ class HubAssignmentService
         $route = self::findRoutingHubsForSellerOrder($sellerOrder);
         $originHub = $route['origin'];
         $destinationHub = $route['destination'];
+        $originMatch = $route['origin_match'] ?? 'unresolved';
+        $destinationMatch = $route['destination_match'] ?? 'unresolved';
 
         if (!$originHub || !$destinationHub) {
             return null;
@@ -278,7 +322,9 @@ class HubAssignmentService
                 $order,
                 $originHub,
                 $destinationHub,
-                $pickupAddressText
+                $pickupAddressText,
+                $originMatch,
+                $destinationMatch
             ) {
                 $lockedSellerOrder = SellerOrder::query()
                     ->whereKey($sellerOrder->id)
@@ -308,7 +354,9 @@ class HubAssignmentService
                     'notes' => 'Route: '
                         . $originHub->name
                         . ' -> '
-                        . $destinationHub->name,
+                        . $destinationHub->name
+                        . ' | Origin match: ' . $originMatch
+                        . ' | Destination match: ' . $destinationMatch,
                 ]);
 
                 if (!$lockedSellerOrder->logistic_id) {

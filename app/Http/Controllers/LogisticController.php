@@ -2248,6 +2248,7 @@ class LogisticController extends Controller
             'contact_person' => ['nullable', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:255'],
             'status' => ['required', 'in:active,inactive'],
+            'is_default' => ['nullable', 'boolean'],
         ]);
 
         $geocoded = $this->geocodeAddress($validated['api_address'] ?? $validated['address']);
@@ -2265,7 +2266,15 @@ class LogisticController extends Controller
             'contact_person' => $validated['contact_person'],
             'phone' => $validated['phone'],
             'status' => $validated['status'],
+            'is_default' => $request->boolean('is_default') && $validated['status'] === 'active',
         ]);
+
+        if ($hub->is_default) {
+            \App\Models\Hub::query()
+                ->where('logistic_id', $logistic->id)
+                ->whereKeyNot($hub->id)
+                ->update(['is_default' => false]);
+        }
 
         return redirect()->route('logistic.hubs.show', $hub)->with('success', 'Hub created successfully.');
     }
@@ -2307,6 +2316,7 @@ class LogisticController extends Controller
             'contact_person' => ['nullable', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:255'],
             'status' => ['required', 'in:active,inactive'],
+            'is_default' => ['nullable', 'boolean'],
         ]);
 
         $geocoded = $this->geocodeAddress($validated['api_address'] ?? $validated['address']);
@@ -2314,6 +2324,16 @@ class LogisticController extends Controller
         if ($geocoded) {
             $validated['latitude'] = $geocoded['lat'];
             $validated['longitude'] = $geocoded['lng'];
+        }
+
+        $validated['is_default'] = $request->boolean('is_default')
+            && $validated['status'] === 'active';
+
+        if ($validated['is_default']) {
+            \App\Models\Hub::query()
+                ->where('logistic_id', $logistic->id)
+                ->whereKeyNot($hub->id)
+                ->update(['is_default' => false]);
         }
 
         $hub->update($validated);

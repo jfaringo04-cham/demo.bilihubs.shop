@@ -52,6 +52,8 @@ class ShipmentCreationService
 
         $originHub = $route['origin'];
         $destinationHub = $route['destination'];
+        $originMatch = $route['origin_match'] ?? 'unresolved';
+        $destinationMatch = $route['destination_match'] ?? 'unresolved';
 
         $pickup = $pickupAddress
             ? collect([
@@ -97,7 +99,9 @@ class ShipmentCreationService
             'hub_id' => $originHub?->id,
             'origin_hub_id' => $originHub?->id,
             'destination_hub_id' => $destinationHub?->id,
-            'routing_status' => 'awaiting_pickup',
+            'routing_status' => $originHub && $destinationHub
+                ? 'awaiting_pickup'
+                : 'routing_unresolved',
             'tracking_number' => 'SPE-' . Str::upper(Str::random(10)),
             'tracking_code' => 'SPE-' . Str::upper(Str::random(12)),
             'status' => 'pending',
@@ -105,7 +109,9 @@ class ShipmentCreationService
             'delivery_address' => $delivery ?: 'Delivery address unavailable',
             'notes' => $originHub && $destinationHub
                 ? 'Route: ' . $originHub->name . ' -> ' . $destinationHub->name
-                : 'Awaiting logistics hub routing',
+                    . ' | Origin match: ' . $originMatch
+                    . ' | Destination match: ' . $destinationMatch
+                : 'Routing unresolved: no valid active hub/default hub found',
         ]);
 
         if (!$lockedSellerOrder->logistic_id && $originHub) {

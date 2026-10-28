@@ -27,6 +27,16 @@
                             @error('status') <div class="text-danger">{{ $message }}</div> @enderror
                         </div>
                         <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="is_default" id="is_default" value="1" {{ old('is_default') ? 'checked' : '' }}>
+                                <label class="form-check-label" for="is_default">
+                                    Use as default fallback hub
+                                </label>
+                                <div class="form-text">Used only when no exact barangay, city/municipality, or province hub matches. Only one default hub is kept per logistics company.</div>
+                            </div>
+                            @error('is_default') <div class="text-danger">{{ $message }}</div> @enderror
+                        </div>
+                        <div class="col-12">
                             <label for="address" class="form-label">Hub Address <span class="text-danger">*</span></label>
                             <textarea name="address" id="address" class="form-control" rows="2" required>{{ old('address') }}</textarea>
                             @error('address') <div class="text-danger">{{ $message }}</div> @enderror

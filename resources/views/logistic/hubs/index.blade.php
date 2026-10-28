@@ -29,7 +29,12 @@
       <tbody>
         @forelse($hubs as $hub)
           <tr>
-            <td class="fw-medium">{{ $hub->name }}</td>
+            <td class="fw-medium">
+              {{ $hub->name }}
+              @if($hub->is_default)
+                <span class="badge bg-primary ms-1">Default</span>
+              @endif
+            </td>
             <td class="text-muted">{{ $hub->address }}</td>
             <td class="text-muted">
               {{ $hub->barangay ?? 'Not set' }}

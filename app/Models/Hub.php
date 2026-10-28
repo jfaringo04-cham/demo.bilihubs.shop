@@ -21,11 +21,13 @@ class Hub extends Model
         'contact_person',
         'phone',
         'status',
+        'is_default',
     ];
 
     protected $casts = [
         'latitude' => 'decimal:7',
         'longitude' => 'decimal:7',
+        'is_default' => 'boolean',
     ];
 
     public function logistic(): BelongsTo
