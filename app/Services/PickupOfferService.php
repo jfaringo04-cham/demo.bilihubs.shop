@@ -129,10 +129,6 @@ class PickupOfferService
                 return $active;
             }
 
-            $previousRiderIds = PickupRequest::query()
-                ->where('shipment_id', $shipment->id)
-                ->pluck('rider_id');
-
             $pickupHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
 
             /*
@@ -146,11 +142,10 @@ class PickupOfferService
              * - are available
              * - still have delivery capacity
              *
-             * We intentionally do not require assigned_zone to exactly match
-             * the seller's barangay because one city/province-level hub may
-             * serve multiple barangays.
+             * Exact barangay assigned_zone matching is intentionally not
+             * required because one hub may serve multiple barangays.
              */
-            $rider = User::query()
+            $baseRiderQuery = User::query()
                 ->whereHas('roles', function ($query) {
                     $query->where('name', 'rider');
                 })
@@ -160,14 +155,35 @@ class PickupOfferService
                 ->where('hub_id', $pickupHubId)
                 ->where('availability_status', 'available')
                 ->where('max_capacity', '>', 0)
-                ->whereColumn('current_load', '<', 'max_capacity')
+                ->whereColumn('current_load', '<', 'max_capacity');
+
+            $previousRiderIds = PickupRequest::query()
+                ->where('shipment_id', $shipment->id)
+                ->pluck('rider_id');
+
+            /*
+             * First pass:
+             * offer only to riders that have not received this shipment yet.
+             */
+            $rider = (clone $baseRiderQuery)
                 ->whereNotIn('id', $previousRiderIds)
                 ->orderBy('current_load')
                 ->orderBy('id')
                 ->first();
 
+            /*
+             * If every currently eligible rider has already received the offer
+             * once, restart the rotation instead of permanently excluding them.
+             */
             if (!$rider) {
-                // No eligible rider: logistics must review dispatch.
+                $rider = (clone $baseRiderQuery)
+                    ->orderBy('current_load')
+                    ->orderBy('id')
+                    ->first();
+            }
+
+            if (!$rider) {
+                // No eligible rider currently available.
                 return null;
             }
 
