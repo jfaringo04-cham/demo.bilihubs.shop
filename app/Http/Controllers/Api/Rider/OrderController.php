@@ -34,14 +34,37 @@ class OrderController extends Controller
                 ], 403);
             }
 
+            /*
+            |--------------------------------------------------------------------------
+            | ASSIGNED SHIPMENTS
+            |--------------------------------------------------------------------------
+            |
+            | rider_id:
+            |   Final-mile delivery rider.
+            |
+            | pickup_rider_id:
+            |   Seller pickup rider.
+            |
+            | Do NOT use whereHas('sellerOrder.order') here.
+            | A shipment should still appear to the assigned rider even if some
+            | related order information is temporarily missing.
+            |
+            */
+
             $shipments = Shipment::query()
-                ->where('rider_id', $rider->id)
-                ->whereHas('sellerOrder.order')
+                ->where(function ($query) use ($rider) {
+                    $query
+                        ->where('rider_id', $rider->id)
+                        ->orWhere('pickup_rider_id', $rider->id);
+                })
                 ->with([
                     'sellerOrder.order.user',
                     'sellerOrder.seller',
+                    'logistic',
+                    'hub',
+                    'rider',
                 ])
-                ->latest()
+                ->latest('updated_at')
                 ->get();
 
             $data = $shipments
@@ -56,6 +79,9 @@ class OrderController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $data,
+                'meta' => [
+                    'total' => $data->count(),
+                ],
             ], 200);
         } catch (\Throwable $e) {
             report($e);
@@ -93,7 +119,10 @@ class OrderController extends Controller
                 ], 403);
             }
 
-            if ((int) $shipment->rider_id !== (int) $rider->id) {
+            if (!$this->isShipmentAssignedToRider(
+                shipment: $shipment,
+                riderId: (int) $rider->id,
+            )) {
                 return response()->json([
                     'success' => false,
                     'message' => 'This shipment is not assigned to you.',
@@ -103,14 +132,10 @@ class OrderController extends Controller
             $shipment->load([
                 'sellerOrder.order.user',
                 'sellerOrder.seller',
+                'logistic',
+                'hub',
+                'rider',
             ]);
-
-            if (!$shipment->sellerOrder?->order) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Order information for this shipment was not found.',
-                ], 404);
-            }
 
             return response()->json([
                 'success' => true,
@@ -130,8 +155,7 @@ class OrderController extends Controller
     }
 
     /**
-     * Upload proof of delivery for a shipment assigned
-     * to the authenticated rider.
+     * Upload proof of delivery.
      *
      * POST /api/rider/orders/{shipment}/proof
      */
@@ -141,12 +165,6 @@ class OrderController extends Controller
     ): JsonResponse {
         try {
             $rider = $request->user();
-
-            /*
-            |--------------------------------------------------------------------------
-            | AUTHENTICATION
-            |--------------------------------------------------------------------------
-            */
 
             if (!$rider) {
                 return response()->json([
@@ -164,31 +182,22 @@ class OrderController extends Controller
 
             /*
             |--------------------------------------------------------------------------
-            | SHIPMENT OWNERSHIP
+            | FINAL-MILE OWNERSHIP ONLY
             |--------------------------------------------------------------------------
+            |
+            | A seller pickup rider must not upload final proof of delivery.
+            |
             */
 
-            if ((int) $shipment->rider_id !== (int) $rider->id) {
+            if (!$this->isFinalMileRider(
+                shipment: $shipment,
+                riderId: (int) $rider->id,
+            )) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'This shipment is not assigned to you.',
+                    'message' => 'This shipment is not assigned to you for final delivery.',
                 ], 403);
             }
-
-            /*
-            |--------------------------------------------------------------------------
-            | VALIDATION
-            |--------------------------------------------------------------------------
-            |
-            | This follows the existing BiliHub web Rider proof contract.
-            |
-            | proof_of_delivery:
-            |   Actual image upload.
-            |
-            | delivery_signature:
-            |   String value used by the existing web implementation.
-            |
-            */
 
             $validated = $request->validate([
                 'proof_of_delivery' => [
@@ -217,16 +226,6 @@ class OrderController extends Controller
                 ],
             ]);
 
-            /*
-            |--------------------------------------------------------------------------
-            | UPLOAD PROOF
-            |--------------------------------------------------------------------------
-            |
-            | Keep the same storage disk and folder used by the
-            | existing BiliHub Rider web workflow.
-            |
-            */
-
             $proofPath = $request
                 ->file('proof_of_delivery')
                 ->store(
@@ -241,36 +240,41 @@ class OrderController extends Controller
                 ], 500);
             }
 
-            /*
-            |--------------------------------------------------------------------------
-            | SAVE SHIPMENT PROOF
-            |--------------------------------------------------------------------------
-            */
-
             $shipment->proof_of_delivery = $proofPath;
 
-            if (array_key_exists('delivery_signature', $validated)) {
+            if (array_key_exists(
+                'delivery_signature',
+                $validated
+            )) {
                 $shipment->delivery_signature =
                     $validated['delivery_signature'];
             }
 
-            if (array_key_exists('delivered_to', $validated)) {
+            if (array_key_exists(
+                'delivered_to',
+                $validated
+            )) {
                 $shipment->delivered_to =
                     $validated['delivered_to'];
             }
 
-            if (array_key_exists('delivery_notes', $validated)) {
+            if (array_key_exists(
+                'delivery_notes',
+                $validated
+            )) {
                 $shipment->notes =
                     $validated['delivery_notes'];
             }
 
             $shipment->save();
-
             $shipment->refresh();
 
             $shipment->load([
                 'sellerOrder.order.user',
                 'sellerOrder.seller',
+                'logistic',
+                'hub',
+                'rider',
             ]);
 
             return response()->json([
@@ -294,8 +298,7 @@ class OrderController extends Controller
     }
 
     /**
-     * Update the delivery status of a shipment assigned
-     * to the authenticated rider.
+     * Update delivery status.
      *
      * PUT /api/rider/orders/{shipment}/status
      */
@@ -320,10 +323,19 @@ class OrderController extends Controller
                 ], 403);
             }
 
-            if ((int) $shipment->rider_id !== (int) $rider->id) {
+            /*
+            |--------------------------------------------------------------------------
+            | FINAL-MILE OWNERSHIP ONLY
+            |--------------------------------------------------------------------------
+            */
+
+            if (!$this->isFinalMileRider(
+                shipment: $shipment,
+                riderId: (int) $rider->id,
+            )) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'This shipment is not assigned to you.',
+                    'message' => 'This shipment is not assigned to you for final delivery.',
                 ], 403);
             }
 
@@ -337,12 +349,6 @@ class OrderController extends Controller
 
             $newStatus = $validated['status'];
 
-            /*
-            |--------------------------------------------------------------------------
-            | ALREADY DELIVERED
-            |--------------------------------------------------------------------------
-            */
-
             if ($shipment->status === 'delivered') {
                 return response()->json([
                     'success' => false,
@@ -354,10 +360,6 @@ class OrderController extends Controller
             |--------------------------------------------------------------------------
             | DELIVERY PROOF REQUIRED
             |--------------------------------------------------------------------------
-            |
-            | Rider cannot mark the shipment Delivered without
-            | uploading proof of delivery first.
-            |
             */
 
             if (
@@ -375,12 +377,6 @@ class OrderController extends Controller
             DB::beginTransaction();
 
             try {
-                /*
-                |--------------------------------------------------------------------------
-                | UPDATE SHIPMENT
-                |--------------------------------------------------------------------------
-                */
-
                 $shipment->status = $newStatus;
 
                 if ($newStatus === 'delivered') {
@@ -395,69 +391,61 @@ class OrderController extends Controller
 
                 /*
                 |--------------------------------------------------------------------------
-                | SYNC SELLER ORDER / PARENT ORDER
+                | SYNC SELLER ORDER / BUYER ORDER
                 |--------------------------------------------------------------------------
-                |
-                | One buyer Order may contain multiple SellerOrders.
-                | Each SellerOrder can have its own Shipment.
-                |
-                | Delivering one shipment must NOT automatically
-                | mark the entire buyer Order as delivered.
-                |
                 */
 
                 if ($newStatus === 'delivered') {
-                    $sellerOrder = $shipment->sellerOrder;
+                    $sellerOrder =
+                        $shipment->sellerOrder;
 
                     if ($sellerOrder) {
-                        $sellerOrder->status = 'delivered';
+                        $sellerOrder->status =
+                            'delivered';
+
                         $sellerOrder->save();
 
-                        $order = $sellerOrder->order;
+                        $order =
+                            $sellerOrder->order;
 
                         if ($order) {
                             $order->load([
                                 'sellerOrders.shipment',
                             ]);
 
-                            $sellerOrders = $order->sellerOrders;
+                            $sellerOrders =
+                                $order->sellerOrders;
 
                             $allDelivered =
                                 $sellerOrders->isNotEmpty()
                                 && $sellerOrders->every(
                                     function ($item) {
-                                        return $item->shipment
-                                            && $item->shipment->status === 'delivered';
+                                        return
+                                            $item->shipment
+                                            && $item->shipment->status
+                                                === 'delivered';
                                     }
                                 );
 
-                            /*
-                            |--------------------------------------------------------------------------
-                            | ALL SELLER SHIPMENTS DELIVERED
-                            |--------------------------------------------------------------------------
-                            */
-
                             if ($allDelivered) {
-                                $order->status = 'delivered';
-                                $order->delivery_status = 'delivered';
-                                $order->delivered_at = now();
+                                $order->status =
+                                    'delivered';
+
+                                $order->delivery_status =
+                                    'delivered';
+
+                                $order->delivered_at =
+                                    now();
+
                                 $order->save();
                             } else {
-                                /*
-                                |--------------------------------------------------------------------------
-                                | PARTIAL DELIVERY
-                                |--------------------------------------------------------------------------
-                                |
-                                | At least one seller shipment has been delivered
-                                | but other seller shipments are still pending.
-                                |
-                                */
-
                                 $hasDelivered =
                                     $sellerOrders->contains(
                                         function ($item) {
-                                            return $item->shipment
-                                                && $item->shipment->status === 'delivered';
+                                            return
+                                                $item->shipment
+                                                && $item->shipment->status
+                                                    === 'delivered';
                                         }
                                     );
 
@@ -484,6 +472,9 @@ class OrderController extends Controller
             $shipment->load([
                 'sellerOrder.order.user',
                 'sellerOrder.seller',
+                'logistic',
+                'hub',
+                'rider',
             ]);
 
             return response()->json([
@@ -524,20 +515,87 @@ class OrderController extends Controller
     }
 
     /**
+     * Check whether the authenticated rider has any assignment
+     * on this shipment.
+     *
+     * Used by list/details.
+     */
+    private function isShipmentAssignedToRider(
+        Shipment $shipment,
+        int $riderId
+    ): bool {
+        return
+            (int) ($shipment->rider_id ?? 0) === $riderId
+            || (int) ($shipment->pickup_rider_id ?? 0) === $riderId;
+    }
+
+    /**
+     * Check whether the authenticated rider is the final-mile rider.
+     *
+     * Used by proof/status operations.
+     */
+    private function isFinalMileRider(
+        Shipment $shipment,
+        int $riderId
+    ): bool {
+        return
+            (int) ($shipment->rider_id ?? 0) === $riderId;
+    }
+
+    /**
+     * Determine how the rider is assigned to the shipment.
+     */
+    private function assignmentType(
+        Shipment $shipment,
+        int $riderId
+    ): string {
+        $isFinalMile =
+            (int) ($shipment->rider_id ?? 0)
+            === $riderId;
+
+        $isPickup =
+            (int) ($shipment->pickup_rider_id ?? 0)
+            === $riderId;
+
+        if ($isFinalMile && $isPickup) {
+            return 'pickup_and_delivery';
+        }
+
+        if ($isFinalMile) {
+            return 'final_mile';
+        }
+
+        if ($isPickup) {
+            return 'seller_pickup';
+        }
+
+        return 'unknown';
+    }
+
+    /**
      * Format shipment data for the Rider mobile application.
      *
      * IMPORTANT:
-     * "id" is the Shipment ID.
+     * id = Shipment ID.
      */
     private function formatShipment(
         Shipment $shipment,
         $rider
     ): array {
-        $sellerOrder = $shipment->sellerOrder;
+        $sellerOrder =
+            $shipment->sellerOrder;
 
-        $order = $sellerOrder?->order;
+        $order =
+            $sellerOrder?->order;
 
-        $customer = $order?->user;
+        $customer =
+            $order?->user;
+
+        $assignmentType =
+            $this->assignmentType(
+                shipment: $shipment,
+                riderId: (int) $rider->id,
+            );
 
         return [
             /*
@@ -546,15 +604,37 @@ class OrderController extends Controller
             |--------------------------------------------------------------------------
             */
 
-            'id' => $shipment->id,
+            'id' =>
+                $shipment->id,
 
-            'shipment_id' => $shipment->id,
+            'shipment_id' =>
+                $shipment->id,
 
             'seller_order_id' =>
                 $shipment->seller_order_id,
 
             'tracking_number' =>
                 $shipment->tracking_number ?? '',
+
+            /*
+            |--------------------------------------------------------------------------
+            | ASSIGNMENT
+            |--------------------------------------------------------------------------
+            */
+
+            'assignment_type' =>
+                $assignmentType,
+
+            'is_final_mile_rider' =>
+                (int) ($shipment->rider_id ?? 0)
+                === (int) $rider->id,
+
+            'is_pickup_rider' =>
+                (int) ($shipment->pickup_rider_id ?? 0)
+                === (int) $rider->id,
+
+            'pickup_rider_id' =>
+                $shipment->pickup_rider_id,
 
             /*
             |--------------------------------------------------------------------------
@@ -579,17 +659,22 @@ class OrderController extends Controller
             'delivery_address' =>
                 $shipment->delivery_address ?? '',
 
+            'pickup_address' =>
+                $shipment->pickup_address ?? '',
+
             'status' =>
                 $shipment->status ?? '',
 
             /*
             |--------------------------------------------------------------------------
-            | PROOF OF DELIVERY
+            | PROOF
             |--------------------------------------------------------------------------
             */
 
             'has_proof_of_delivery' =>
-                !empty($shipment->proof_of_delivery),
+                !empty(
+                    $shipment->proof_of_delivery
+                ),
 
             'proof_of_delivery' =>
                 $shipment->proof_of_delivery,
@@ -610,10 +695,16 @@ class OrderController extends Controller
             */
 
             'rider_id' =>
-                (string) $rider->id,
+                $shipment->rider_id,
 
             'rider_name' =>
-                $rider->name ?? 'Rider',
+                $shipment->rider?->name
+                ?? (
+                    (int) ($shipment->rider_id ?? 0)
+                    === (int) $rider->id
+                        ? ($rider->name ?? 'Rider')
+                        : ''
+                ),
 
             /*
             |--------------------------------------------------------------------------
@@ -629,6 +720,16 @@ class OrderController extends Controller
             'longitude' =>
                 $shipment->longitude !== null
                     ? (float) $shipment->longitude
+                    : null,
+
+            'rider_latitude' =>
+                $shipment->rider_latitude !== null
+                    ? (float) $shipment->rider_latitude
+                    : null,
+
+            'rider_longitude' =>
+                $shipment->rider_longitude !== null
+                    ? (float) $shipment->rider_longitude
                     : null,
 
             /*
@@ -649,6 +750,9 @@ class OrderController extends Controller
             'picked_up_at' =>
                 $shipment->picked_up_at?->toISOString(),
 
+            'hub_picked_up_at' =>
+                $shipment->hub_picked_up_at?->toISOString(),
+
             'delivered_at' =>
                 $shipment->delivered_at?->toISOString(),
 
@@ -656,10 +760,6 @@ class OrderController extends Controller
             |--------------------------------------------------------------------------
             | EARNINGS
             |--------------------------------------------------------------------------
-            |
-            | Rider earnings are not calculated here.
-            | They come from the dedicated earnings API.
-            |
             */
 
             'delivery_earnings' => null,
