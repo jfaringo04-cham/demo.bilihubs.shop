@@ -28,7 +28,9 @@ class PickupAcceptanceService
                 (int) $offer->shipment_id !== (int) $shipment->id ||
                 (int) $offer->rider_id !== (int) $rider->id
             ) {
-                throw new RuntimeException('This pickup offer does not belong to you.');
+                throw new RuntimeException(
+                    'This pickup offer does not belong to you.'
+                );
             }
 
             if (
@@ -36,7 +38,9 @@ class PickupAcceptanceService
                 !$offer->expires_at ||
                 $offer->expires_at->isPast()
             ) {
-                throw new RuntimeException('This pickup offer is no longer valid.');
+                throw new RuntimeException(
+                    'This pickup offer is no longer valid.'
+                );
             }
 
             if (
@@ -48,7 +52,9 @@ class PickupAcceptanceService
                 $shipment->received_by_sorting_center ||
                 $shipment->picked_up_at !== null
             ) {
-                throw new RuntimeException('Shipment is not available for seller pickup.');
+                throw new RuntimeException(
+                    'Shipment is not available for seller pickup.'
+                );
             }
 
             $lockedRider = User::query()
@@ -60,13 +66,25 @@ class PickupAcceptanceService
                 !$lockedRider->roles()->where('name', 'rider')->exists() ||
                 $lockedRider->status !== User::STATUS_ACTIVE ||
                 $lockedRider->logistic_status !== 'approved' ||
-                (int) $lockedRider->logistic_id !== (int) $shipment->logistic_id ||
+                (int) $lockedRider->logistic_id !==
+                (int) $shipment->logistic_id ||
                 $lockedRider->availability_status !== 'available'
             ) {
-                throw new RuntimeException('Rider is not eligible for this pickup.');
+                throw new RuntimeException(
+                    'Rider is not eligible for this pickup.'
+                );
             }
 
-            $pickupHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
+            /*
+             * Pickup dispatch is hub-based.
+             *
+             * The rider must belong to the shipment's origin hub.
+             * We intentionally do not require assigned_zone to exactly
+             * match the seller's barangay because one hub can serve
+             * multiple barangays through city/province fallback routing.
+             */
+            $pickupHubId =
+                $shipment->origin_hub_id ?: $shipment->hub_id;
 
             if (
                 !$pickupHubId ||
@@ -79,31 +97,29 @@ class PickupAcceptanceService
 
             $sellerOrder = $shipment->sellerOrder;
 
-            if (!$sellerOrder || $sellerOrder->status !== 'ready_for_pickup') {
-                throw new RuntimeException(
-                    'Seller order is no longer ready for pickup.'
-                );
-            }
-
-            $pickupZone = SellerPickupZoneService::resolve($sellerOrder);
-
             if (
-                !$pickupZone ||
-                SellerPickupZoneService::normalize($lockedRider->assigned_zone) !== $pickupZone
+                !$sellerOrder ||
+                $sellerOrder->status !== 'ready_for_pickup'
             ) {
                 throw new RuntimeException(
-                    'Rider is not assigned to the seller pickup zone.'
+                    'Seller order is no longer ready for pickup.'
                 );
             }
 
             $currentLoad = (int) $lockedRider->current_load;
             $capacity = (int) $lockedRider->max_capacity;
 
-            if ($capacity <= 0 || $currentLoad >= $capacity) {
-                throw new RuntimeException('Rider has reached maximum capacity.');
+            if (
+                $capacity <= 0 ||
+                $currentLoad >= $capacity
+            ) {
+                throw new RuntimeException(
+                    'Rider has reached maximum capacity.'
+                );
             }
 
-            // Pickup assignment only. Final-mile rider_id stays null.
+            // Pickup assignment only.
+            // Final-mile rider_id stays null.
             $shipment->update([
                 'pickup_rider_id' => $lockedRider->id,
                 'status' => 'assigned',
@@ -118,15 +134,18 @@ class PickupAcceptanceService
 
             $lockedRider->update([
                 'current_load' => $newLoad,
-                'availability_status' => $newLoad >= $capacity
+                'availability_status' =>
+                $newLoad >= $capacity
                     ? 'busy'
                     : 'available',
             ]);
         });
     }
 
-    public static function decline(PickupRequest $request, User $rider): void
-    {
+    public static function decline(
+        PickupRequest $request,
+        User $rider
+    ): void {
         DB::transaction(function () use ($request, $rider) {
             $shipment = Shipment::query()
                 ->whereKey($request->shipment_id)
@@ -138,8 +157,12 @@ class PickupAcceptanceService
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if ((int) $offer->rider_id !== (int) $rider->id) {
-                throw new RuntimeException('This pickup offer does not belong to you.');
+            if (
+                (int) $offer->rider_id !== (int) $rider->id
+            ) {
+                throw new RuntimeException(
+                    'This pickup offer does not belong to you.'
+                );
             }
 
             if (
