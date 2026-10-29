@@ -385,7 +385,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
 Route::middleware([
     'auth:sanctum',
-    'role:rider',
+    'rider',
 ])
     ->prefix('rider')
     ->name('rider.api.')
