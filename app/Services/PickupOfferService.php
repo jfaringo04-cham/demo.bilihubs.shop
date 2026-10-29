@@ -42,13 +42,12 @@ class PickupOfferService
         return $shipmentIds->count();
     }
 
-
     /**
      * Retry pickup-offer generation for ready-for-pickup shipments in a hub.
      *
      * This covers cases where no eligible rider existed when the seller first
-     * marked the order ready, but a rider later comes online or is assigned to
-     * the correct barangay hub.
+     * marked the order ready, but a rider later becomes available or is
+     * assigned to the correct origin hub.
      */
     public static function retryPendingForHub(int $logisticId, int $hubId): int
     {
@@ -82,7 +81,6 @@ class PickupOfferService
 
         return $offered;
     }
-
 
     public static function offerNext(Shipment $shipment): ?PickupRequest
     {
@@ -121,13 +119,6 @@ class PickupOfferService
                 return null;
             }
 
-            // Seller location, never buyer delivery zone.
-            $pickupZone = SellerPickupZoneService::resolve($sellerOrder);
-
-            if (!$pickupZone) {
-                return null;
-            }
-
             $active = PickupRequest::query()
                 ->where('shipment_id', $shipment->id)
                 ->where('status', 'offered')
@@ -142,6 +133,23 @@ class PickupOfferService
                 ->where('shipment_id', $shipment->id)
                 ->pluck('rider_id');
 
+            $pickupHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
+
+            /*
+             * Pickup dispatch is hub-based.
+             *
+             * A rider is eligible when they:
+             * - have the rider role
+             * - are active and logistics-approved
+             * - belong to the same logistics company
+             * - belong to the shipment's origin hub
+             * - are available
+             * - still have delivery capacity
+             *
+             * We intentionally do not require assigned_zone to exactly match
+             * the seller's barangay because one city/province-level hub may
+             * serve multiple barangays.
+             */
             $rider = User::query()
                 ->whereHas('roles', function ($query) {
                     $query->where('name', 'rider');
@@ -149,15 +157,11 @@ class PickupOfferService
                 ->where('status', User::STATUS_ACTIVE)
                 ->where('logistic_status', 'approved')
                 ->where('logistic_id', $shipment->logistic_id)
-                ->where('hub_id', $shipment->origin_hub_id ?: $shipment->hub_id)
+                ->where('hub_id', $pickupHubId)
                 ->where('availability_status', 'available')
                 ->where('max_capacity', '>', 0)
                 ->whereColumn('current_load', '<', 'max_capacity')
                 ->whereNotIn('id', $previousRiderIds)
-                ->whereRaw(
-                    'LOWER(TRIM(assigned_zone)) = ?',
-                    [$pickupZone]
-                )
                 ->orderBy('current_load')
                 ->orderBy('id')
                 ->first();
@@ -166,7 +170,6 @@ class PickupOfferService
                 // No eligible rider: logistics must review dispatch.
                 return null;
             }
-
 
             $offer = PickupRequest::create([
                 'shipment_id' => $shipment->id,
@@ -179,9 +182,8 @@ class PickupOfferService
             \App\Models\Notification::create([
                 'user_id' => $rider->id,
                 'title' => 'New Seller Pickup Request',
-                'message' => 'You have a new pickup request in '
-                    . $pickupZone
-                    . '. Please accept or decline within 10 minutes.',
+                'message' => 'You have a new seller pickup request assigned to your hub. '
+                    . 'Please accept or decline within 10 minutes.',
                 'type' => 'order',
                 'link' => route('rider.pickups'),
             ]);
