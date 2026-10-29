@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'auth_storage.dart';
@@ -103,15 +104,10 @@ class ApiService {
   }) async {
     try {
       final String normalizedFirstName = firstName.trim();
-
       final String normalizedLastName = lastName.trim();
-
       final String normalizedEmail = email.trim().toLowerCase();
-
       final String normalizedPhone = phone.trim();
-
       final String normalizedBirthday = birthday.trim();
-
       final String normalizedAddress = address.trim();
 
       final String fullName = [
@@ -241,7 +237,6 @@ class ApiService {
   }) async {
     try {
       final String firstName = contactFirstName.trim();
-
       final String lastName = contactLastName.trim();
 
       final List<String> normalizedAreas = serviceAreas
@@ -826,7 +821,14 @@ class ApiService {
     try {
       final String? token = await AuthStorage.getToken();
 
+      // TEMPORARY DEBUG ONLY - remove after testing.
+      debugPrint('RIDER TOKEN: $token');
+
       if (token == null || token.trim().isEmpty) {
+        debugPrint('=== RIDER DELIVERIES API ===');
+        debugPrint('ERROR: Authentication token not found.');
+        debugPrint('============================');
+
         return {
           'success': false,
           'status_code': 401,
@@ -834,10 +836,28 @@ class ApiService {
         };
       }
 
+      final Uri uri = Uri.parse('$baseUrl/rider/orders');
+
+      debugPrint('');
+      debugPrint('==========================================');
+      debugPrint('=== RIDER DELIVERIES API REQUEST ===');
+      debugPrint('METHOD: GET');
+      debugPrint('URL: $uri');
+      debugPrint('TOKEN EXISTS: true');
+      debugPrint('==========================================');
+
       final http.Response response = await http.get(
-        Uri.parse('$baseUrl/rider/orders'),
+        uri,
         headers: _authHeaders(token),
       );
+
+      debugPrint('');
+      debugPrint('==========================================');
+      debugPrint('=== RIDER DELIVERIES API RESPONSE ===');
+      debugPrint('STATUS: ${response.statusCode}');
+      debugPrint('BODY: ${response.body}');
+      debugPrint('==========================================');
+      debugPrint('');
 
       final dynamic decoded = _decodeResponse(response.body);
 
@@ -849,6 +869,8 @@ class ApiService {
 
         final Map<String, dynamic> meta = _extractMeta(decoded);
 
+        debugPrint('RIDER DELIVERIES COUNT: ${deliveries.length}');
+
         return {
           'success': true,
           'status_code': 200,
@@ -858,23 +880,29 @@ class ApiService {
         };
       }
 
-      return _authApiError(
+      final Map<String, dynamic> error = _authApiError(
         response.statusCode,
         decoded,
-        forbiddenMessage:
-            'This account cannot access '
-            'rider deliveries.',
-        notFoundMessage:
-            'Rider deliveries API '
-            'is not available yet.',
+        forbiddenMessage: 'This account cannot access rider deliveries.',
+        notFoundMessage: 'Rider deliveries API is not available yet.',
         fallback: 'Unable to load rider deliveries.',
       );
-    } catch (e) {
+
+      debugPrint('RIDER DELIVERIES ERROR MESSAGE: ${error['message']}');
+
+      return error;
+    } catch (e, stackTrace) {
+      debugPrint('');
+      debugPrint('==========================================');
+      debugPrint('=== RIDER DELIVERIES EXCEPTION ===');
+      debugPrint('ERROR: $e');
+      debugPrint('STACK TRACE: $stackTrace');
+      debugPrint('==========================================');
+      debugPrint('');
+
       return {
         'success': false,
-        'message':
-            'Unable to load '
-            'rider deliveries: $e',
+        'message': 'Unable to load rider deliveries: $e',
       };
     }
   }
@@ -1278,7 +1306,7 @@ class ApiService {
             'Unable to upload '
             'proof of delivery.',
       );
-    } catch (e) {
+    } catch (_) {
       return {
         'success': false,
         'message':
@@ -1720,6 +1748,7 @@ class ApiService {
         }
 
         requestBody['delivery_zone'] = normalizedZone;
+
         requestBody['delivery_type'] = normalizedType;
       }
 
@@ -1745,6 +1774,7 @@ class ApiService {
         }
 
         requestBody['sorting_area'] = normalizedArea;
+
         requestBody['rack_number'] = normalizedRack;
       }
 
