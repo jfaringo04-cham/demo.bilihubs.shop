@@ -41,18 +41,22 @@ class _BuyerProfileState extends State<BuyerProfile> {
     _loadInitialUser();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
       _refreshProfile();
     });
   }
 
   // ============================================================
-  // INITIAL LOCAL USER
+  // INITIAL USER
   // ============================================================
 
   void _loadInitialUser() {
-    buyerName = widget.user['name']?.toString().trim().isNotEmpty == true
-        ? widget.user['name'].toString().trim()
-        : 'Buyer';
+    final String initialName = widget.user['name']?.toString().trim() ?? '';
+
+    buyerName = initialName.isNotEmpty ? initialName : 'Buyer';
 
     buyerEmail = widget.user['email']?.toString().trim() ?? '';
 
@@ -69,11 +73,11 @@ class _BuyerProfileState extends State<BuyerProfile> {
   }
 
   // ============================================================
-  // REFRESH PROFILE FROM SERVER
+  // REFRESH PROFILE
   // ============================================================
 
   Future<void> _refreshProfile() async {
-    if (isLoadingProfile) {
+    if (!mounted || isLoadingProfile) {
       return;
     }
 
@@ -96,18 +100,22 @@ class _BuyerProfileState extends State<BuyerProfile> {
         return;
       }
 
-      final List<Future<http.Response>> requests = [
-        http.get(
-          Uri.parse('$_baseUrl/auth/user'),
-          headers: _authHeaders(token),
-        ),
-        http.get(
-          Uri.parse('$_baseUrl/addresses'),
-          headers: _authHeaders(token),
-        ),
-      ];
+      final List<http.Response> responses = await Future.wait<http.Response>(
+        <Future<http.Response>>[
+          http.get(
+            Uri.parse('$_baseUrl/auth/user'),
+            headers: _authHeaders(token),
+          ),
+          http.get(
+            Uri.parse('$_baseUrl/addresses'),
+            headers: _authHeaders(token),
+          ),
+        ],
+      );
 
-      final List<http.Response> responses = await Future.wait(requests);
+      if (!mounted) {
+        return;
+      }
 
       final http.Response userResponse = responses[0];
 
@@ -135,7 +143,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
         if (decoded is Map<String, dynamic> && decoded['data'] is List) {
           loadedAddresses = List<dynamic>.from(decoded['data'])
               .whereType<Map>()
-              .map((Map address) => Map<String, dynamic>.from(address))
+              .map((Map item) => Map<String, dynamic>.from(item))
               .toList();
         }
       }
@@ -163,7 +171,8 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
       setState(() {
         if (serverUser != null) {
-          final String serverName = serverUser['name']?.toString().trim() ?? '';
+          final String serverName =
+              serverUser['name']?.toString().trim() ?? '';
 
           final String serverEmail =
               serverUser['email']?.toString().trim() ?? '';
@@ -198,7 +207,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
         isLoadingProfile = false;
       });
-    } catch (_) {
+    } catch (error) {
+      debugPrint('Buyer profile refresh error: $error');
+
       if (!mounted) {
         return;
       }
@@ -229,120 +240,14 @@ class _BuyerProfileState extends State<BuyerProfile> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ==========================================================
-                // HEADER
-                // ==========================================================
-
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('My Profile', style: BuyerStyle.title),
-                    Row(
-                      children: [
-                        if (isLoadingProfile)
-                          const Padding(
-                            padding: EdgeInsets.only(right: 10),
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: BuyerColors.primary,
-                              ),
-                            ),
-                          ),
-                        Container(
-                          height: 42,
-                          width: 42,
-                          decoration: BoxDecoration(
-                            color: BuyerColors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: BuyerColors.border),
-                          ),
-                          child: IconButton(
-                            padding: EdgeInsets.zero,
-                            onPressed: _showSettingsMessage,
-                            icon: const Icon(
-                              Icons.settings_outlined,
-                              size: 21,
-                              color: BuyerColors.textDark,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                _buildHeader(),
 
                 const SizedBox(height: 20),
 
-                // ==========================================================
-                // PROFILE CARD
-                // ==========================================================
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(20),
-                  decoration: BuyerStyle.card,
-                  child: Column(
-                    children: [
-                      Container(
-                        height: 90,
-                        width: 90,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: BuyerColors.lightPurple,
-                          border: Border.all(
-                            color: BuyerColors.softPurple,
-                            width: 2,
-                          ),
-                        ),
-                        child: const Icon(
-                          Icons.person_outline,
-                          size: 50,
-                          color: BuyerColors.primary,
-                        ),
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      Text(
-                        buyerName,
-                        style: BuyerStyle.title,
-                        textAlign: TextAlign.center,
-                      ),
-
-                      const SizedBox(height: 5),
-
-                      Text(
-                        buyerEmail,
-                        style: BuyerStyle.small,
-                        textAlign: TextAlign.center,
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      SizedBox(
-                        height: 44,
-                        child: OutlinedButton.icon(
-                          onPressed: isLoadingProfile ? null : _showEditProfile,
-                          icon: const Icon(Icons.edit_outlined, size: 17),
-                          label: const Text('Edit Profile'),
-                          style: BuyerStyle.outlinedButton.copyWith(
-                            minimumSize: const WidgetStatePropertyAll(
-                              Size(145, 44),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                _buildProfileCard(),
 
                 const SizedBox(height: 25),
 
-                // ==========================================================
-                // PERSONAL INFORMATION
-                // ==========================================================
                 const Text(
                   'Personal Information',
                   style: BuyerStyle.sectionTitle,
@@ -350,42 +255,10 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
                 const SizedBox(height: 12),
 
-                Container(
-                  decoration: BuyerStyle.card,
-                  child: Column(
-                    children: [
-                      _profileInfo(
-                        Icons.person_outline,
-                        'Full Name',
-                        buyerName,
-                      ),
-
-                      _divider(),
-
-                      _profileInfo(
-                        Icons.email_outlined,
-                        'Email Address',
-                        buyerEmail.isEmpty ? 'No email address' : buyerEmail,
-                      ),
-
-                      _divider(),
-
-                      _profileInfo(
-                        Icons.phone_outlined,
-                        'Phone Number',
-                        buyerPhone.isEmpty
-                            ? 'No phone number added'
-                            : buyerPhone,
-                      ),
-                    ],
-                  ),
-                ),
+                _buildPersonalInformation(),
 
                 const SizedBox(height: 25),
 
-                // ==========================================================
-                // DELIVERY INFORMATION
-                // ==========================================================
                 const Text(
                   'Delivery Information',
                   style: BuyerStyle.sectionTitle,
@@ -404,166 +277,31 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
                 const SizedBox(height: 25),
 
-                // ==========================================================
-                // MY ACCOUNT
-                // ==========================================================
                 const Text('My Account', style: BuyerStyle.sectionTitle),
 
                 const SizedBox(height: 12),
 
-                Container(
-                  decoration: BuyerStyle.card,
-                  child: Column(
-                    children: [
-                      _profileItem(
-                        Icons.receipt_long_outlined,
-                        'My Orders',
-                        'View your order history',
-                        () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute<void>(
-                              builder: (BuildContext context) {
-                                return const OrderHistory();
-                              },
-                            ),
-                          );
-                        },
-                      ),
-
-                      _divider(),
-
-                      _profileItem(
-                        Icons.location_on_outlined,
-                        'Delivery Address',
-                        'Manage your saved addresses',
-                        _showAddressManager,
-                      ),
-
-                      _divider(),
-
-                      _profileItem(
-                        Icons.payment_outlined,
-                        'Payment Methods',
-                        'Manage your payment options',
-                        () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute<void>(
-                              builder: (BuildContext context) {
-                                return const PaymentMethodsPage();
-                              },
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
+                _buildAccountSection(),
 
                 const SizedBox(height: 25),
 
-                // ==========================================================
-                // PREFERENCES
-                // ==========================================================
                 const Text('Preferences', style: BuyerStyle.sectionTitle),
 
                 const SizedBox(height: 12),
 
-                Container(
-                  decoration: BuyerStyle.card,
-                  child: Column(
-                    children: [
-                      _profileItem(
-                        Icons.notifications_none,
-                        'Notifications',
-                        'Manage your notifications',
-                        () {
-                          _showComingSoon('Notifications');
-                        },
-                      ),
-
-                      _divider(),
-
-                      _profileItem(
-                        Icons.settings_outlined,
-                        'Settings',
-                        'Manage your account settings',
-                        _showSettingsMessage,
-                      ),
-                    ],
-                  ),
-                ),
+                _buildPreferencesSection(),
 
                 const SizedBox(height: 25),
 
-                // ==========================================================
-                // SUPPORT
-                // ==========================================================
                 const Text('Support', style: BuyerStyle.sectionTitle),
 
                 const SizedBox(height: 12),
 
-                Container(
-                  decoration: BuyerStyle.card,
-                  child: Column(
-                    children: [
-                      _profileItem(
-                        Icons.help_outline,
-                        'Help Center',
-                        'Get help with BiliHub',
-                        () {
-                          _showComingSoon('Help Center');
-                        },
-                      ),
-
-                      _divider(),
-
-                      _profileItem(
-                        Icons.info_outline,
-                        'About BiliHub',
-                        'Learn more about BiliHub',
-                        () {
-                          _showComingSoon('About BiliHub');
-                        },
-                      ),
-                    ],
-                  ),
-                ),
+                _buildSupportSection(),
 
                 const SizedBox(height: 25),
 
-                // ==========================================================
-                // LOGOUT
-                // ==========================================================
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: OutlinedButton.icon(
-                    onPressed: isLoggingOut ? null : _showLogoutDialog,
-                    icon: isLoggingOut
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: BuyerColors.danger,
-                            ),
-                          )
-                        : const Icon(Icons.logout, size: 19),
-                    label: Text(
-                      isLoggingOut ? 'Logging out...' : 'Logout',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: BuyerColors.danger,
-                      side: const BorderSide(color: BuyerColors.danger),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                  ),
-                ),
+                _buildLogoutButton(),
 
                 const SizedBox(height: 20),
 
@@ -581,11 +319,247 @@ class _BuyerProfileState extends State<BuyerProfile> {
     );
   }
 
-  // ================================================================
-  // EDIT PROFILE
-  // ================================================================
+  // ============================================================
+  // HEADER
+  // ============================================================
 
-  void _showEditProfile() {
+  Widget _buildHeader() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        const Text('My Profile', style: BuyerStyle.title),
+        Row(
+          children: [
+            if (isLoadingProfile)
+              const Padding(
+                padding: EdgeInsets.only(right: 10),
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: BuyerColors.primary,
+                  ),
+                ),
+              ),
+            Container(
+              height: 42,
+              width: 42,
+              decoration: BoxDecoration(
+                color: BuyerColors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: BuyerColors.border),
+              ),
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                onPressed: _showSettingsMessage,
+                icon: const Icon(
+                  Icons.settings_outlined,
+                  size: 21,
+                  color: BuyerColors.textDark,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // ============================================================
+  // PROFILE CARD
+  // ============================================================
+
+  Widget _buildProfileCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BuyerStyle.card,
+      child: Column(
+        children: [
+          Container(
+            height: 90,
+            width: 90,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: BuyerColors.lightPurple,
+              border: Border.all(color: BuyerColors.softPurple, width: 2),
+            ),
+            child: const Icon(
+              Icons.person_outline,
+              size: 50,
+              color: BuyerColors.primary,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(buyerName, style: BuyerStyle.title, textAlign: TextAlign.center),
+          const SizedBox(height: 5),
+          Text(
+            buyerEmail,
+            style: BuyerStyle.small,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 44,
+            child: OutlinedButton.icon(
+              onPressed: isLoadingProfile ? null : _showEditProfile,
+              icon: const Icon(Icons.edit_outlined, size: 17),
+              label: const Text('Edit Profile'),
+              style: BuyerStyle.outlinedButton.copyWith(
+                minimumSize: const WidgetStatePropertyAll<Size>(Size(145, 44)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // PERSONAL INFORMATION
+  // ============================================================
+
+  Widget _buildPersonalInformation() {
+    return Container(
+      decoration: BuyerStyle.card,
+      child: Column(
+        children: [
+          _profileInfo(Icons.person_outline, 'Full Name', buyerName),
+          _divider(),
+          _profileInfo(
+            Icons.email_outlined,
+            'Email Address',
+            buyerEmail.isEmpty ? 'No email address' : buyerEmail,
+          ),
+          _divider(),
+          _profileInfo(
+            Icons.phone_outlined,
+            'Phone Number',
+            buyerPhone.isEmpty ? 'No phone number added' : buyerPhone,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // ACCOUNT
+  // ============================================================
+
+  Widget _buildAccountSection() {
+    return Container(
+      decoration: BuyerStyle.card,
+      child: Column(
+        children: [
+          _profileItem(
+            Icons.receipt_long_outlined,
+            'My Orders',
+            'View your order history',
+            () {
+              Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) {
+                    return const OrderHistory();
+                  },
+                ),
+              );
+            },
+          ),
+          _divider(),
+          _profileItem(
+            Icons.location_on_outlined,
+            'Delivery Address',
+            'Manage your saved addresses',
+            _showAddressManager,
+          ),
+          _divider(),
+          _profileItem(
+            Icons.payment_outlined,
+            'Payment Methods',
+            'Manage your payment options',
+            () {
+              Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) {
+                    return const PaymentMethodsPage();
+                  },
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // PREFERENCES
+  // ============================================================
+
+  Widget _buildPreferencesSection() {
+    return Container(
+      decoration: BuyerStyle.card,
+      child: Column(
+        children: [
+          _profileItem(
+            Icons.notifications_none,
+            'Notifications',
+            'Manage your notifications',
+            () {
+              _showComingSoon('Notifications');
+            },
+          ),
+          _divider(),
+          _profileItem(
+            Icons.settings_outlined,
+            'Settings',
+            'Manage your account settings',
+            _showSettingsMessage,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // SUPPORT
+  // ============================================================
+
+  Widget _buildSupportSection() {
+    return Container(
+      decoration: BuyerStyle.card,
+      child: Column(
+        children: [
+          _profileItem(
+            Icons.help_outline,
+            'Help Center',
+            'Get help with BiliHub',
+            () {
+              _showComingSoon('Help Center');
+            },
+          ),
+          _divider(),
+          _profileItem(
+            Icons.info_outline,
+            'About BiliHub',
+            'Learn more about BiliHub',
+            () {
+              _showComingSoon('About BiliHub');
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // EDIT PROFILE
+  // ============================================================
+
+  Future<void> _showEditProfile() async {
     final TextEditingController nameController = TextEditingController(
       text: buyerName,
     );
@@ -600,7 +574,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
     bool isSaving = false;
 
-    showModalBottomSheet<void>(
+    final bool? updated = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -608,22 +582,16 @@ class _BuyerProfileState extends State<BuyerProfile> {
         return StatefulBuilder(
           builder: (BuildContext modalContext, StateSetter setModalState) {
             Future<void> saveChanges() async {
+              if (isSaving) {
+                return;
+              }
+
               final String name = nameController.text.trim();
 
               final String phone = phoneController.text.trim();
 
               if (name.isEmpty) {
                 _showModalMessage(modalContext, 'Please enter your full name.');
-
-                return;
-              }
-
-              if (phone.isEmpty) {
-                _showModalMessage(
-                  modalContext,
-                  'Please enter your phone number.',
-                );
-
                 return;
               }
 
@@ -632,7 +600,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   modalContext,
                   'Please enter a valid 11-digit Philippine mobile number.',
                 );
-
                 return;
               }
 
@@ -643,17 +610,19 @@ class _BuyerProfileState extends State<BuyerProfile> {
               try {
                 final String? token = await AuthStorage.getToken();
 
-                if (token == null || token.trim().isEmpty) {
-                  if (modalContext.mounted) {
-                    setModalState(() {
-                      isSaving = false;
-                    });
+                if (!modalContext.mounted) {
+                  return;
+                }
 
-                    _showModalMessage(
-                      modalContext,
-                      'Your session has expired. Please login again.',
-                    );
-                  }
+                if (token == null || token.trim().isEmpty) {
+                  setModalState(() {
+                    isSaving = false;
+                  });
+
+                  _showModalMessage(
+                    modalContext,
+                    'Your session has expired. Please login again.',
+                  );
 
                   return;
                 }
@@ -661,25 +630,30 @@ class _BuyerProfileState extends State<BuyerProfile> {
                 final http.Response response = await http.put(
                   Uri.parse('$_baseUrl/auth/profile'),
                   headers: _authHeaders(token, json: true),
-                  body: jsonEncode({'name': name, 'mobile_number': phone}),
+                  body: jsonEncode(<String, dynamic>{
+                    'name': name,
+                    'mobile_number': phone,
+                  }),
                 );
+
+                if (!modalContext.mounted) {
+                  return;
+                }
 
                 final dynamic decoded = _decodeResponse(response.body);
 
                 if (response.statusCode != 200) {
-                  if (modalContext.mounted) {
-                    setModalState(() {
-                      isSaving = false;
-                    });
+                  setModalState(() {
+                    isSaving = false;
+                  });
 
-                    _showModalMessage(
-                      modalContext,
-                      _extractErrorMessage(
-                        decoded,
-                        fallback: 'Unable to update your profile.',
-                      ),
-                    );
-                  }
+                  _showModalMessage(
+                    modalContext,
+                    _extractErrorMessage(
+                      decoded,
+                      fallback: 'Unable to update your profile.',
+                    ),
+                  );
 
                   return;
                 }
@@ -693,56 +667,21 @@ class _BuyerProfileState extends State<BuyerProfile> {
                 if (updatedUser.isNotEmpty) {
                   await AuthStorage.updateUser(updatedUser);
                 } else {
-                  await AuthStorage.updateUser({
+                  await AuthStorage.updateUser(<String, dynamic>{
                     'name': name,
                     'mobile_number': phone,
                     'phone': phone,
                   });
                 }
 
-                if (!mounted) {
+                if (!modalContext.mounted) {
                   return;
                 }
 
-                setState(() {
-                  buyerName =
-                      updatedUser['name']?.toString().trim().isNotEmpty == true
-                      ? updatedUser['name'].toString().trim()
-                      : name;
+                Navigator.of(modalContext).pop(true);
+              } catch (error) {
+                debugPrint('Update buyer profile error: $error');
 
-                  buyerPhone =
-                      updatedUser['mobile_number']
-                              ?.toString()
-                              .trim()
-                              .isNotEmpty ==
-                          true
-                      ? updatedUser['mobile_number'].toString().trim()
-                      : phone;
-
-                  final String serverEmail =
-                      updatedUser['email']?.toString().trim() ?? '';
-
-                  if (serverEmail.isNotEmpty) {
-                    buyerEmail = serverEmail;
-                  }
-                });
-
-                if (modalContext.mounted) {
-                  Navigator.pop(modalContext);
-                }
-
-                if (!mounted) {
-                  return;
-                }
-
-                _showSuccessMessage(
-                  decoded is Map<String, dynamic>
-                      ? decoded['message']?.toString().trim().isNotEmpty == true
-                            ? decoded['message'].toString().trim()
-                            : 'Profile updated successfully.'
-                      : 'Profile updated successfully.',
-                );
-              } catch (_) {
                 if (!modalContext.mounted) {
                   return;
                 }
@@ -763,7 +702,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                 bottom: MediaQuery.of(modalContext).viewInsets.bottom,
               ),
               child: Container(
-                constraints: const BoxConstraints(maxHeight: 620),
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(modalContext).size.height * 0.85,
+                ),
                 decoration: const BoxDecoration(
                   color: BuyerColors.background,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -773,29 +714,30 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Center(
-                        child: Container(
-                          height: 4,
-                          width: 45,
-                          decoration: BoxDecoration(
-                            color: BuyerColors.border,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                      ),
+                      _sheetHandle(),
 
                       const SizedBox(height: 20),
 
-                      const Text('Edit Profile', style: BuyerStyle.title),
-
-                      const SizedBox(height: 5),
-
-                      const Text(
-                        'Update your personal information.',
-                        style: BuyerStyle.subtitle,
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Edit Profile',
+                              style: BuyerStyle.title,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: isSaving
+                                ? null
+                                : () {
+                                    Navigator.of(modalContext).pop(false);
+                                  },
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
                       ),
 
-                      const SizedBox(height: 22),
+                      const SizedBox(height: 20),
 
                       const Text('Full Name', style: BuyerStyle.label),
 
@@ -820,7 +762,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
                       TextField(
                         controller: emailController,
                         enabled: false,
-                        keyboardType: TextInputType.emailAddress,
                         decoration:
                             BuyerStyle.inputDecoration(
                               hint: 'Email address',
@@ -870,28 +811,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
                                 ),
                         ),
                       ),
-
-                      const SizedBox(height: 10),
-
-                      SizedBox(
-                        width: double.infinity,
-                        height: 52,
-                        child: OutlinedButton(
-                          onPressed: isSaving
-                              ? null
-                              : () {
-                                  Navigator.pop(modalContext);
-                                },
-                          style: BuyerStyle.outlinedButton,
-                          child: const Text(
-                            'Cancel',
-                            style: TextStyle(
-                              color: BuyerColors.primary,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -900,16 +819,30 @@ class _BuyerProfileState extends State<BuyerProfile> {
           },
         );
       },
-    ).whenComplete(() {
-      nameController.dispose();
-      emailController.dispose();
-      phoneController.dispose();
-    });
+    );
+
+    await WidgetsBinding.instance.endOfFrame;
+
+    nameController.dispose();
+    emailController.dispose();
+    phoneController.dispose();
+
+    if (!mounted || updated != true) {
+      return;
+    }
+
+    await _refreshProfile();
+
+    if (!mounted) {
+      return;
+    }
+
+    _showSuccessMessage('Profile updated successfully.');
   }
 
-  // ================================================================
+  // ============================================================
   // ADDRESS MANAGER
-  // ================================================================
+  // ============================================================
 
   Future<void> _showAddressManager() async {
     await _refreshProfile();
@@ -918,258 +851,318 @@ class _BuyerProfileState extends State<BuyerProfile> {
       return;
     }
 
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (BuildContext modalContext) {
-        return StatefulBuilder(
-          builder: (BuildContext modalContext, StateSetter setModalState) {
-            Future<void> refreshAddresses() async {
-              await _refreshProfile();
+    bool keepManagerOpen = true;
 
-              if (modalContext.mounted) {
-                setModalState(() {});
-              }
+    while (mounted && keepManagerOpen) {
+      final _AddressAction? action = await showModalBottomSheet<_AddressAction>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (BuildContext sheetContext) {
+          return _buildAddressManagerSheet(sheetContext);
+        },
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      if (action == null || action.type == _AddressActionType.close) {
+        keepManagerOpen = false;
+        break;
+      }
+
+      await WidgetsBinding.instance.endOfFrame;
+
+      if (!mounted) {
+        return;
+      }
+
+      switch (action.type) {
+        case _AddressActionType.add:
+          {
+            final bool saved = await _showAddressForm();
+
+            if (!mounted) {
+              return;
             }
 
-            return Container(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(modalContext).size.height * 0.82,
-              ),
-              decoration: const BoxDecoration(
-                color: BuyerColors.background,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-              ),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  children: [
-                    const SizedBox(height: 12),
+            if (saved) {
+              await _refreshProfile();
 
-                    Container(
-                      height: 4,
-                      width: 45,
-                      decoration: BoxDecoration(
-                        color: BuyerColors.border,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
+              if (!mounted) {
+                return;
+              }
 
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-                      child: Row(
-                        children: [
-                          const Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Delivery Addresses',
-                                  style: BuyerStyle.title,
-                                ),
-                                SizedBox(height: 4),
-                                Text(
-                                  'Choose or manage the address used for checkout.',
-                                  style: BuyerStyle.subtitle,
-                                ),
-                              ],
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () {
-                              Navigator.pop(modalContext);
-                            },
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                        ],
-                      ),
-                    ),
+              _showSuccessMessage('Address saved successfully.');
+            }
 
-                    Expanded(
-                      child: buyerAddresses.isEmpty
-                          ? _buildNoAddressState(modalContext, refreshAddresses)
-                          : ListView.separated(
-                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 15),
-                              itemCount: buyerAddresses.length,
-                              separatorBuilder:
-                                  (BuildContext context, int index) {
-                                    return const SizedBox(height: 10);
-                                  },
-                              itemBuilder: (BuildContext context, int index) {
-                                final Map<String, dynamic> address =
-                                    buyerAddresses[index];
+            break;
+          }
 
-                                final bool isDefault = _isTrue(
-                                  address['is_default'],
-                                );
+        case _AddressActionType.edit:
+          {
+            final Map<String, dynamic>? address = action.address;
 
-                                return Container(
-                                  padding: const EdgeInsets.all(14),
-                                  decoration: BuyerStyle.card,
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          const Icon(
-                                            Icons.location_on_outlined,
-                                            color: BuyerColors.primary,
-                                          ),
-                                          const SizedBox(width: 9),
-                                          Expanded(
-                                            child: Text(
-                                              address['label']
-                                                          ?.toString()
-                                                          .trim()
-                                                          .isNotEmpty ==
-                                                      true
-                                                  ? address['label']
-                                                        .toString()
-                                                        .trim()
-                                                  : 'Delivery Address',
-                                              style: BuyerStyle.cardTitle,
-                                            ),
-                                          ),
-                                          if (isDefault)
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 9,
-                                                    vertical: 4,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: BuyerColors.lightPurple,
-                                                borderRadius:
-                                                    BorderRadius.circular(20),
-                                              ),
-                                              child: const Text(
-                                                'Default',
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: BuyerColors.primary,
-                                                  fontWeight: FontWeight.w700,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
+            if (address == null) {
+              break;
+            }
 
-                                      const SizedBox(height: 10),
+            final bool saved = await _showAddressForm(address: address);
 
-                                      Text(
-                                        address['full_address']
-                                                    ?.toString()
-                                                    .trim()
-                                                    .isNotEmpty ==
-                                                true
-                                            ? address['full_address']
-                                                  .toString()
-                                                  .trim()
-                                            : _buildFullAddress(address),
-                                        style: BuyerStyle.small,
-                                      ),
+            if (!mounted) {
+              return;
+            }
 
-                                      finalPhoneWidget(address),
+            if (saved) {
+              await _refreshProfile();
 
-                                      const SizedBox(height: 12),
+              if (!mounted) {
+                return;
+              }
 
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: OutlinedButton.icon(
-                                              onPressed: () async {
-                                                await _showAddressForm(
-                                                  address: address,
-                                                );
+              _showSuccessMessage('Address updated successfully.');
+            }
 
-                                                await refreshAddresses();
-                                              },
-                                              icon: const Icon(
-                                                Icons.edit_outlined,
-                                                size: 17,
-                                              ),
-                                              label: const Text('Edit'),
-                                            ),
-                                          ),
+            break;
+          }
 
-                                          if (!isDefault) ...[
-                                            const SizedBox(width: 8),
-                                            Expanded(
-                                              child: ElevatedButton(
-                                                onPressed: () async {
-                                                  final bool success =
-                                                      await _setDefaultAddress(
-                                                        address,
-                                                      );
+        case _AddressActionType.setDefault:
+          {
+            final Map<String, dynamic>? address = action.address;
 
-                                                  if (success) {
-                                                    await refreshAddresses();
-                                                  }
-                                                },
-                                                style: BuyerStyle.primaryButton,
-                                                child: const Text(
-                                                  'Set Default',
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                    ),
+            if (address == null) {
+              break;
+            }
 
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 52,
-                        child: ElevatedButton.icon(
-                          onPressed: () async {
-                            await _showAddressForm();
+            final bool success = await _setDefaultAddress(address);
 
-                            await refreshAddresses();
-                          },
-                          style: BuyerStyle.primaryButton,
-                          icon: const Icon(Icons.add_location_alt_outlined),
-                          label: const Text('Add New Address'),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
+            if (!mounted) {
+              return;
+            }
+
+            if (success) {
+              await _refreshProfile();
+            }
+
+            break;
+          }
+
+        case _AddressActionType.close:
+          keepManagerOpen = false;
+          break;
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      await WidgetsBinding.instance.endOfFrame;
+    }
+
+    if (!mounted) {
+      return;
+    }
 
     await _refreshProfile();
   }
 
-  Widget finalPhoneWidget(Map<String, dynamic> address) {
-    final String phone = address['phone']?.toString().trim() ?? '';
+  Widget _buildAddressManagerSheet(BuildContext sheetContext) {
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(sheetContext).size.height * 0.82,
+      ),
+      decoration: const BoxDecoration(
+        color: BuyerColors.background,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
 
-    if (phone.isEmpty) {
-      return const SizedBox.shrink();
-    }
+            _sheetHandle(),
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Text(phone, style: BuyerStyle.small),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Delivery Addresses', style: BuyerStyle.title),
+                        SizedBox(height: 4),
+                        Text(
+                          'Choose or manage the address used for checkout.',
+                          style: BuyerStyle.subtitle,
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop(
+                        const _AddressAction(type: _AddressActionType.close),
+                      );
+                    },
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+
+            Expanded(
+              child: buyerAddresses.isEmpty
+                  ? _buildNoAddressState()
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 15),
+                      itemCount: buyerAddresses.length,
+                      separatorBuilder: (BuildContext context, int index) {
+                        return const SizedBox(height: 10);
+                      },
+                      itemBuilder: (BuildContext context, int index) {
+                        final Map<String, dynamic> address =
+                            buyerAddresses[index];
+
+                        return _buildAddressCard(sheetContext, address);
+                      },
+                    ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+              child: SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.of(
+                      sheetContext,
+                    ).pop(const _AddressAction(type: _AddressActionType.add));
+                  },
+                  style: BuyerStyle.primaryButton,
+                  icon: const Icon(Icons.add_location_alt_outlined),
+                  label: const Text('Add New Address'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _buildNoAddressState(
-    BuildContext modalContext,
-    Future<void> Function() refreshAddresses,
+  Widget _buildAddressCard(
+    BuildContext sheetContext,
+    Map<String, dynamic> address,
   ) {
+    final bool isDefault = _isTrue(address['is_default']);
+
+    final String label = address['label']?.toString().trim() ?? '';
+
+    final String fullAddress = address['full_address']?.toString().trim() ?? '';
+
+    final String phone = address['phone']?.toString().trim() ?? '';
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BuyerStyle.card,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.location_on_outlined,
+                color: BuyerColors.primary,
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  label.isNotEmpty ? label : 'Delivery Address',
+                  style: BuyerStyle.cardTitle,
+                ),
+              ),
+              if (isDefault)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: BuyerColors.lightPurple,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'Default',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: BuyerColors.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+
+          const SizedBox(height: 10),
+
+          Text(
+            fullAddress.isNotEmpty ? fullAddress : _buildFullAddress(address),
+            style: BuyerStyle.small,
+          ),
+
+          if (phone.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(phone, style: BuyerStyle.small),
+          ],
+
+          const SizedBox(height: 12),
+
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop(
+                      _AddressAction(
+                        type: _AddressActionType.edit,
+                        address: Map<String, dynamic>.from(address),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.edit_outlined, size: 17),
+                  label: const Text('Edit'),
+                ),
+              ),
+
+              if (!isDefault) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop(
+                        _AddressAction(
+                          type: _AddressActionType.setDefault,
+                          address: Map<String, dynamic>.from(address),
+                        ),
+                      );
+                    },
+                    style: BuyerStyle.primaryButton,
+                    child: const Text('Set Default'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoAddressState() {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(25),
@@ -1189,13 +1182,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                 color: BuyerColors.primary,
               ),
             ),
-
             const SizedBox(height: 15),
-
             const Text('No Saved Address', style: BuyerStyle.sectionTitle),
-
             const SizedBox(height: 6),
-
             const Text(
               'Add a delivery address so it can be used during checkout.',
               textAlign: TextAlign.center,
@@ -1207,11 +1196,11 @@ class _BuyerProfileState extends State<BuyerProfile> {
     );
   }
 
-  // ================================================================
+  // ============================================================
   // ADD / EDIT ADDRESS
-  // ================================================================
+  // ============================================================
 
-  Future<void> _showAddressForm({Map<String, dynamic>? address}) async {
+  Future<bool> _showAddressForm({Map<String, dynamic>? address}) async {
     final bool isEditing = address != null;
 
     final TextEditingController labelController = TextEditingController(
@@ -1246,7 +1235,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
     bool isSaving = false;
 
-    await showModalBottomSheet<void>(
+    final bool? saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -1254,6 +1243,10 @@ class _BuyerProfileState extends State<BuyerProfile> {
         return StatefulBuilder(
           builder: (BuildContext modalContext, StateSetter setModalState) {
             Future<void> saveAddress() async {
+              if (isSaving) {
+                return;
+              }
+
               final String line1 = line1Controller.text.trim();
 
               final String city = cityController.text.trim();
@@ -1270,7 +1263,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   modalContext,
                   'Please complete the required address fields.',
                 );
-
                 return;
               }
 
@@ -1279,7 +1271,10 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   modalContext,
                   'Please enter a valid 11-digit Philippine mobile number.',
                 );
+                return;
+              }
 
+              if (!modalContext.mounted) {
                 return;
               }
 
@@ -1290,22 +1285,24 @@ class _BuyerProfileState extends State<BuyerProfile> {
               try {
                 final String? token = await AuthStorage.getToken();
 
-                if (token == null || token.trim().isEmpty) {
-                  if (modalContext.mounted) {
-                    setModalState(() {
-                      isSaving = false;
-                    });
+                if (!modalContext.mounted) {
+                  return;
+                }
 
-                    _showModalMessage(
-                      modalContext,
-                      'Your session has expired. Please login again.',
-                    );
-                  }
+                if (token == null || token.trim().isEmpty) {
+                  setModalState(() {
+                    isSaving = false;
+                  });
+
+                  _showModalMessage(
+                    modalContext,
+                    'Your session has expired. Please login again.',
+                  );
 
                   return;
                 }
 
-                final Map<String, dynamic> payload = {
+                final Map<String, dynamic> payload = <String, dynamic>{
                   'label': labelController.text.trim().isEmpty
                       ? null
                       : labelController.text.trim(),
@@ -1329,6 +1326,19 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   final int addressId =
                       int.tryParse(address['id']?.toString() ?? '') ?? 0;
 
+                  if (addressId <= 0) {
+                    setModalState(() {
+                      isSaving = false;
+                    });
+
+                    _showModalMessage(
+                      modalContext,
+                      'Invalid delivery address.',
+                    );
+
+                    return;
+                  }
+
                   response = await http.put(
                     Uri.parse('$_baseUrl/addresses/$addressId'),
                     headers: _authHeaders(token, json: true),
@@ -1342,44 +1352,36 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   );
                 }
 
+                if (!modalContext.mounted) {
+                  return;
+                }
+
                 final dynamic decoded = _decodeResponse(response.body);
 
                 if (response.statusCode != 200 && response.statusCode != 201) {
-                  if (modalContext.mounted) {
-                    setModalState(() {
-                      isSaving = false;
-                    });
+                  setModalState(() {
+                    isSaving = false;
+                  });
 
-                    _showModalMessage(
-                      modalContext,
-                      _extractErrorMessage(
-                        decoded,
-                        fallback: 'Unable to save this address.',
-                      ),
-                    );
-                  }
+                  _showModalMessage(
+                    modalContext,
+                    _extractErrorMessage(
+                      decoded,
+                      fallback: 'Unable to save this address.',
+                    ),
+                  );
 
                   return;
                 }
 
-                if (modalContext.mounted) {
-                  Navigator.pop(modalContext);
-                }
-
-                if (!mounted) {
+                if (!modalContext.mounted) {
                   return;
                 }
 
-                _showSuccessMessage(
-                  decoded is Map<String, dynamic> &&
-                          decoded['message']?.toString().trim().isNotEmpty ==
-                              true
-                      ? decoded['message'].toString().trim()
-                      : isEditing
-                      ? 'Address updated successfully.'
-                      : 'Address saved successfully.',
-                );
-              } catch (_) {
+                Navigator.of(modalContext).pop(true);
+              } catch (error) {
+                debugPrint('Save buyer address error: $error');
+
                 if (!modalContext.mounted) {
                   return;
                 }
@@ -1412,22 +1414,27 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Center(
-                        child: Container(
-                          height: 4,
-                          width: 45,
-                          decoration: BoxDecoration(
-                            color: BuyerColors.border,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                      ),
+                      _sheetHandle(),
 
                       const SizedBox(height: 20),
 
-                      Text(
-                        isEditing ? 'Edit Address' : 'Add Address',
-                        style: BuyerStyle.title,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              isEditing ? 'Edit Address' : 'Add Address',
+                              style: BuyerStyle.title,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: isSaving
+                                ? null
+                                : () {
+                                    Navigator.of(modalContext).pop(false);
+                                  },
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
                       ),
 
                       const SizedBox(height: 20),
@@ -1600,6 +1607,8 @@ class _BuyerProfileState extends State<BuyerProfile> {
       },
     );
 
+    await WidgetsBinding.instance.endOfFrame;
+
     labelController.dispose();
     line1Controller.dispose();
     line2Controller.dispose();
@@ -1607,11 +1616,13 @@ class _BuyerProfileState extends State<BuyerProfile> {
     provinceController.dispose();
     postalController.dispose();
     phoneController.dispose();
+
+    return saved == true;
   }
 
-  // ================================================================
+  // ============================================================
   // SET DEFAULT ADDRESS
-  // ================================================================
+  // ============================================================
 
   Future<bool> _setDefaultAddress(Map<String, dynamic> address) async {
     try {
@@ -1662,16 +1673,20 @@ class _BuyerProfileState extends State<BuyerProfile> {
       );
 
       return true;
-    } catch (_) {
-      _showErrorMessage('Unable to connect to the server. Please try again.');
+    } catch (error) {
+      debugPrint('Set default address error: $error');
+
+      if (mounted) {
+        _showErrorMessage('Unable to connect to the server. Please try again.');
+      }
 
       return false;
     }
   }
 
-  // ================================================================
+  // ============================================================
   // PROFILE INFORMATION
-  // ================================================================
+  // ============================================================
 
   Widget _profileInfo(IconData icon, String title, String value) {
     return Padding(
@@ -1708,9 +1723,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
     );
   }
 
-  // ================================================================
+  // ============================================================
   // PROFILE ITEM
-  // ================================================================
+  // ============================================================
 
   Widget _profileItem(
     IconData icon,
@@ -1744,9 +1759,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(title, style: BuyerStyle.cardTitle),
-
                     const SizedBox(height: 3),
-
                     Text(
                       subtitle,
                       maxLines: 1,
@@ -1778,12 +1791,25 @@ class _BuyerProfileState extends State<BuyerProfile> {
     );
   }
 
-  // ================================================================
+  Widget _sheetHandle() {
+    return Center(
+      child: Container(
+        height: 4,
+        width: 45,
+        decoration: BoxDecoration(
+          color: BuyerColors.border,
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
   // ADDRESS STRING
-  // ================================================================
+  // ============================================================
 
   String _buildFullAddress(Map<String, dynamic> address) {
-    return [
+    return <String>[
       address['address_line1']?.toString().trim() ?? '',
       address['address_line2']?.toString().trim() ?? '',
       address['city']?.toString().trim() ?? '',
@@ -1793,9 +1819,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
     ].where((String part) => part.isNotEmpty).join(', ');
   }
 
-  // ================================================================
-  // SNACKBARS
-  // ================================================================
+  // ============================================================
+  // MESSAGES
+  // ============================================================
 
   void _showSuccessMessage(String message) {
     if (!mounted) {
@@ -1847,18 +1873,34 @@ class _BuyerProfileState extends State<BuyerProfile> {
   }
 
   void _showModalMessage(BuildContext modalContext, String message) {
-    ScaffoldMessenger.of(modalContext)
+    if (!modalContext.mounted) {
+      return;
+    }
+
+    final ScaffoldMessengerState? messenger = ScaffoldMessenger.maybeOf(
+      modalContext,
+    );
+
+    if (messenger == null) {
+      return;
+    }
+
+    messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
   }
 
-  // ================================================================
+  // ============================================================
   // SETTINGS
-  // ================================================================
+  // ============================================================
 
   void _showSettingsMessage() {
+    if (!mounted) {
+      return;
+    }
+
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -1870,6 +1912,10 @@ class _BuyerProfileState extends State<BuyerProfile> {
   }
 
   void _showComingSoon(String feature) {
+    if (!mounted) {
+      return;
+    }
+
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -1880,12 +1926,43 @@ class _BuyerProfileState extends State<BuyerProfile> {
       );
   }
 
-  // ================================================================
+  // ============================================================
   // LOGOUT
-  // ================================================================
+  // ============================================================
 
-  void _showLogoutDialog() {
-    showDialog<void>(
+  Widget _buildLogoutButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: OutlinedButton.icon(
+        onPressed: isLoggingOut ? null : _showLogoutDialog,
+        icon: isLoggingOut
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: BuyerColors.danger,
+                ),
+              )
+            : const Icon(Icons.logout, size: 19),
+        label: Text(
+          isLoggingOut ? 'Logging out...' : 'Logout',
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: BuyerColors.danger,
+          side: const BorderSide(color: BuyerColors.danger),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showLogoutDialog() async {
+    final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
@@ -1907,7 +1984,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.pop(dialogContext);
+                Navigator.of(dialogContext).pop(false);
               },
               child: const Text(
                 'Cancel',
@@ -1915,10 +1992,8 @@ class _BuyerProfileState extends State<BuyerProfile> {
               ),
             ),
             TextButton(
-              onPressed: () async {
-                Navigator.pop(dialogContext);
-
-                await _logout();
+              onPressed: () {
+                Navigator.of(dialogContext).pop(true);
               },
               child: const Text(
                 'Logout',
@@ -1932,6 +2007,12 @@ class _BuyerProfileState extends State<BuyerProfile> {
         );
       },
     );
+
+    if (!mounted || confirmed != true) {
+      return;
+    }
+
+    await _logout();
   }
 
   Future<void> _logout() async {
@@ -1952,8 +2033,8 @@ class _BuyerProfileState extends State<BuyerProfile> {
           headers: _authHeaders(token),
         );
       }
-    } catch (_) {
-      // Local logout will still continue.
+    } catch (error) {
+      debugPrint('Buyer logout server error: $error');
     }
 
     await AuthStorage.clearSession();
@@ -1974,12 +2055,12 @@ class _BuyerProfileState extends State<BuyerProfile> {
     );
   }
 
-  // ================================================================
+  // ============================================================
   // API HELPERS
-  // ================================================================
+  // ============================================================
 
   Map<String, String> _authHeaders(String token, {bool json = false}) {
-    return {
+    return <String, String>{
       'Accept': 'application/json',
       if (json) 'Content-Type': 'application/json',
       'Authorization': 'Bearer $token',
@@ -2033,4 +2114,13 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
     return normalized == 'true' || normalized == '1';
   }
+}
+
+enum _AddressActionType { add, edit, setDefault, close }
+
+class _AddressAction {
+  final _AddressActionType type;
+  final Map<String, dynamic>? address;
+
+  const _AddressAction({required this.type, this.address});
 }

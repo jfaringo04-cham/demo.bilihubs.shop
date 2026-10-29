@@ -432,8 +432,6 @@ class _RiderScannerState extends State<RiderScanner> {
 
     data['rider_name'] ??= '';
 
-    data['rider_id'] ??= null;
-
     data['status'] ??= data['shipment_status'] ?? data['delivery_status'] ?? '';
 
     data['order_date'] ??= data['created_at'] ?? data['assigned_at'] ?? '';
@@ -459,8 +457,8 @@ class _RiderScannerState extends State<RiderScanner> {
     }
 
     // This is display-only.
-    // The complete original payload is still sent to Laravel.
-
+    // The complete original payload
+    // is still sent to Laravel.
     try {
       final Uri? uri = Uri.tryParse(value);
 

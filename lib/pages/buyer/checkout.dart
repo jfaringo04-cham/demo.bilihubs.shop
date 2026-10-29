@@ -31,7 +31,7 @@ class _CheckoutState extends State<Checkout> {
 
   static const double shippingFee = 50.00;
 
-  static const Map<String, String> paymentMethodLabels = {
+  static const Map<String, String> paymentMethodLabels = <String, String>{
     'cod': 'Cash on Delivery',
     'gcash': 'GCash',
     'maya': 'Maya',
@@ -185,7 +185,7 @@ class _CheckoutState extends State<Checkout> {
       return fullAddress;
     }
 
-    final List<String> parts = [
+    final List<String> parts = <String>[
       address['address_line1']?.toString().trim() ?? '',
       address['address_line2']?.toString().trim() ?? '',
       address['city']?.toString().trim() ?? '',
@@ -212,102 +212,103 @@ class _CheckoutState extends State<Checkout> {
       return;
     }
 
-    final Map<String, dynamic>? picked =
-        await showModalBottomSheet<Map<String, dynamic>>(
-          context: context,
-          isScrollControlled: true,
-          showDragHandle: true,
-          builder: (BuildContext sheetContext) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Select Delivery Address',
-                      style: BuyerStyle.sectionTitle,
-                    ),
-                    const SizedBox(height: 14),
-                    Flexible(
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: buyerAddresses.length,
-                        separatorBuilder: (BuildContext context, int index) {
-                          return const Divider(
-                            height: 1,
-                            color: BuyerColors.border,
-                          );
-                        },
-                        itemBuilder: (BuildContext context, int index) {
-                          final Map<String, dynamic> address =
-                              buyerAddresses[index];
-
-                          final int addressId =
-                              int.tryParse(address['id']?.toString() ?? '') ??
-                              0;
-
-                          final int selectedId =
-                              int.tryParse(
-                                selectedAddress?['id']?.toString() ?? '',
-                              ) ??
-                              0;
-
-                          final bool selected = addressId == selectedId;
-
-                          final String rawLabel =
-                              address['label']?.toString().trim() ?? '';
-
-                          final String label = rawLabel.isNotEmpty
-                              ? rawLabel
-                              : 'Address ${index + 1}';
-
-                          final String fullAddress =
-                              address['full_address']?.toString().trim() ?? '';
-
-                          final String phone =
-                              address['phone']?.toString().trim() ?? '';
-
-                          return ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(
-                              selected
-                                  ? Icons.check_circle_rounded
-                                  : Icons.location_on_outlined,
-                              color: selected
-                                  ? BuyerColors.primary
-                                  : BuyerColors.textGrey,
-                            ),
-                            title: Text(
-                              label,
-                              style: const TextStyle(
-                                color: BuyerColors.textDark,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 5),
-                              child: Text(
-                                [fullAddress, if (phone.isNotEmpty) phone]
-                                    .where((String value) => value.isNotEmpty)
-                                    .join('\n'),
-                                style: BuyerStyle.small,
-                              ),
-                            ),
-                            onTap: () {
-                              Navigator.pop(sheetContext, address);
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ],
+    final Map<String, dynamic>?
+    picked = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (BuildContext sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Select Delivery Address',
+                  style: BuyerStyle.sectionTitle,
                 ),
-              ),
-            );
-          },
+
+                const SizedBox(height: 14),
+
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: buyerAddresses.length,
+                    separatorBuilder: (BuildContext context, int index) {
+                      return const Divider(
+                        height: 1,
+                        color: BuyerColors.border,
+                      );
+                    },
+                    itemBuilder: (BuildContext context, int index) {
+                      final Map<String, dynamic> address =
+                          buyerAddresses[index];
+
+                      final int addressId =
+                          int.tryParse(address['id']?.toString() ?? '') ?? 0;
+
+                      final int selectedId =
+                          int.tryParse(
+                            selectedAddress?['id']?.toString() ?? '',
+                          ) ??
+                          0;
+
+                      final bool selected = addressId == selectedId;
+
+                      final String rawLabel =
+                          address['label']?.toString().trim() ?? '';
+
+                      final String label = rawLabel.isNotEmpty
+                          ? rawLabel
+                          : 'Address ${index + 1}';
+
+                      final String fullAddress =
+                          address['full_address']?.toString().trim() ?? '';
+
+                      final String phone =
+                          address['phone']?.toString().trim() ?? '';
+
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          selected
+                              ? Icons.check_circle_rounded
+                              : Icons.location_on_outlined,
+                          color: selected
+                              ? BuyerColors.primary
+                              : BuyerColors.textGrey,
+                        ),
+                        title: Text(
+                          label,
+                          style: const TextStyle(
+                            color: BuyerColors.textDark,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 5),
+                          child: Text(
+                            <String>[fullAddress, if (phone.isNotEmpty) phone]
+                                .where((String value) => value.isNotEmpty)
+                                .join('\n'),
+                            style: BuyerStyle.small,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.pop(sheetContext, address);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
         );
+      },
+    );
 
     if (picked == null || !mounted) {
       return;
@@ -384,7 +385,9 @@ class _CheckoutState extends State<Checkout> {
         ? Map<String, dynamic>.from(result['data'])
         : <String, dynamic>{};
 
-    _clearLocalCartIfCheckoutMatchesCart();
+    // Remove ONLY the products that were checked out.
+    // Products that were not selected remain in the cart.
+    _removeCheckedOutItemsFromLocalCart();
 
     final String orderNumber = order['order_number']?.toString().trim() ?? '';
 
@@ -404,41 +407,28 @@ class _CheckoutState extends State<Checkout> {
   }
 
   // ============================================================
-  // LOCAL CART CLEANUP
+  // REMOVE ONLY CHECKED-OUT ITEMS FROM LOCAL CART
   // ============================================================
 
-  void _clearLocalCartIfCheckoutMatchesCart() {
-    final List<CartItem> localCart = CartService.items;
-
-    if (localCart.length != widget.items.length) {
+  void _removeCheckedOutItemsFromLocalCart() {
+    if (widget.items.isEmpty || CartService.items.isEmpty) {
       return;
     }
 
-    final Map<int, int> cartQuantities = <int, int>{};
+    final List<CartItem> checkedOutItems = List<CartItem>.from(widget.items);
 
-    final Map<int, int> checkoutQuantities = <int, int>{};
+    // Work backwards so indexes stay valid while removing.
+    for (int index = CartService.items.length - 1; index >= 0; index--) {
+      final CartItem cartItem = CartService.items[index];
 
-    for (final CartItem item in localCart) {
-      cartQuantities[item.product.id] =
-          (cartQuantities[item.product.id] ?? 0) + item.quantity;
-    }
+      final bool wasCheckedOut = checkedOutItems.any(
+        (CartItem checkedOutItem) => identical(checkedOutItem, cartItem),
+      );
 
-    for (final CartItem item in widget.items) {
-      checkoutQuantities[item.product.id] =
-          (checkoutQuantities[item.product.id] ?? 0) + item.quantity;
-    }
-
-    if (cartQuantities.length != checkoutQuantities.length) {
-      return;
-    }
-
-    for (final MapEntry<int, int> entry in cartQuantities.entries) {
-      if (checkoutQuantities[entry.key] != entry.value) {
-        return;
+      if (wasCheckedOut) {
+        CartService.removeAt(index);
       }
     }
-
-    CartService.clearCart();
   }
 
   // ============================================================
@@ -581,6 +571,7 @@ class _CheckoutState extends State<Checkout> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
+        scrolledUnderElevation: 0,
         iconTheme: const IconThemeData(color: BuyerColors.textDark),
         title: const Text('Checkout', style: BuyerStyle.title),
       ),
@@ -626,12 +617,16 @@ class _CheckoutState extends State<Checkout> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('Order Summary', style: BuyerStyle.sectionTitle),
+
           const SizedBox(height: 5),
+
           Text(
             '$totalItems item${totalItems > 1 ? 's' : ''}',
             style: BuyerStyle.small,
           ),
+
           const SizedBox(height: 18),
+
           ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
@@ -697,11 +692,14 @@ class _CheckoutState extends State<Checkout> {
                           overflow: TextOverflow.ellipsis,
                           style: BuyerStyle.cardTitle,
                         ),
+
                         const SizedBox(height: 5),
+
                         Text(
                           '₱${product.sellingPrice.toStringAsFixed(2)} each',
                           style: BuyerStyle.small,
                         ),
+
                         if (product.hasDiscount) ...[
                           const SizedBox(height: 2),
                           Text(
@@ -713,7 +711,9 @@ class _CheckoutState extends State<Checkout> {
                             ),
                           ),
                         ],
+
                         const SizedBox(height: 4),
+
                         Text('Qty: ${item.quantity}', style: BuyerStyle.small),
                       ],
                     ),
@@ -757,10 +757,13 @@ class _CheckoutState extends State<Checkout> {
                 color: BuyerColors.primary,
                 size: 22,
               ),
+
               const SizedBox(width: 9),
+
               const Expanded(
                 child: Text('Delivery Address', style: BuyerStyle.sectionTitle),
               ),
+
               if (!isLoadingCheckout && buyerAddresses.isNotEmpty)
                 TextButton(
                   onPressed: isPlacingOrder ? null : _showAddressPicker,
@@ -848,6 +851,7 @@ class _CheckoutState extends State<Checkout> {
                               fontWeight: FontWeight.w700,
                             ),
                           ),
+
                           if (buyerName.isNotEmpty) ...[
                             const SizedBox(height: 4),
                             Text(
@@ -859,7 +863,9 @@ class _CheckoutState extends State<Checkout> {
                               ),
                             ),
                           ],
+
                           const SizedBox(height: 4),
+
                           Text(
                             selectedAddressText,
                             style: const TextStyle(
@@ -868,6 +874,7 @@ class _CheckoutState extends State<Checkout> {
                               height: 1.4,
                             ),
                           ),
+
                           if (buyerPhone.isNotEmpty) ...[
                             const SizedBox(height: 5),
                             Text(buyerPhone, style: BuyerStyle.small),
@@ -1146,7 +1153,7 @@ class _CheckoutState extends State<Checkout> {
             const SizedBox(height: 8),
 
             const Text(
-              'Add a product to your cart before checking out.',
+              'Select a product from your cart before checking out.',
               textAlign: TextAlign.center,
               style: BuyerStyle.small,
             ),

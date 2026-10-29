@@ -9,16 +9,18 @@ import '../../styles/buyer_style.dart';
 import 'order_details.dart';
 
 class OrderHistory extends StatefulWidget {
-  final bool showBackButton;
-
-  const OrderHistory({super.key, this.showBackButton = true});
+  const OrderHistory({super.key});
 
   @override
   State<OrderHistory> createState() => _OrderHistoryState();
 }
 
 class _OrderHistoryState extends State<OrderHistory> {
-  static const String _baseUrl = 'https://demo-bilihubs-shop.onrender.com/api';
+  static const String _apiBaseUrl =
+      'https://demo-bilihubs-shop.onrender.com/api';
+
+  static const String _supabaseProductBaseUrl =
+      'https://furccwxvsinfibcdhxtn.supabase.co/storage/v1/object/public/bilihub-products';
 
   final List<Map<String, dynamic>> orders = <Map<String, dynamic>>[];
 
@@ -71,12 +73,12 @@ class _OrderHistoryState extends State<OrderHistory> {
         return;
       }
 
-      final Uri uri = Uri.parse('$_baseUrl/orders')
-          .replace(queryParameters: {'per_page': '50'});
+      final Uri uri = Uri.parse('$_apiBaseUrl/orders')
+          .replace(queryParameters: <String, String>{'per_page': '50'});
 
       final http.Response response = await http.get(
         uri,
-        headers: {
+        headers: <String, String>{
           'Accept': 'application/json',
           'Authorization': 'Bearer ${token.trim()}',
         },
@@ -131,7 +133,9 @@ class _OrderHistoryState extends State<OrderHistory> {
         isRefreshing = false;
         errorMessage = message;
       });
-    } catch (_) {
+    } catch (error) {
+      debugPrint('Order history error: $error');
+
       if (!mounted) {
         return;
       }
@@ -159,25 +163,7 @@ class _OrderHistoryState extends State<OrderHistory> {
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: true,
-
-        // Back arrow only appears when this page
-        // was opened as a separate screen.
         automaticallyImplyLeading: false,
-
-        leading: widget.showBackButton
-            ? IconButton(
-                tooltip: 'Back',
-                onPressed: () {
-                  Navigator.pop(context);
-                },
-                icon: const Icon(
-                  Icons.arrow_back_ios_new_rounded,
-                  color: BuyerColors.textDark,
-                  size: 20,
-                ),
-              )
-            : null,
-
         title: const Text('Order History', style: BuyerStyle.appBarTitle),
         actions: [
           IconButton(
@@ -300,8 +286,7 @@ class _OrderHistoryState extends State<OrderHistory> {
     final String productName =
         firstItem?['product_name']?.toString().trim() ?? 'Order Item';
 
-    final String imageUrl =
-        firstItem?['product_image']?.toString().trim() ?? '';
+    final String imageUrl = _extractProductImageUrl(firstItem);
 
     final int quantity = items.fold<int>(0, (
       int previous,
@@ -331,10 +316,6 @@ class _OrderHistoryState extends State<OrderHistory> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ========================================================
-              // ORDER NUMBER + STATUS
-              // ========================================================
-
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -350,18 +331,13 @@ class _OrderHistoryState extends State<OrderHistory> {
                       style: BuyerStyle.cardTitle,
                     ),
                   ),
-
                   const SizedBox(width: 10),
-
                   _buildStatusBadge(status),
                 ],
               ),
 
               const SizedBox(height: 15),
 
-              // ========================================================
-              // PRODUCT PREVIEW
-              // ========================================================
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -371,28 +347,7 @@ class _OrderHistoryState extends State<OrderHistory> {
                       height: 65,
                       width: 65,
                       color: BuyerColors.lightPurple,
-                      child: imageUrl.isEmpty
-                          ? const Icon(
-                              Icons.shopping_bag_outlined,
-                              color: BuyerColors.primary,
-                              size: 29,
-                            )
-                          : Image.network(
-                              imageUrl,
-                              fit: BoxFit.cover,
-                              errorBuilder:
-                                  (
-                                    BuildContext context,
-                                    Object error,
-                                    StackTrace? stackTrace,
-                                  ) {
-                                    return const Icon(
-                                      Icons.broken_image_outlined,
-                                      color: BuyerColors.primary,
-                                      size: 29,
-                                    );
-                                  },
-                            ),
+                      child: _buildProductImage(imageUrl),
                     ),
                   ),
 
@@ -477,9 +432,6 @@ class _OrderHistoryState extends State<OrderHistory> {
 
               const SizedBox(height: 6),
 
-              // ========================================================
-              // VIEW DETAILS
-              // ========================================================
               InkWell(
                 borderRadius: BorderRadius.circular(12),
                 onTap: () {
@@ -519,6 +471,144 @@ class _OrderHistoryState extends State<OrderHistory> {
         ),
       ),
     );
+  }
+
+  // ================================================================
+  // PRODUCT IMAGE
+  // ================================================================
+
+  Widget _buildProductImage(String imageUrl) {
+    if (imageUrl.isEmpty) {
+      return const Icon(
+        Icons.shopping_bag_outlined,
+        color: BuyerColors.primary,
+        size: 29,
+      );
+    }
+
+    return Image.network(
+      imageUrl,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder:
+          (BuildContext context, Object error, StackTrace? stackTrace) {
+            debugPrint('Order image failed: $imageUrl');
+
+            return const Icon(
+              Icons.shopping_bag_outlined,
+              color: BuyerColors.primary,
+              size: 29,
+            );
+          },
+      loadingBuilder:
+          (BuildContext context, Widget child, ImageChunkEvent? progress) {
+            if (progress == null) {
+              return child;
+            }
+
+            return const Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: BuyerColors.primary,
+              ),
+            );
+          },
+    );
+  }
+
+  String _extractProductImageUrl(Map<String, dynamic>? item) {
+    if (item == null) {
+      return '';
+    }
+
+    final List<dynamic> candidates = <dynamic>[
+      item['product_image'],
+      item['image_url'],
+      item['product_image_url'],
+      item['image'],
+      item['thumbnail'],
+      item['thumbnail_url'],
+    ];
+
+    final dynamic product = item['product'];
+
+    if (product is Map) {
+      candidates.addAll(<dynamic>[
+        product['image_url'],
+        product['product_image'],
+        product['primary_image'],
+        product['image'],
+        product['thumbnail'],
+      ]);
+
+      final dynamic images = product['images'];
+
+      if (images is List && images.isNotEmpty) {
+        final dynamic firstImage = images.first;
+
+        if (firstImage is Map) {
+          candidates.addAll(<dynamic>[
+            firstImage['url'],
+            firstImage['image_url'],
+            firstImage['path'],
+          ]);
+        } else {
+          candidates.add(firstImage);
+        }
+      }
+    }
+
+    for (final dynamic candidate in candidates) {
+      final String raw = candidate?.toString().trim() ?? '';
+
+      final String normalized = _normalizeImageUrl(raw);
+
+      if (normalized.isNotEmpty) {
+        return normalized;
+      }
+    }
+
+    return '';
+  }
+
+  String _normalizeImageUrl(String rawUrl) {
+    String value = rawUrl.trim();
+
+    if (value.isEmpty || value.toLowerCase() == 'null') {
+      return '';
+    }
+
+    value = value.replaceAll('\\', '/');
+
+    if (value.startsWith('//')) {
+      return 'https:$value';
+    }
+
+    final Uri? parsed = Uri.tryParse(value);
+
+    if (parsed != null &&
+        (parsed.scheme == 'http' || parsed.scheme == 'https')) {
+      return value;
+    }
+
+    while (value.startsWith('/')) {
+      value = value.substring(1);
+    }
+
+    if (value.startsWith('storage/')) {
+      value = value.substring('storage/'.length);
+    }
+
+    if (value.startsWith('bilihub-products/')) {
+      value = value.substring('bilihub-products/'.length);
+    }
+
+    if (value.startsWith('products/')) {
+      return '$_supabaseProductBaseUrl/$value';
+    }
+
+    return '$_supabaseProductBaseUrl/products/$value';
   }
 
   // ================================================================
@@ -812,7 +902,7 @@ class _OrderHistoryState extends State<OrderHistory> {
     try {
       final DateTime parsed = DateTime.parse(rawDate).toLocal();
 
-      const List<String> months = [
+      const List<String> months = <String>[
         'Jan',
         'Feb',
         'Mar',

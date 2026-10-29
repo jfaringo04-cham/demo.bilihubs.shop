@@ -7,6 +7,9 @@ class OrderDetails extends StatelessWidget {
 
   const OrderDetails({super.key, required this.order});
 
+  static const String _supabaseProductBaseUrl =
+      'https://furccwxvsinfibcdhxtn.supabase.co/storage/v1/object/public/bilihub-products';
+
   @override
   Widget build(BuildContext context) {
     final String status = _displayStatus(
@@ -108,10 +111,6 @@ class OrderDetails extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ============================================================
-              // ORDER HEADER
-              // ============================================================
-
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(18),
@@ -131,9 +130,7 @@ class OrderDetails extends StatelessWidget {
                             size: 28,
                           ),
                         ),
-
                         const SizedBox(width: 14),
-
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -150,15 +147,11 @@ class OrderDetails extends StatelessWidget {
                             ],
                           ),
                         ),
-
                         const SizedBox(width: 10),
-
                         _buildStatusBadge(status),
                       ],
                     ),
-
                     const SizedBox(height: 16),
-
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
@@ -197,9 +190,6 @@ class OrderDetails extends StatelessWidget {
 
               const SizedBox(height: 24),
 
-              // ============================================================
-              // PRODUCT INFORMATION
-              // ============================================================
               const Text('Products', style: BuyerStyle.sectionTitle),
 
               const SizedBox(height: 12),
@@ -219,7 +209,7 @@ class OrderDetails extends StatelessWidget {
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   itemCount: items.length,
-                  separatorBuilder: (context, index) {
+                  separatorBuilder: (BuildContext context, int index) {
                     return const SizedBox(height: 10);
                   },
                   itemBuilder: (BuildContext context, int index) {
@@ -229,9 +219,6 @@ class OrderDetails extends StatelessWidget {
 
               const SizedBox(height: 24),
 
-              // ============================================================
-              // DELIVERY INFORMATION
-              // ============================================================
               const Text(
                 'Delivery Information',
                 style: BuyerStyle.sectionTitle,
@@ -321,9 +308,6 @@ class OrderDetails extends StatelessWidget {
 
               const SizedBox(height: 24),
 
-              // ============================================================
-              // PAYMENT INFORMATION
-              // ============================================================
               const Text('Payment Information', style: BuyerStyle.sectionTitle),
 
               const SizedBox(height: 12),
@@ -338,9 +322,7 @@ class OrderDetails extends StatelessWidget {
                       title: 'Payment Method',
                       value: paymentMethod,
                     ),
-
                     const Divider(height: 30, color: BuyerColors.border),
-
                     _detailRow(
                       icon: Icons.account_balance_wallet_outlined,
                       title: 'Payment Status',
@@ -352,9 +334,6 @@ class OrderDetails extends StatelessWidget {
 
               const SizedBox(height: 24),
 
-              // ============================================================
-              // ORDER SUMMARY
-              // ============================================================
               const Text('Order Summary', style: BuyerStyle.sectionTitle),
 
               const SizedBox(height: 12),
@@ -365,21 +344,16 @@ class OrderDetails extends StatelessWidget {
                 child: Column(
                   children: [
                     _summaryRow('Subtotal', '₱${subtotal.toStringAsFixed(2)}'),
-
                     const SizedBox(height: 12),
-
                     _summaryRow(
                       'Shipping Fee',
                       '₱${shippingFee.toStringAsFixed(2)}',
                     ),
-
                     const SizedBox(height: 12),
-
                     _summaryRow(
                       'Service Fee',
                       '₱${serviceFee.toStringAsFixed(2)}',
                     ),
-
                     if (discount > 0) ...[
                       const SizedBox(height: 12),
                       _summaryRow(
@@ -387,13 +361,9 @@ class OrderDetails extends StatelessWidget {
                         '-₱${discount.toStringAsFixed(2)}',
                       ),
                     ],
-
                     const SizedBox(height: 14),
-
                     const Divider(height: 1, color: BuyerColors.border),
-
                     const SizedBox(height: 14),
-
                     _summaryRow(
                       'Total',
                       '₱${total.toStringAsFixed(2)}',
@@ -405,11 +375,8 @@ class OrderDetails extends StatelessWidget {
 
               if (notes.isNotEmpty) ...[
                 const SizedBox(height: 24),
-
                 const Text('Order Notes', style: BuyerStyle.sectionTitle),
-
                 const SizedBox(height: 12),
-
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(16),
@@ -465,7 +432,7 @@ class OrderDetails extends StatelessWidget {
     final String productName =
         item['product_name']?.toString().trim() ?? 'Product';
 
-    final String imageUrl = item['product_image']?.toString().trim() ?? '';
+    final String imageUrl = _extractProductImageUrl(item);
 
     final String variation = item['variation_name']?.toString().trim() ?? '';
 
@@ -489,23 +456,7 @@ class OrderDetails extends StatelessWidget {
               height: 68,
               width: 68,
               color: BuyerColors.lightPurple,
-              child: imageUrl.isEmpty
-                  ? const Icon(
-                      Icons.shopping_bag_outlined,
-                      color: BuyerColors.primary,
-                      size: 31,
-                    )
-                  : Image.network(
-                      imageUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return const Icon(
-                          Icons.broken_image_outlined,
-                          color: BuyerColors.primary,
-                          size: 31,
-                        );
-                      },
-                    ),
+              child: _buildProductImage(imageUrl),
             ),
           ),
 
@@ -554,6 +505,136 @@ class OrderDetails extends StatelessWidget {
     );
   }
 
+  Widget _buildProductImage(String imageUrl) {
+    if (imageUrl.isEmpty) {
+      return const Icon(
+        Icons.shopping_bag_outlined,
+        color: BuyerColors.primary,
+        size: 31,
+      );
+    }
+
+    return Image.network(
+      imageUrl,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder:
+          (BuildContext context, Object error, StackTrace? stackTrace) {
+            debugPrint('Order details image failed: $imageUrl');
+
+            return const Icon(
+              Icons.shopping_bag_outlined,
+              color: BuyerColors.primary,
+              size: 31,
+            );
+          },
+      loadingBuilder:
+          (BuildContext context, Widget child, ImageChunkEvent? progress) {
+            if (progress == null) {
+              return child;
+            }
+
+            return const Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: BuyerColors.primary,
+              ),
+            );
+          },
+    );
+  }
+
+  String _extractProductImageUrl(Map<String, dynamic> item) {
+    final List<dynamic> candidates = <dynamic>[
+      item['product_image'],
+      item['image_url'],
+      item['product_image_url'],
+      item['image'],
+      item['thumbnail'],
+      item['thumbnail_url'],
+    ];
+
+    final dynamic product = item['product'];
+
+    if (product is Map) {
+      candidates.addAll(<dynamic>[
+        product['image_url'],
+        product['product_image'],
+        product['primary_image'],
+        product['image'],
+        product['thumbnail'],
+      ]);
+
+      final dynamic images = product['images'];
+
+      if (images is List && images.isNotEmpty) {
+        final dynamic firstImage = images.first;
+
+        if (firstImage is Map) {
+          candidates.addAll(<dynamic>[
+            firstImage['url'],
+            firstImage['image_url'],
+            firstImage['path'],
+          ]);
+        } else {
+          candidates.add(firstImage);
+        }
+      }
+    }
+
+    for (final dynamic candidate in candidates) {
+      final String raw = candidate?.toString().trim() ?? '';
+
+      final String normalized = _normalizeImageUrl(raw);
+
+      if (normalized.isNotEmpty) {
+        return normalized;
+      }
+    }
+
+    return '';
+  }
+
+  String _normalizeImageUrl(String rawUrl) {
+    String value = rawUrl.trim();
+
+    if (value.isEmpty || value.toLowerCase() == 'null') {
+      return '';
+    }
+
+    value = value.replaceAll('\\', '/');
+
+    if (value.startsWith('//')) {
+      return 'https:$value';
+    }
+
+    final Uri? parsed = Uri.tryParse(value);
+
+    if (parsed != null &&
+        (parsed.scheme == 'http' || parsed.scheme == 'https')) {
+      return value;
+    }
+
+    while (value.startsWith('/')) {
+      value = value.substring(1);
+    }
+
+    if (value.startsWith('storage/')) {
+      value = value.substring('storage/'.length);
+    }
+
+    if (value.startsWith('bilihub-products/')) {
+      value = value.substring('bilihub-products/'.length);
+    }
+
+    if (value.startsWith('products/')) {
+      return '$_supabaseProductBaseUrl/$value';
+    }
+
+    return '$_supabaseProductBaseUrl/products/$value';
+  }
+
   // ================================================================
   // DETAIL ROW
   // ================================================================
@@ -583,9 +664,7 @@ class OrderDetails extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(title, style: BuyerStyle.small),
-
               const SizedBox(height: 4),
-
               Text(value, style: BuyerStyle.cardTitle),
             ],
           ),
@@ -611,7 +690,6 @@ class OrderDetails extends StatelessWidget {
             ),
           ),
         ),
-
         Text(
           value,
           style: TextStyle(
@@ -683,9 +761,7 @@ class OrderDetails extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, color: textColor, size: 14),
-
           const SizedBox(width: 5),
-
           Text(
             status,
             style: TextStyle(
@@ -845,7 +921,7 @@ class OrderDetails extends StatelessWidget {
     final dynamic shippingAddress = order['shipping_address'];
 
     if (shippingAddress is Map) {
-      final List<String> parts = [
+      final List<String> parts = <String>[
         shippingAddress['address_line1']?.toString().trim() ?? '',
         shippingAddress['address_line2']?.toString().trim() ?? '',
         shippingAddress['city']?.toString().trim() ?? '',
@@ -861,7 +937,7 @@ class OrderDetails extends StatelessWidget {
   }
 
   String _riderDisplay(String name, String phone, String vehicle) {
-    final List<String> parts = [
+    final List<String> parts = <String>[
       name,
       if (phone.isNotEmpty) phone,
       if (vehicle.isNotEmpty) _displayStatus(vehicle),
@@ -907,7 +983,8 @@ class OrderDetails extends StatelessWidget {
         .where((String word) => word.isNotEmpty)
         .map(
           (String word) =>
-              '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
+              '${word[0].toUpperCase()}'
+              '${word.substring(1).toLowerCase()}',
         )
         .join(' ');
   }
@@ -928,7 +1005,7 @@ class OrderDetails extends StatelessWidget {
     try {
       final DateTime parsed = DateTime.parse(rawDate).toLocal();
 
-      const List<String> months = [
+      const List<String> months = <String>[
         'Jan',
         'Feb',
         'Mar',
