@@ -429,6 +429,20 @@ Route::middleware([
         )->name('orders.proof');
 
         // ====================================================
+        // RIDER SELLER PICKUP
+        // ====================================================
+
+        Route::post(
+            '/pickups/{shipment}/picked-up',
+            [RiderOrderController::class, 'markSellerPickupInTransit']
+        )->name('pickups.picked-up');
+
+        Route::post(
+            '/pickups/{shipment}/deliver-to-sorting-center',
+            [RiderOrderController::class, 'deliverSellerPickupToSortingCenter']
+        )->name('pickups.deliver-to-sorting-center');
+
+        // ====================================================
         // RIDER WAYBILL QR SCANNER
         // ====================================================
 
