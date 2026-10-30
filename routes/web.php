@@ -628,6 +628,16 @@ Route::middleware('auth')->group(function () {
         Route::put('/account', [RiderDashboardController::class, 'updateAccount'])->name('account.update');
 
         Route::get('/notifications', [RiderDashboardController::class, 'notifications'])->name('notifications');
+
+        Route::post(
+            '/notifications/read-all',
+            [RiderDashboardController::class, 'markAllNotificationsRead']
+        )->name('notifications.readAll');
+
+        Route::post(
+            '/notifications/{notification}/read',
+            [RiderDashboardController::class, 'markNotificationRead']
+        )->name('notifications.read');
     });
 
 

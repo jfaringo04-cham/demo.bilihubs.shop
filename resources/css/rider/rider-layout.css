@@ -31,3 +31,49 @@ main {
 .table-container {
   margin: 0 10px;
 }
+
+
+/* Rider notification dropdown */
+.rider-notification-menu {
+  width: min(420px, calc(100vw - 24px));
+  max-height: 520px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 0;
+}
+
+.rider-notification-item {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding: 12px 16px;
+}
+
+.rider-notification-item > div {
+  min-width: 0;
+}
+
+.rider-notification-message {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.4;
+  margin-top: 4px;
+}
+
+.rider-notification-view-all {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: #fff;
+  padding: 10px 16px;
+  font-weight: 600;
+}
+
+@media (max-width: 576px) {
+  .rider-notification-menu {
+    width: calc(100vw - 20px);
+    max-width: none;
+    max-height: 70vh;
+  }
+}

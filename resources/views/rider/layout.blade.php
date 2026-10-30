@@ -45,7 +45,7 @@
               </span>
               @endif
             </a>
-            <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="riderNotificationDropdown" style="min-width: 320px; max-width: 400px;">
+            <ul class="dropdown-menu dropdown-menu-end rider-notification-menu" aria-labelledby="riderNotificationDropdown">
               <li>
                 <h6 class="dropdown-header">Notifications</h6>
               </li>
@@ -62,7 +62,7 @@
                     @endif
                   </div>
                   <div class="mt-1">{{ $notification->title }}</div>
-                  <div class="text-muted small">{{ Str::limit($notification->message, 80) }}</div>
+                  <div class="text-muted small rider-notification-message">{{ Str::limit($notification->message, 110) }}</div>
                 </a>
               </li>
               @empty
@@ -71,7 +71,7 @@
               <li>
                 <hr class="dropdown-divider">
               </li>
-              <li><a class="dropdown-item text-center" href="{{ route('rider.deliveries') }}">View All Notifications</a></li>
+              <li><a class="dropdown-item text-center rider-notification-view-all" href="{{ route('rider.notifications') }}">View All Notifications</a></li>
             </ul>
           </li>
           <li class="nav-item dropdown">

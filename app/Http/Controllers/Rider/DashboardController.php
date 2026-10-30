@@ -1664,17 +1664,26 @@ class DashboardController extends Controller
     }
 
     public function markNotificationRead(Request $request, Notification $notification)
-
     {
+        abort_unless(
+            (int) $notification->user_id === (int) Auth::id(),
+            403
+        );
 
-        if ($notification->user_id !== Auth::id()) {
-
-            abort(403);
+        if (!$notification->is_read) {
+            $notification->update([
+                'is_read' => true,
+                'read_at' => now(),
+            ]);
         }
 
-        $notification->update(['is_read' => true]);
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+            ]);
+        }
 
-        return back()->with('success', 'Notification marked as read.');
+        return back();
     }
 
     public function notifications()
