@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Notification;
 use App\Models\PickupRequest;
 use App\Models\Shipment;
 use App\Models\User;
@@ -49,8 +50,10 @@ class PickupOfferService
      * marked the order ready, but a rider later becomes available or is
      * assigned to the correct origin hub.
      */
-    public static function retryPendingForHub(int $logisticId, int $hubId): int
-    {
+    public static function retryPendingForHub(
+        int $logisticId,
+        int $hubId
+    ): int {
         $shipments = Shipment::query()
             ->where('logistic_id', $logisticId)
             ->where('status', 'pending')
@@ -64,7 +67,8 @@ class PickupOfferService
             ->where(function ($query) use ($hubId) {
                 $query->where('origin_hub_id', $hubId)
                     ->orWhere(function ($fallback) use ($hubId) {
-                        $fallback->whereNull('origin_hub_id')
+                        $fallback
+                            ->whereNull('origin_hub_id')
                             ->where('hub_id', $hubId);
                     });
             })
@@ -82,15 +86,19 @@ class PickupOfferService
         return $offered;
     }
 
-    public static function offerNext(Shipment $shipment): ?PickupRequest
-    {
+    public static function offerNext(
+        Shipment $shipment
+    ): ?PickupRequest {
         return DB::transaction(function () use ($shipment) {
             $shipment = Shipment::query()
                 ->whereKey($shipment->id)
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            // Expire unanswered offers even if the shipment is no longer eligible.
+            /*
+             * Expire unanswered offers even if the shipment is no longer
+             * eligible.
+             */
             PickupRequest::query()
                 ->where('shipment_id', $shipment->id)
                 ->where('status', 'offered')
@@ -115,10 +123,16 @@ class PickupOfferService
 
             $sellerOrder = $shipment->sellerOrder;
 
-            if (!$sellerOrder || $sellerOrder->status !== 'ready_for_pickup') {
+            if (
+                !$sellerOrder ||
+                $sellerOrder->status !== 'ready_for_pickup'
+            ) {
                 return null;
             }
 
+            /*
+             * Do not create another offer while an active one still exists.
+             */
             $active = PickupRequest::query()
                 ->where('shipment_id', $shipment->id)
                 ->where('status', 'offered')
@@ -129,7 +143,8 @@ class PickupOfferService
                 return $active;
             }
 
-            $pickupHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
+            $pickupHubId =
+                $shipment->origin_hub_id ?: $shipment->hub_id;
 
             /*
              * Pickup dispatch is hub-based.
@@ -138,12 +153,12 @@ class PickupOfferService
              * - have the rider role
              * - are active and logistics-approved
              * - belong to the same logistics company
-             * - belong to the shipment's origin hub
+             * - belong to the shipment origin hub
              * - are available
-             * - still have delivery capacity
+             * - still have capacity
              *
              * Exact barangay assigned_zone matching is intentionally not
-             * required because one hub may serve multiple barangays.
+             * required because a hub may cover multiple barangays.
              */
             $baseRiderQuery = User::query()
                 ->whereHas('roles', function ($query) {
@@ -155,15 +170,22 @@ class PickupOfferService
                 ->where('hub_id', $pickupHubId)
                 ->where('availability_status', 'available')
                 ->where('max_capacity', '>', 0)
-                ->whereColumn('current_load', '<', 'max_capacity');
+                ->whereColumn(
+                    'current_load',
+                    '<',
+                    'max_capacity'
+                );
 
+            /*
+             * Riders already offered this shipment in the current history.
+             */
             $previousRiderIds = PickupRequest::query()
                 ->where('shipment_id', $shipment->id)
                 ->pluck('rider_id');
 
             /*
              * First pass:
-             * offer only to riders that have not received this shipment yet.
+             * try a rider that has not received this shipment before.
              */
             $rider = (clone $baseRiderQuery)
                 ->whereNotIn('id', $previousRiderIds)
@@ -172,8 +194,8 @@ class PickupOfferService
                 ->first();
 
             /*
-             * If every currently eligible rider has already received the offer
-             * once, restart the rotation instead of permanently excluding them.
+             * Everyone has already been tried.
+             * Start a new rotation cycle instead of stopping permanently.
              */
             if (!$rider) {
                 $rider = (clone $baseRiderQuery)
@@ -195,14 +217,46 @@ class PickupOfferService
                 'expires_at' => now()->addMinutes(10),
             ]);
 
-            \App\Models\Notification::create([
-                'user_id' => $rider->id,
-                'title' => 'New Seller Pickup Request',
-                'message' => 'You have a new seller pickup request assigned to your hub. '
-                    . 'Please accept or decline within 10 minutes.',
-                'type' => 'order',
-                'link' => route('rider.pickups'),
-            ]);
+            /*
+             * One notification per shipment per rider.
+             *
+             * If this shipment is offered to the same rider again later,
+             * update the existing notification instead of creating another
+             * duplicate notification.
+             */
+            $trackingNumber =
+                $shipment->tracking_number
+                ?: 'Shipment #' . $shipment->id;
+
+            $notificationMessage =
+                'Pickup ' . $trackingNumber
+                . ' is waiting for your response. '
+                . 'Please accept or decline within 10 minutes.';
+
+            $notification = Notification::query()
+                ->where('user_id', $rider->id)
+                ->where('title', 'New Seller Pickup Request')
+                ->where(
+                    'message',
+                    $notificationMessage
+                )
+                ->first();
+
+            if ($notification) {
+                $notification->update([
+                    'type' => 'order',
+                    'link' => route('rider.pickups'),
+                    'updated_at' => now(),
+                ]);
+            } else {
+                Notification::create([
+                    'user_id' => $rider->id,
+                    'title' => 'New Seller Pickup Request',
+                    'message' => $notificationMessage,
+                    'type' => 'order',
+                    'link' => route('rider.pickups'),
+                ]);
+            }
 
             return $offer;
         });
