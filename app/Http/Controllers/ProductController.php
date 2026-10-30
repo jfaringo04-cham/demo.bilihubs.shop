@@ -6,6 +6,7 @@ use App\Models\Category;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\Review;
+use App\Models\Voucher;
 use App\Services\ComplianceMonitor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -138,6 +139,71 @@ class ProductController extends Controller
             ->values()
             ->all();
 
+        $availableSellerVouchers = collect();
+
+        if ($product->seller_id) {
+            $availableSellerVouchers = Voucher::query()
+                ->with([
+                    'seller',
+                    'products:id',
+                ])
+                ->currentlyActive()
+                ->where('owner_type', 'seller')
+                ->where('seller_id', $product->seller_id)
+                ->whereHas('seller', function ($query) {
+                    $query->where('status', 'approved');
+                })
+                ->where(function ($query) {
+                    $query
+                        ->whereNull('usage_limit')
+                        ->orWhereColumn(
+                            'usage_count',
+                            '<',
+                            'usage_limit'
+                        );
+                })
+                ->where(function ($query) use ($product) {
+                    $query
+                        ->where('product_scope', 'all')
+                        ->orWhere(function ($selected) use ($product) {
+                            $selected
+                                ->where('product_scope', 'selected')
+                                ->whereHas(
+                                    'products',
+                                    function ($products) use ($product) {
+                                        $products->where(
+                                            'products.id',
+                                            $product->id
+                                        );
+                                    }
+                                );
+                        });
+                })
+                ->orderBy('ends_at')
+                ->orderBy('id')
+                ->get();
+
+            if (Auth::check()) {
+                $userId = (int) Auth::id();
+
+                $availableSellerVouchers =
+                    $availableSellerVouchers
+                        ->filter(function ($voucher) use ($userId) {
+                            if ($voucher->per_user_limit === null) {
+                                return true;
+                            }
+
+                            $used = $voucher->redemptions()
+                                ->where('user_id', $userId)
+                                ->where('status', 'redeemed')
+                                ->count();
+
+                            return $used < (int) $voucher->per_user_limit;
+                        })
+                        ->values();
+            }
+        }
+
         $reviews = $product->reviews()
             ->with('user')
             ->latest()
@@ -183,7 +249,8 @@ class ProductController extends Controller
                 'averageRating',
                 'totalReviews',
                 'canReview',
-                'variationsJson'
+                'variationsJson',
+                'availableSellerVouchers'
             )
         );
     }

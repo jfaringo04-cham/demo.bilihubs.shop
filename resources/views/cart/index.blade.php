@@ -115,6 +115,78 @@
       </table>
     </div>
 
+    @if(($availableSellerVouchers ?? collect())->isNotEmpty())
+    <div
+      class="border-top p-3"
+      data-buyer-voucher-discovery="cart"
+    >
+      <div class="fw-bold mb-2">
+        <i class="bi bi-ticket-perforated-fill text-primary me-1"></i>
+        Seller Vouchers Available
+      </div>
+
+      <div class="row g-2">
+        @foreach($availableSellerVouchers as $voucher)
+        <div class="col-lg-6">
+          <div class="border rounded-3 p-3 h-100">
+            <div class="d-flex justify-content-between gap-2">
+              <div>
+                <div class="fw-semibold">{{ $voucher->name }}</div>
+                <small class="text-muted">
+                  {{ $voucher->seller->name ?? 'Seller Voucher' }}
+                </small>
+              </div>
+
+              <span class="badge text-bg-light border text-dark">
+                {{ $voucher->code }}
+              </span>
+            </div>
+
+            <div class="text-success fw-semibold mt-2">
+              @if($voucher->discount_type === 'fixed')
+                &#8369;{{ number_format($voucher->discount_value_minor / 100, 2) }} OFF
+              @else
+                {{ rtrim(rtrim(number_format($voucher->discount_percent_bps / 100, 2), '0'), '.') }}% OFF
+                @if($voucher->maximum_discount_minor !== null)
+                  up to &#8369;{{ number_format($voucher->maximum_discount_minor / 100, 2) }}
+                @endif
+              @endif
+            </div>
+
+            @if($voucher->minimum_spend_minor > 0)
+            <small class="text-muted d-block mt-1">
+              Minimum seller spend:
+              &#8369;{{ number_format($voucher->minimum_spend_minor / 100, 2) }}
+            </small>
+            @endif
+
+            @if(($voucher->remaining_spend_minor ?? 0) > 0)
+            <small class="text-warning d-block mt-1">
+              Add
+              &#8369;{{ number_format($voucher->remaining_spend_minor / 100, 2) }}
+              more from this seller to qualify.
+            </small>
+            @else
+            <small class="text-success d-block mt-1">
+              Ready to use at checkout.
+            </small>
+            @endif
+
+            <div class="small mt-2">
+              Checkout code:
+              <strong>{{ $voucher->code }}</strong>
+            </div>
+          </div>
+        </div>
+        @endforeach
+      </div>
+
+      <small class="text-muted d-block mt-2">
+        Enter one voucher code in the existing voucher field during checkout.
+      </small>
+    </div>
+    @endif
+
     <div class="card-footer bg-white border-0 py-3">
       <div class="d-flex justify-content-between align-items-center">
         <h4 class="mb-0 fw-bold">Total: <span class="text-sky-500">&#8369;{{ number_format($total, 2) }}</span></h4>

@@ -79,6 +79,62 @@
     </small>
 @endif
 
+@if(($availableSellerVouchers ?? collect())->isNotEmpty())
+<div
+  class="mt-3 border rounded-3 p-3 bg-light"
+  data-buyer-voucher-discovery="product"
+>
+  <div class="fw-bold mb-2">
+    <i class="bi bi-ticket-perforated-fill text-primary me-1"></i>
+    Seller Voucher Available
+  </div>
+
+  <div class="d-grid gap-2">
+    @foreach($availableSellerVouchers as $voucher)
+    <div class="border rounded-2 bg-white p-2">
+      <div class="d-flex justify-content-between gap-2 align-items-start">
+        <div>
+          <div class="fw-semibold">{{ $voucher->name }}</div>
+
+          @if($voucher->description)
+          <small class="text-muted">
+            {{ $voucher->description }}
+          </small>
+          @endif
+        </div>
+
+        <span class="badge text-bg-light border text-dark">
+          {{ $voucher->code }}
+        </span>
+      </div>
+
+      <div class="text-success fw-semibold mt-2">
+        @if($voucher->discount_type === 'fixed')
+          &#8369;{{ number_format($voucher->discount_value_minor / 100, 2) }} OFF
+        @else
+          {{ rtrim(rtrim(number_format($voucher->discount_percent_bps / 100, 2), '0'), '.') }}% OFF
+          @if($voucher->maximum_discount_minor !== null)
+            up to &#8369;{{ number_format($voucher->maximum_discount_minor / 100, 2) }}
+          @endif
+        @endif
+      </div>
+
+      @if($voucher->minimum_spend_minor > 0)
+      <small class="text-muted d-block">
+        Minimum seller spend:
+        &#8369;{{ number_format($voucher->minimum_spend_minor / 100, 2) }}
+      </small>
+      @endif
+
+      <small class="text-muted d-block mt-1">
+        Use code <strong>{{ $voucher->code }}</strong> during checkout.
+      </small>
+    </div>
+    @endforeach
+  </div>
+</div>
+@endif
+
       <div class="mt-4">
         <span class="text-muted d-block mb-1">Category: <span class="text-slate-800">{{ $product->category->name ?? 'Uncategorized' }}</span></span>
         <span class="text-muted d-block mb-1">
