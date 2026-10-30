@@ -821,13 +821,10 @@ class ApiService {
     try {
       final String? token = await AuthStorage.getToken();
 
-      // TEMPORARY DEBUG ONLY - remove after testing.
-      debugPrint('RIDER TOKEN: $token');
-
       if (token == null || token.trim().isEmpty) {
-        debugPrint('=== RIDER DELIVERIES API ===');
-        debugPrint('ERROR: Authentication token not found.');
-        debugPrint('============================');
+        debugPrint('=== RIDER DELIVERIES ===');
+        debugPrint('NO AUTH TOKEN FOUND');
+        debugPrint('========================');
 
         return {
           'success': false,
@@ -839,12 +836,10 @@ class ApiService {
       final Uri uri = Uri.parse('$baseUrl/rider/orders');
 
       debugPrint('');
-      debugPrint('==========================================');
+      debugPrint('======================================');
       debugPrint('=== RIDER DELIVERIES API REQUEST ===');
-      debugPrint('METHOD: GET');
       debugPrint('URL: $uri');
-      debugPrint('TOKEN EXISTS: true');
-      debugPrint('==========================================');
+      debugPrint('======================================');
 
       final http.Response response = await http.get(
         uri,
@@ -852,11 +847,11 @@ class ApiService {
       );
 
       debugPrint('');
-      debugPrint('==========================================');
+      debugPrint('======================================');
       debugPrint('=== RIDER DELIVERIES API RESPONSE ===');
       debugPrint('STATUS: ${response.statusCode}');
       debugPrint('BODY: ${response.body}');
-      debugPrint('==========================================');
+      debugPrint('======================================');
       debugPrint('');
 
       final dynamic decoded = _decodeResponse(response.body);
@@ -870,6 +865,28 @@ class ApiService {
         final Map<String, dynamic> meta = _extractMeta(decoded);
 
         debugPrint('RIDER DELIVERIES COUNT: ${deliveries.length}');
+
+        for (int index = 0; index < deliveries.length; index++) {
+          final dynamic item = deliveries[index];
+
+          if (item is Map) {
+            final Map<String, dynamic> shipment = Map<String, dynamic>.from(
+              item,
+            );
+
+            debugPrint(
+              'RIDER ITEM #${index + 1}: '
+              'id=${shipment['id']} | '
+              'tracking=${shipment['tracking_number']} | '
+              'assignment=${shipment['assignment_type']} | '
+              'pickup_rider_id=${shipment['pickup_rider_id']} | '
+              'rider_id=${shipment['rider_id']} | '
+              'status=${shipment['status']} | '
+              'sorting_status=${shipment['sorting_status']} | '
+              'received=${shipment['received_by_sorting_center']}',
+            );
+          }
+        }
 
         return {
           'success': true,
@@ -888,16 +905,16 @@ class ApiService {
         fallback: 'Unable to load rider deliveries.',
       );
 
-      debugPrint('RIDER DELIVERIES ERROR MESSAGE: ${error['message']}');
+      debugPrint('RIDER DELIVERIES ERROR: ${error['message']}');
 
       return error;
     } catch (e, stackTrace) {
       debugPrint('');
-      debugPrint('==========================================');
-      debugPrint('=== RIDER DELIVERIES EXCEPTION ===');
+      debugPrint('======================================');
+      debugPrint('=== RIDER DELIVERIES API ERROR ===');
       debugPrint('ERROR: $e');
       debugPrint('STACK TRACE: $stackTrace');
-      debugPrint('==========================================');
+      debugPrint('======================================');
       debugPrint('');
 
       return {
@@ -1090,6 +1107,185 @@ class ApiService {
       );
     } catch (e) {
       return {'success': false, 'message': 'Unable to scan waybill: $e'};
+    }
+  }
+
+  // ============================================================
+  // RIDER SELLER PICKUP - MARK PICKED UP / IN TRANSIT
+  // POST /api/rider/pickups/{shipment}/picked-up
+  // ============================================================
+
+  static Future<Map<String, dynamic>> markRiderSellerPickupInTransit({
+    required int shipmentId,
+  }) async {
+    try {
+      if (shipmentId <= 0) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid shipment ID.',
+        };
+      }
+
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
+      }
+
+      final http.Response response = await http.post(
+        Uri.parse('$baseUrl/rider/pickups/$shipmentId/picked-up'),
+        headers: _authHeaders(token, json: true),
+        body: jsonEncode(<String, dynamic>{}),
+      );
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final Map<String, dynamic> root = decoded is Map<String, dynamic>
+            ? _extractMapRoot(decoded)
+            : <String, dynamic>{};
+
+        return {
+          'success': true,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            decoded,
+            fallback: 'Seller pickup marked as in transit.',
+          ),
+          'data': root,
+        };
+      }
+
+      if (response.statusCode == 422) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': _getMessage(
+            decoded,
+            fallback: 'This seller pickup cannot be marked as in transit.',
+          ),
+          'errors': decoded is Map<String, dynamic> ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage:
+            'This shipment is not assigned to you for seller pickup.',
+        notFoundMessage:
+            'Seller pickup API is not available yet. '
+            'The Laravel pickup endpoint still needs to be added.',
+        fallback: 'Unable to update seller pickup status.',
+      );
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Unable to update seller pickup: $e',
+      };
+    }
+  }
+
+  // ============================================================
+  // RIDER SELLER PICKUP - ARRIVED AT SORTING CENTER
+  // POST /api/rider/pickups/{shipment}/deliver-to-sorting-center
+  // ============================================================
+
+  static Future<Map<String, dynamic>> deliverRiderPickupToSortingCenter({
+    required int shipmentId,
+    String? notes,
+  }) async {
+    try {
+      if (shipmentId <= 0) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid shipment ID.',
+        };
+      }
+
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
+      }
+
+      final String normalizedNotes = notes?.trim() ?? '';
+      final Map<String, dynamic> requestBody = <String, dynamic>{};
+
+      if (normalizedNotes.isNotEmpty) {
+        requestBody['notes'] = normalizedNotes;
+      }
+
+      final http.Response response = await http.post(
+        Uri.parse(
+          '$baseUrl/rider/pickups/'
+          '$shipmentId/deliver-to-sorting-center',
+        ),
+        headers: _authHeaders(token, json: true),
+        body: jsonEncode(requestBody),
+      );
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final Map<String, dynamic> root = decoded is Map<String, dynamic>
+            ? _extractMapRoot(decoded)
+            : <String, dynamic>{};
+
+        return {
+          'success': true,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            decoded,
+            fallback:
+                'Parcel arrived at the sorting center. '
+                'Awaiting Logistics confirmation.',
+          ),
+          'data': root,
+        };
+      }
+
+      if (response.statusCode == 422) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': _getMessage(
+            decoded,
+            fallback:
+                'This parcel cannot be handed over '
+                'to the sorting center yet.',
+          ),
+          'errors': decoded is Map<String, dynamic> ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage:
+            'This shipment is not assigned to you for seller pickup.',
+        notFoundMessage:
+            'Sorting-center handoff API is not available yet. '
+            'The Laravel pickup endpoint still needs to be added.',
+        fallback:
+            'Unable to mark this parcel as arrived '
+            'at the sorting center.',
+      );
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Unable to update sorting-center handoff: $e',
+      };
     }
   }
 
@@ -1325,25 +1521,43 @@ class ApiService {
   static Future<Map<String, dynamic>> updateRiderDeliveryStatus({
     required int shipmentId,
     required String status,
+    String? failureReason,
+    String? deliveryNotes,
   }) async {
     try {
       final String? token = await AuthStorage.getToken();
 
       if (token == null || token.trim().isEmpty) {
-        return {'success': false, 'message': 'Authentication token not found.'};
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
       }
 
       if (shipmentId <= 0) {
-        return {'success': false, 'message': 'Invalid shipment ID.'};
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid shipment ID.',
+        };
       }
 
-      final String normalizedStatus = status.trim().toLowerCase();
+      String normalizedStatus = status
+          .trim()
+          .toLowerCase()
+          .replaceAll(' ', '_')
+          .replaceAll('-', '_');
 
-      const Set<String> allowedStatuses = {
+      if (normalizedStatus == 'failed') {
+        normalizedStatus = 'delivery_failed';
+      }
+
+      const Set<String> allowedStatuses = <String>{
         'in_transit',
         'out_for_delivery',
         'delivered',
-        'failed',
+        'delivery_failed',
       };
 
       if (!allowedStatuses.contains(normalizedStatus)) {
@@ -1354,13 +1568,35 @@ class ApiService {
         };
       }
 
-      final response = await http.put(
+      final String normalizedFailureReason = failureReason?.trim() ?? '';
+
+      final String normalizedDeliveryNotes = deliveryNotes?.trim() ?? '';
+
+      final Map<String, dynamic> requestBody = <String, dynamic>{
+        'status': normalizedStatus,
+      };
+
+      if (normalizedDeliveryNotes.isNotEmpty) {
+        requestBody['delivery_notes'] = normalizedDeliveryNotes;
+      }
+
+      if (normalizedStatus == 'delivery_failed') {
+        final String reason = normalizedFailureReason.isNotEmpty
+            ? normalizedFailureReason
+            : normalizedDeliveryNotes.isNotEmpty
+            ? normalizedDeliveryNotes
+            : 'Delivery failed.';
+
+        requestBody['failure_reason'] = reason;
+      }
+
+      final http.Response response = await http.put(
         Uri.parse(
           '$baseUrl/rider/orders/'
           '$shipmentId/status',
         ),
         headers: _authHeaders(token, json: true),
-        body: jsonEncode({'status': normalizedStatus}),
+        body: jsonEncode(requestBody),
       );
 
       final dynamic decoded = _decodeResponse(response.body);
@@ -1396,9 +1632,7 @@ class ApiService {
           'status_code': 422,
           'message': _getMessage(
             decoded,
-            fallback:
-                'The delivery status '
-                'could not be updated.',
+            fallback: 'The delivery status could not be updated.',
           ),
           'errors': decoded is Map<String, dynamic> ? decoded['errors'] : null,
         };
@@ -1411,16 +1645,12 @@ class ApiService {
             'This shipment is not assigned '
             'to this rider.',
         notFoundMessage: 'Rider shipment was not found.',
-        fallback:
-            'Unable to update '
-            'delivery status.',
+        fallback: 'Unable to update delivery status.',
       );
     } catch (e) {
       return {
         'success': false,
-        'message':
-            'Unable to update '
-            'delivery status: $e',
+        'message': 'Unable to update delivery status: $e',
       };
     }
   }
