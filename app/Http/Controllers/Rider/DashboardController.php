@@ -1574,95 +1574,176 @@ class DashboardController extends Controller
     }
 
     public function account()
-
     {
-
         $user = Auth::user();
 
-        return view('rider.account', compact('user'));
+        $user->load([
+            'logistic',
+            'hub',
+        ]);
+
+        $profilePhotoUrl = null;
+
+        if ($user->profile_photo_path) {
+            try {
+                $profilePhotoUrl = \Illuminate\Support\Facades\Storage::disk('s3')
+                    ->url($user->profile_photo_path);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+
+        return view('rider.account', compact(
+            'user',
+            'profilePhotoUrl'
+        ));
     }
 
     public function updateAccount(Request $request)
-
     {
-
         $user = Auth::user();
 
-        $request->validate([
-
+        $validated = $request->validate([
             'first_name' => ['required', 'string', 'max:255'],
-
-            'last_name' => ['required', 'string', 'max:255'],
-
             'middle_name' => ['nullable', 'string', 'max:255'],
-
+            'last_name' => ['required', 'string', 'max:255'],
             'sex' => ['required', 'in:Male,Female'],
 
-            'email' => ['required', 'email', 'max:255'],
+            'email' => [
+                'required',
+                'email',
+                'max:255',
+                \Illuminate\Validation\Rule::unique('users', 'email')
+                    ->ignore($user->id),
+            ],
 
-            'mobile_number' => ['required', 'string', 'max:20'],
+            'mobile_number' => [
+                'required',
+                'string',
+                'max:20',
+                \Illuminate\Validation\Rule::unique('users', 'mobile_number')
+                    ->ignore($user->id),
+            ],
 
             'birthday' => ['required', 'date'],
-
             'age' => ['nullable', 'integer', 'min:0', 'max:120'],
 
+            'region' => ['required', 'string', 'max:255'],
             'province' => ['required', 'string', 'max:255'],
-
             'municipality' => ['required', 'string', 'max:255'],
-
             'barangay' => ['required', 'string', 'max:255'],
-
             'house_number' => ['nullable', 'string', 'max:50'],
-
             'street_address' => ['nullable', 'string', 'max:255'],
 
-            'vehicle_type' => ['required', 'string', 'in:motorcycle,car,van,truck'],
+            'vehicle_type' => [
+                'required',
+                'string',
+                'in:motorcycle,car,van,truck',
+            ],
 
             'license_number' => ['required', 'string', 'max:255'],
 
+            'profile_photo' => [
+                'nullable',
+                'image',
+                'mimes:jpg,jpeg,png,webp',
+                'max:2048',
+            ],
+
+            'remove_profile_photo' => [
+                'nullable',
+                'boolean',
+            ],
         ]);
 
-        $userData = [
+        /*
+    |--------------------------------------------------------------------------
+    | Profile Photo
+    |--------------------------------------------------------------------------
+    */
 
-            'first_name' => $request->first_name,
+        if ($request->boolean('remove_profile_photo')) {
+            if ($user->profile_photo_path) {
+                try {
+                    \Illuminate\Support\Facades\Storage::disk('s3')
+                        ->delete($user->profile_photo_path);
+                } catch (\Throwable $e) {
+                    report($e);
+                }
+            }
 
-            'middle_name' => $request->middle_name,
+            $user->profile_photo_path = null;
+        }
 
-            'last_name' => $request->last_name,
+        if ($request->hasFile('profile_photo')) {
+            $oldProfilePhoto = $user->profile_photo_path;
 
-            'name' => $request->last_name . ', ' . $request->first_name . ' ' . $request->middle_name,
+            $path = $request
+                ->file('profile_photo')
+                ->store('profile-pictures', 's3');
 
-            'sex' => $request->sex,
+            if (!$path) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        'profile_photo' =>
+                        'Unable to upload profile photo. Please try again.',
+                    ]);
+            }
 
-            'email' => $request->email,
+            $user->profile_photo_path = $path;
 
-            'mobile_number' => $request->mobile_number,
+            if ($oldProfilePhoto && $oldProfilePhoto !== $path) {
+                try {
+                    \Illuminate\Support\Facades\Storage::disk('s3')
+                        ->delete($oldProfilePhoto);
+                } catch (\Throwable $e) {
+                    report($e);
+                }
+            }
+        }
 
-            'birthday' => $request->birthday,
+        /*
+    |--------------------------------------------------------------------------
+    | Editable Rider Profile Fields
+    |--------------------------------------------------------------------------
+    */
 
-            'age' => $request->age,
+        $user->first_name = $validated['first_name'];
+        $user->middle_name = $validated['middle_name'] ?? null;
+        $user->last_name = $validated['last_name'];
 
-            'province' => $request->province,
+        $nameParts = array_filter([
+            $validated['first_name'],
+            $validated['middle_name'] ?? null,
+            $validated['last_name'],
+        ]);
 
-            'municipality' => $request->municipality,
+        $user->name = implode(' ', $nameParts);
 
-            'barangay' => $request->barangay,
+        $user->sex = $validated['sex'];
+        $user->email = $validated['email'];
+        $user->mobile_number = $validated['mobile_number'];
+        $user->birthday = $validated['birthday'];
+        $user->age = $validated['age'] ?? null;
 
-            'house_number' => $request->house_number,
+        $user->region = $validated['region'];
+        $user->province = $validated['province'];
+        $user->municipality = $validated['municipality'];
+        $user->barangay = $validated['barangay'];
+        $user->house_number = $validated['house_number'] ?? null;
+        $user->street_address = $validated['street_address'] ?? null;
 
-            'street_address' => $request->street_address,
+        $user->vehicle_type = $validated['vehicle_type'];
+        $user->license_number = $validated['license_number'];
 
-            'vehicle_type' => $request->vehicle_type,
+        $user->save();
 
-            'license_number' => $request->license_number,
-
-        ];
-
-        $user->update($userData);
-
-        return back()->with('success', 'Account updated successfully.');
+        return back()->with(
+            'success',
+            'Account updated successfully.'
+        );
     }
-
     public function markNotificationRead(Request $request, Notification $notification)
     {
         abort_unless(
