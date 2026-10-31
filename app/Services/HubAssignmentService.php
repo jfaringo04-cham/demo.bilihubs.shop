@@ -372,11 +372,16 @@ class HubAssignmentService
 
     public static function findBestRiderForHub(Hub $hub): ?User
     {
-        return User::whereHas('roles', function ($query) {
+        return User::query()
+            ->whereHas('roles', function ($query) {
                 $query->where('name', 'rider');
             })
+            ->where('status', User::STATUS_ACTIVE)
+            ->where('logistic_status', 'approved')
+            ->where('logistic_id', $hub->logistic_id)
             ->where('hub_id', $hub->id)
             ->where('availability_status', 'available')
+            ->where('max_capacity', '>', 0)
             ->whereColumn('current_load', '<', 'max_capacity')
             ->orderBy('current_load')
             ->orderBy('id')

@@ -1641,7 +1641,10 @@ class LogisticController extends Controller
                 }
             }
 
-            if (!$shipment->hub_id) {
+            $destinationHubId = $shipment->destination_hub_id
+                ?: $shipment->hub_id;
+
+            if (!$destinationHubId) {
                 $skippedCount++;
                 continue;
             }
@@ -1660,7 +1663,7 @@ class LogisticController extends Controller
                 ->where('max_capacity', '>', 0)
                 ->whereColumn('current_load', '<', 'max_capacity');
 
-            $riderQuery->where('hub_id', $shipment->hub_id);
+            $riderQuery->where('hub_id', $destinationHubId);
 
             $rider = (clone $riderQuery)
                 ->where('assigned_zone', $zone)
