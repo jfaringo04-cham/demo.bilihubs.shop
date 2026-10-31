@@ -807,7 +807,20 @@ Route::middleware('auth')->group(function () {
 
         Route::post('/hubs/{hub}/riders/unassign', [LogisticController::class, 'unassignRiderFromHub'])->name('hubs.riders.unassign');
 
-        Route::get('/notifications', [LogisticController::class, 'notifications'])->name('notifications');
+        Route::get(
+            '/notifications',
+            [LogisticController::class, 'notifications']
+        )->name('notifications');
+
+        Route::post(
+            '/notifications/read-all',
+            [LogisticController::class, 'markAllNotificationsRead']
+        )->name('notifications.readAll');
+
+        Route::post(
+            '/notifications/{notification}/read',
+            [LogisticController::class, 'markNotificationRead']
+        )->name('notifications.read');
 
         Route::get('/about', [LogisticController::class, 'about'])->name('about');
 
