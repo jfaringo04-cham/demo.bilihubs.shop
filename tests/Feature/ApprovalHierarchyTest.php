@@ -81,6 +81,9 @@ class ApprovalHierarchyTest extends TestCase
             $table->string('business_permit')->nullable();
             $table->string('id_verification')->nullable();
             $table->string('vehicle_type')->nullable();
+            $table->integer('max_capacity')->default(10);
+            $table->integer('current_load')->default(0);
+            $table->string('availability_status')->default('offline');
             $table->string('license_number')->nullable();
             $table->string('or_document')->nullable();
             $table->string('cr_document')->nullable();
@@ -213,6 +216,10 @@ class ApprovalHierarchyTest extends TestCase
         return $this->makeUser('rider', $status, array_merge([
             'logistic_id' => $logistic?->id,
             'logistic_status' => $logisticStatus,
+            'vehicle_type' => 'motorcycle',
+            'max_capacity' => 5,
+            'current_load' => 0,
+            'availability_status' => 'offline',
         ], $attributes));
     }
 

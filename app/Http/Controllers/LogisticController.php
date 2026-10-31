@@ -327,14 +327,40 @@ class LogisticController extends Controller
         $logistic = Auth::user()->ownedLogistic;
 
         abort_unless(
-            $logistic && $rider->logistic_id && (int) $rider->logistic_id === (int) $logistic->id,
+            $logistic &&
+                $rider->logistic_id &&
+                (int) $rider->logistic_id === (int) $logistic->id,
             403,
             'This rider does not belong to your logistics company.'
         );
 
-        abort_unless($rider->logistic_status === 'pending', 422, 'Invalid rider application.');
+        abort_unless(
+            $rider->logistic_status === 'pending',
+            422,
+            'Invalid rider application.'
+        );
+
+        $vehicleType = strtolower(trim((string) $rider->vehicle_type));
+
+        abort_unless(
+            in_array($vehicleType, ['motorcycle', 'car', 'van', 'truck'], true),
+            422,
+            'The rider has an invalid vehicle type.'
+        );
+
+        $maxCapacity = match ($vehicleType) {
+            'motorcycle' => 5,
+            'car' => 10,
+            'van' => 30,
+            'truck' => 100,
+        };
 
         $rider->update([
+            'vehicle_type' => $vehicleType,
+            'max_capacity' => $maxCapacity,
+            'current_load' => 0,
+            'availability_status' => 'offline',
+
             'logistic_status' => 'approved',
             'logistic_approved_at' => now(),
             'logistic_rejection_reason' => null,
@@ -344,11 +370,16 @@ class LogisticController extends Controller
         $this->createNotification(
             $rider->id,
             'Application Approved by Logistics',
-            'Your application to join ' . $logistic->company_name . ' has been approved. You can now log in and start receiving deliveries.',
+            'Your application to join ' . $logistic->company_name .
+                ' has been approved. You can now log in to your rider account. ' .
+                'You will remain offline until you are ready and eligible for assignments.',
             'logistic'
         );
 
-        return back()->with('success', 'Rider application approved. Rider can now log in.');
+        return back()->with(
+            'success',
+            'Rider application approved successfully.'
+        );
     }
 
     public function rejectRiderApplication(Request $request, User $rider)
