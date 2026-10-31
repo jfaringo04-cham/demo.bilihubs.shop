@@ -207,84 +207,261 @@ class OrderController extends Controller
             'reason' => 'required|string|max:1000',
         ]);
 
-        // The order lock serializes repeat or simultaneous cancellation requests.
-        // Stock restoration and the status transition must commit together.
-        $cancelled = DB::transaction(function () use ($order, $validated) {
-            $lockedOrder = Order::query()
-                ->whereKey($order->id)
-                ->lockForUpdate()
-                ->firstOrFail();
+        try {
+            $cancelled = DB::transaction(
+                function () use ($order, $validated) {
+                    $lockedOrder = Order::query()
+                        ->whereKey($order->id)
+                        ->lockForUpdate()
+                        ->firstOrFail();
 
-            if (!in_array($lockedOrder->status, ['placed', 'confirmed', 'preparing'], true)) {
-                return false;
-            }
+                    if (
+                        !in_array(
+                            $lockedOrder->status,
+                            ['pending', 'placed', 'confirmed', 'preparing'],
+                            true
+                        )
+                    ) {
+                        return false;
+                    }
 
-            $items = $lockedOrder->items()->get();
+                    $sellerOrderIds = $lockedOrder
+                        ->sellerOrders()
+                        ->pluck('id');
 
-            // Consistent product locking order helps avoid deadlocks with checkout.
-            $productIds = $items->pluck('product_id')
-                ->filter()
-                ->unique()
-                ->sort()
-                ->values();
+                    $shipments = \App\Models\Shipment::query()
+                        ->whereIn(
+                            'seller_order_id',
+                            $sellerOrderIds
+                        )
+                        ->lockForUpdate()
+                        ->get();
 
-            foreach ($productIds as $productId) {
-                \App\Models\Product::query()
-                    ->whereKey($productId)
-                    ->lockForUpdate()
-                    ->first();
-            }
+                    /*
+                |--------------------------------------------------------------------------
+                | PHYSICAL CUSTODY GUARD
+                |--------------------------------------------------------------------------
+                |
+                | Once a parcel is already physically with a rider or has
+                | entered logistics processing, normal buyer cancellation
+                | is no longer allowed.
+                |
+                */
+                    foreach ($shipments as $shipment) {
+                        if (
+                            in_array(
+                                $shipment->status,
+                                [
+                                    'picked_up',
+                                    'in_transit',
+                                    'at_sorting_center',
+                                    'sorted',
+                                    'staged',
+                                    'assigned_to_rider',
+                                    'out_for_delivery',
+                                    'delivery_failed',
+                                    'failed_return_at_sorting_center',
+                                    'delivered',
+                                ],
+                                true
+                            )
+                        ) {
+                            throw new \RuntimeException(
+                                'Order can no longer be cancelled because '
+                                    . 'a parcel is already in the logistics '
+                                    . 'delivery process.'
+                            );
+                        }
+                    }
 
-            foreach ($items as $item) {
-                $quantity = (int) $item->quantity;
-                if ($quantity <= 0) {
-                    continue;
-                }
+                    /*
+                |--------------------------------------------------------------------------
+                | RELEASE RESERVED RIDER CAPACITY
+                |--------------------------------------------------------------------------
+                */
+                    foreach ($shipments as $shipment) {
+                        $riderIds = collect([
+                            $shipment->pickup_rider_id,
+                            $shipment->rider_id,
+                        ])
+                            ->filter()
+                            ->unique()
+                            ->values();
 
-                // Increment the pivot directly, avoiding stale relationship stock values.
-                if ($item->size_id && $item->product_id) {
-                    DB::table('product_size')
-                        ->where('product_id', $item->product_id)
-                        ->where('size_id', $item->size_id)
-                        ->increment('stock', $quantity);
-                }
+                        foreach ($riderIds as $riderId) {
+                            $rider = \App\Models\User::query()
+                                ->whereKey($riderId)
+                                ->lockForUpdate()
+                                ->first();
 
-                if ($item->variant_id) {
-                    DB::table('product_variants')
-                        ->where('id', $item->variant_id)
-                        ->where('product_id', $item->product_id)
-                        ->increment('stock', $quantity);
-                }
+                            if (!$rider) {
+                                continue;
+                            }
 
-                if ($item->product_id) {
-                    DB::table('products')
-                        ->where('id', $item->product_id)
-                        ->increment('stock', $quantity);
-                }
-            }
+                            $newLoad = max(
+                                0,
+                                (int) $rider->current_load - 1
+                            );
 
-            $lockedOrder->update([
-                'status' => 'cancelled',
-                'notes' => ($lockedOrder->notes ? $lockedOrder->notes . "\n" : '') .
-                    'Cancellation reason: ' . $validated['reason'],
-            ]);
+                            $capacity = $rider->max_capacity;
 
-            return true;
-        }, 3);
+                            $rider->update([
+                                'current_load' => $newLoad,
+                                'availability_status' =>
+                                $capacity === null ||
+                                    $newLoad < (int) $capacity
+                                    ? 'available'
+                                    : 'busy',
+                            ]);
+                        }
+
+                        $shipmentUpdates = [
+                            'rider_id' => null,
+                            'status' => 'cancelled',
+                        ];
+
+                        if (
+                            \Illuminate\Support\Facades\Schema::hasColumn(
+                                'shipments',
+                                'pickup_rider_id'
+                            )
+                        ) {
+                            $shipmentUpdates['pickup_rider_id'] = null;
+                        }
+
+                        $shipment->update($shipmentUpdates);
+                    }
+
+                    /*
+                |--------------------------------------------------------------------------
+                | RESTORE INVENTORY
+                |--------------------------------------------------------------------------
+                */
+                    $items = $lockedOrder
+                        ->items()
+                        ->get();
+
+                    $productIds = $items
+                        ->pluck('product_id')
+                        ->filter()
+                        ->unique()
+                        ->sort()
+                        ->values();
+
+                    foreach ($productIds as $productId) {
+                        \App\Models\Product::query()
+                            ->whereKey($productId)
+                            ->lockForUpdate()
+                            ->first();
+                    }
+
+                    foreach ($items as $item) {
+                        $quantity = (int) $item->quantity;
+
+                        if ($quantity <= 0) {
+                            continue;
+                        }
+
+                        if (
+                            $item->size_id &&
+                            $item->product_id
+                        ) {
+                            DB::table('product_size')
+                                ->where(
+                                    'product_id',
+                                    $item->product_id
+                                )
+                                ->where(
+                                    'size_id',
+                                    $item->size_id
+                                )
+                                ->increment(
+                                    'stock',
+                                    $quantity
+                                );
+                        }
+
+                        if ($item->variant_id) {
+                            DB::table('product_variants')
+                                ->where(
+                                    'id',
+                                    $item->variant_id
+                                )
+                                ->where(
+                                    'product_id',
+                                    $item->product_id
+                                )
+                                ->increment(
+                                    'stock',
+                                    $quantity
+                                );
+                        }
+
+                        if ($item->product_id) {
+                            DB::table('products')
+                                ->where(
+                                    'id',
+                                    $item->product_id
+                                )
+                                ->increment(
+                                    'stock',
+                                    $quantity
+                                );
+                        }
+                    }
+
+                    /*
+                |--------------------------------------------------------------------------
+                | KEEP ORDER / SELLER ORDER / SHIPMENT IN SYNC
+                |--------------------------------------------------------------------------
+                */
+                    $lockedOrder->sellerOrders()->update([
+                        'status' => 'cancelled',
+                    ]);
+
+                    $lockedOrder->update([
+                        'status' => 'cancelled',
+                        'notes' => (
+                            $lockedOrder->notes
+                            ? $lockedOrder->notes . "\n"
+                            : ''
+                        )
+                            . 'Cancellation reason: '
+                            . $validated['reason'],
+                    ]);
+
+                    return true;
+                },
+                3
+            );
+        } catch (\RuntimeException $e) {
+            return back()->with(
+                'error',
+                $e->getMessage()
+            );
+        }
 
         if (!$cancelled) {
-            return back()->with('error', 'Order cannot be cancelled at this stage.');
+            return back()->with(
+                'error',
+                'Order cannot be cancelled at this stage.'
+            );
         }
 
         $this->createNotification(
             $order->user_id,
             'Order Cancelled',
-            'Your order ' . $order->order_number . ' has been cancelled.',
+            'Your order '
+                . $order->order_number
+                . ' has been cancelled.',
             'order',
             route('orders.index')
         );
 
-        return back()->with('success', 'Order cancelled successfully.');
+        return back()->with(
+            'success',
+            'Order cancelled successfully.'
+        );
     }
 
     public function confirmReceived(Request $request, Order $order)

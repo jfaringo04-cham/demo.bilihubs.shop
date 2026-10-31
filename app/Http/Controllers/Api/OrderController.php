@@ -348,66 +348,228 @@ return response()->json([
     }
 
     public function cancel(Order $order)
-{
-    if ($order->user_id !== Auth::id()) {
-        return response()->json(['message' => 'Unauthorized'], 403);
-    }
-
-    if (!in_array($order->status, ['pending', 'confirmed', 'preparing'])) {
-        return response()->json([
-            'message' => 'Order cannot be cancelled at this stage.',
-        ], 422);
-    }
-
-    DB::beginTransaction();
-
-    try {
-        $order->loadMissing([
-            'items.product',
-            'items.variation',
-        ]);
-
-        // Restore inventory first.
-        foreach ($order->items as $item) {
-            if ($item->variant_id && $item->variation) {
-                $item->variation->increment('stock', $item->quantity);
-            } elseif ($item->product) {
-                $item->product->increment('stock', $item->quantity);
-            }
-
-            if ($item->size_id) {
-                DB::table('product_size')
-                    ->where('product_id', $item->product_id)
-                    ->where('size_id', $item->size_id)
-                    ->increment('stock', $item->quantity);
-            }
+    {
+        if ((int) $order->user_id !== (int) Auth::id()) {
+            return response()->json([
+                'message' => 'Unauthorized',
+            ], 403);
         }
 
-        $order->sellerOrders()->update([
-    'status' => 'cancelled',
-]);
+        try {
+            $cancelledOrder = DB::transaction(function () use ($order) {
+                $lockedOrder = Order::query()
+                    ->whereKey($order->id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
 
-Shipment::whereIn(
-    'seller_order_id',
-    $order->sellerOrders()->pluck('id')
-)->update([
-    'status' => 'cancelled',
-]);
+                if (
+                    !in_array(
+                        $lockedOrder->status,
+                        ['pending', 'placed', 'confirmed', 'preparing'],
+                        true
+                    )
+                ) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'order' => 'Order cannot be cancelled at this stage.',
+                    ]);
+                }
 
-        DB::commit();
+                $sellerOrderIds = $lockedOrder
+                    ->sellerOrders()
+                    ->pluck('id');
 
-        return response()->json([
-            'message' => 'Order cancelled successfully.',
-            'data' => $this->formatOrder($order->fresh()),
-        ]);
-    } catch (\Throwable $e) {
-        DB::rollBack();
+                $shipments = Shipment::query()
+                    ->whereIn('seller_order_id', $sellerOrderIds)
+                    ->lockForUpdate()
+                    ->get();
 
-        return response()->json([
-            'message' => 'Failed to cancel order: ' . $e->getMessage(),
-        ], 500);
+                /*
+            |--------------------------------------------------------------------------
+            | PHYSICAL CUSTODY GUARD
+            |--------------------------------------------------------------------------
+            |
+            | Once the parcel has already been physically collected by a rider
+            | or entered the logistics flow, normal buyer cancellation is no
+            | longer allowed.
+            |
+            */
+                foreach ($shipments as $shipment) {
+                    if (
+                        in_array(
+                            $shipment->status,
+                            [
+                                'picked_up',
+                                'in_transit',
+                                'at_sorting_center',
+                                'sorted',
+                                'staged',
+                                'assigned_to_rider',
+                                'out_for_delivery',
+                                'delivery_failed',
+                                'failed_return_at_sorting_center',
+                                'delivered',
+                            ],
+                            true
+                        )
+                    ) {
+                        throw \Illuminate\Validation\ValidationException::withMessages([
+                            'order' =>
+                            'Order can no longer be cancelled because a parcel '
+                                . 'is already in the logistics delivery process.',
+                        ]);
+                    }
+                }
+
+                /*
+            |--------------------------------------------------------------------------
+            | RELEASE RESERVED RIDER CAPACITY
+            |--------------------------------------------------------------------------
+            |
+            | A rider assignment reserves one capacity slot. If cancellation
+            | happens before physical pickup, release the slot exactly once.
+            |
+            */
+                foreach ($shipments as $shipment) {
+                    $riderIds = collect([
+                        $shipment->pickup_rider_id,
+                        $shipment->rider_id,
+                    ])
+                        ->filter()
+                        ->unique()
+                        ->values();
+
+                    foreach ($riderIds as $riderId) {
+                        $rider = \App\Models\User::query()
+                            ->whereKey($riderId)
+                            ->lockForUpdate()
+                            ->first();
+
+                        if (!$rider) {
+                            continue;
+                        }
+
+                        $newLoad = max(
+                            0,
+                            (int) $rider->current_load - 1
+                        );
+
+                        $capacity = $rider->max_capacity;
+
+                        $rider->update([
+                            'current_load' => $newLoad,
+                            'availability_status' =>
+                            $capacity === null ||
+                                $newLoad < (int) $capacity
+                                ? 'available'
+                                : 'busy',
+                        ]);
+                    }
+
+                    $shipmentUpdates = [
+                        'rider_id' => null,
+                        'status' => 'cancelled',
+                    ];
+
+                    if (
+                        \Illuminate\Support\Facades\Schema::hasColumn(
+                            'shipments',
+                            'pickup_rider_id'
+                        )
+                    ) {
+                        $shipmentUpdates['pickup_rider_id'] = null;
+                    }
+
+                    $shipment->update($shipmentUpdates);
+                }
+
+                /*
+            |--------------------------------------------------------------------------
+            | RESTORE INVENTORY
+            |--------------------------------------------------------------------------
+            */
+                $lockedOrder->loadMissing([
+                    'items.product',
+                    'items.variation',
+                ]);
+
+                foreach ($lockedOrder->items as $item) {
+                    $quantity = (int) $item->quantity;
+
+                    if ($quantity <= 0) {
+                        continue;
+                    }
+
+                    if (
+                        $item->variant_id &&
+                        $item->variation
+                    ) {
+                        $item->variation->increment(
+                            'stock',
+                            $quantity
+                        );
+                    } elseif ($item->product) {
+                        $item->product->increment(
+                            'stock',
+                            $quantity
+                        );
+                    }
+
+                    if (
+                        $item->size_id &&
+                        $item->product_id
+                    ) {
+                        DB::table('product_size')
+                            ->where(
+                                'product_id',
+                                $item->product_id
+                            )
+                            ->where(
+                                'size_id',
+                                $item->size_id
+                            )
+                            ->increment(
+                                'stock',
+                                $quantity
+                            );
+                    }
+                }
+
+                /*
+            |--------------------------------------------------------------------------
+            | KEEP ALL ORDER LEVELS IN SYNC
+            |--------------------------------------------------------------------------
+            */
+                $lockedOrder->sellerOrders()->update([
+                    'status' => 'cancelled',
+                ]);
+
+                $lockedOrder->update([
+                    'status' => 'cancelled',
+                ]);
+
+                return $lockedOrder->fresh();
+            }, 3);
+
+            return response()->json([
+                'message' => 'Order cancelled successfully.',
+                'data' => $this->formatOrder($cancelledOrder),
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'message' =>
+                collect($e->errors())
+                    ->flatten()
+                    ->first()
+                    ?? 'Order cannot be cancelled.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' =>
+                'Failed to cancel order: ' . $e->getMessage(),
+            ], 500);
+        }
     }
-}
 
     public function rate(Request $request, Order $order)
     {
