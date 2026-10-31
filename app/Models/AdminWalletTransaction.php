@@ -10,6 +10,7 @@ class AdminWalletTransaction extends Model
     protected $fillable = [
         'admin_wallet_id',
         'logistic_admin_remittance_id',
+        'seller_settlement_id',
         'type',
         'amount_minor',
         'balance_after_minor',
@@ -34,6 +35,14 @@ class AdminWalletTransaction extends Model
         return $this->belongsTo(
             LogisticAdminRemittance::class,
             'logistic_admin_remittance_id'
+        );
+    }
+
+    public function settlement(): BelongsTo
+    {
+        return $this->belongsTo(
+            SellerSettlement::class,
+            'seller_settlement_id'
         );
     }
 }

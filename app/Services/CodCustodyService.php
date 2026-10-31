@@ -8,6 +8,7 @@ use App\Models\CodRemittance;
 use App\Models\LogisticAdminRemittance;
 use App\Models\LogisticCodWallet;
 use App\Models\LogisticCodWalletTransaction;
+use App\Models\SellerSettlement;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -19,6 +20,7 @@ class CodCustodyService
     public const ADMIN_TRANSFER_CONFIRMED = 'admin_transfer_confirmed';
     public const ADMIN_TRANSFER_REJECTED = 'admin_transfer_rejected';
     public const ADMIN_CREDIT = 'logistics_cod_received';
+    public const SELLER_SETTLEMENT_DEBIT = 'seller_settlement_debit';
 
     public function walletForLogistic(int $logisticId): LogisticCodWallet
     {
@@ -43,8 +45,8 @@ class CodCustodyService
         CodRemittance $remittance
     ): ?LogisticCodWalletTransaction {
         if (
-            $remittance->status !== 'confirmed' ||
-            (int) $remittance->total_minor <= 0
+            $remittance->status !== 'confirmed'
+            || (int) $remittance->total_minor <= 0
         ) {
             return null;
         }
@@ -76,8 +78,10 @@ class CodCustodyService
             }
 
             $amount = (int) $remittance->total_minor;
+
             $wallet->available_balance_minor =
                 (int) $wallet->available_balance_minor + $amount;
+
             $wallet->save();
 
             return LogisticCodWalletTransaction::create([
@@ -86,11 +90,11 @@ class CodCustodyService
                 'type' => self::LOGISTIC_CREDIT,
                 'amount_minor' => $amount,
                 'balance_after_minor' =>
-                    (int) $wallet->available_balance_minor +
-                    (int) $wallet->pending_balance_minor,
+                (int) $wallet->available_balance_minor
+                    + (int) $wallet->pending_balance_minor,
                 'reference' => $remittance->reference,
                 'description' =>
-                    'COD cash confirmed received from rider.',
+                'COD cash confirmed received from rider.',
                 'meta' => [
                     'rider_user_id' => $remittance->rider_user_id,
                     'logistic_id' => $remittance->logistic_id,
@@ -118,6 +122,7 @@ class CodCustodyService
             }
 
             $wallet = $this->walletForLogistic($logisticId);
+
             $wallet = LogisticCodWallet::query()
                 ->whereKey($wallet->id)
                 ->lockForUpdate()
@@ -125,20 +130,23 @@ class CodCustodyService
 
             if (
                 LogisticAdminRemittance::query()
-                    ->where('logistic_id', $logisticId)
-                    ->where('status', 'pending')
-                    ->exists()
+                ->where('logistic_id', $logisticId)
+                ->where('status', 'pending')
+                ->exists()
             ) {
                 throw ValidationException::withMessages([
                     'remittance' =>
-                        'You already have a pending COD transfer to Admin.',
+                    'You already have a pending COD transfer to Admin.',
                 ]);
             }
 
-            if ((int) $wallet->available_balance_minor < $amountMinor) {
+            if (
+                (int) $wallet->available_balance_minor
+                < $amountMinor
+            ) {
                 throw ValidationException::withMessages([
                     'amount' =>
-                        'Insufficient available COD custody balance.',
+                    'Insufficient available COD custody balance.',
                 ]);
             }
 
@@ -148,13 +156,14 @@ class CodCustodyService
 
             $remittance = LogisticAdminRemittance::create([
                 'reference' =>
-                    'ADM-COD-' . strtoupper((string) Str::ulid()),
+                'ADM-COD-' . strtoupper((string) Str::ulid()),
                 'logistic_id' => $logisticId,
                 'amount_minor' => $amountMinor,
                 'status' => 'pending',
-                'transfer_method' => $data['transfer_method'] ?? null,
+                'transfer_method' =>
+                $data['transfer_method'] ?? null,
                 'transfer_reference' =>
-                    $data['transfer_reference'] ?? null,
+                $data['transfer_reference'] ?? null,
                 'notes' => $data['notes'] ?? null,
                 'submitted_by' => $submittedBy,
                 'submitted_at' => now(),
@@ -166,17 +175,17 @@ class CodCustodyService
                 'type' => self::ADMIN_TRANSFER_SUBMITTED,
                 'amount_minor' => 0,
                 'balance_after_minor' =>
-                    (int) $wallet->available_balance_minor +
-                    (int) $wallet->pending_balance_minor,
+                (int) $wallet->available_balance_minor
+                    + (int) $wallet->pending_balance_minor,
                 'reference' => $remittance->reference,
                 'description' =>
-                    'COD cash reserved for transfer to Admin.',
+                'COD cash reserved for transfer to Admin.',
                 'meta' => [
                     'amount_minor' => $amountMinor,
                     'transfer_method' =>
-                        $remittance->transfer_method,
+                    $remittance->transfer_method,
                     'transfer_reference' =>
-                        $remittance->transfer_reference,
+                    $remittance->transfer_reference,
                 ],
             ]);
 
@@ -200,11 +209,12 @@ class CodCustodyService
             if ($locked->status !== 'pending') {
                 throw ValidationException::withMessages([
                     'remittance' =>
-                        'Only pending transfers can be confirmed.',
+                    'Only pending transfers can be confirmed.',
                 ]);
             }
 
-            $existingAdminCredit = AdminWalletTransaction::query()
+            $existingAdminCredit =
+                AdminWalletTransaction::query()
                 ->where(
                     'logistic_admin_remittance_id',
                     $locked->id
@@ -218,6 +228,7 @@ class CodCustodyService
             $logisticWallet = $this->walletForLogistic(
                 (int) $locked->logistic_id
             );
+
             $logisticWallet = LogisticCodWallet::query()
                 ->whereKey($logisticWallet->id)
                 ->lockForUpdate()
@@ -225,10 +236,13 @@ class CodCustodyService
 
             $amount = (int) $locked->amount_minor;
 
-            if ((int) $logisticWallet->pending_balance_minor < $amount) {
+            if (
+                (int) $logisticWallet->pending_balance_minor
+                < $amount
+            ) {
                 throw ValidationException::withMessages([
                     'remittance' =>
-                        'Logistics pending COD balance is inconsistent.',
+                    'Logistics pending COD balance is inconsistent.',
                 ]);
             }
 
@@ -236,6 +250,7 @@ class CodCustodyService
             $logisticWallet->save();
 
             $adminWallet = $this->adminWallet();
+
             $adminWallet = AdminWallet::query()
                 ->whereKey($adminWallet->id)
                 ->lockForUpdate()
@@ -256,11 +271,11 @@ class CodCustodyService
                 'type' => self::ADMIN_TRANSFER_CONFIRMED,
                 'amount_minor' => -$amount,
                 'balance_after_minor' =>
-                    (int) $logisticWallet->available_balance_minor +
-                    (int) $logisticWallet->pending_balance_minor,
+                (int) $logisticWallet->available_balance_minor
+                    + (int) $logisticWallet->pending_balance_minor,
                 'reference' => $locked->reference,
                 'description' =>
-                    'COD cash transfer confirmed by Admin.',
+                'COD cash transfer confirmed by Admin.',
                 'meta' => [
                     'confirmed_by' => $adminUserId,
                 ],
@@ -269,19 +284,20 @@ class CodCustodyService
             return AdminWalletTransaction::create([
                 'admin_wallet_id' => $adminWallet->id,
                 'logistic_admin_remittance_id' => $locked->id,
+                'seller_settlement_id' => null,
                 'type' => self::ADMIN_CREDIT,
                 'amount_minor' => $amount,
                 'balance_after_minor' =>
-                    (int) $adminWallet->available_balance_minor,
+                (int) $adminWallet->available_balance_minor,
                 'reference' => $locked->reference,
                 'description' =>
-                    'COD cash received from logistics.',
+                'COD cash received from logistics.',
                 'meta' => [
                     'logistic_id' => $locked->logistic_id,
                     'transfer_method' =>
-                        $locked->transfer_method,
+                    $locked->transfer_method,
                     'transfer_reference' =>
-                        $locked->transfer_reference,
+                    $locked->transfer_reference,
                 ],
             ]);
         }, 3);
@@ -305,13 +321,14 @@ class CodCustodyService
             if ($locked->status !== 'pending') {
                 throw ValidationException::withMessages([
                     'remittance' =>
-                        'Only pending transfers can be rejected.',
+                    'Only pending transfers can be rejected.',
                 ]);
             }
 
             $wallet = $this->walletForLogistic(
                 (int) $locked->logistic_id
             );
+
             $wallet = LogisticCodWallet::query()
                 ->whereKey($wallet->id)
                 ->lockForUpdate()
@@ -319,10 +336,13 @@ class CodCustodyService
 
             $amount = (int) $locked->amount_minor;
 
-            if ((int) $wallet->pending_balance_minor < $amount) {
+            if (
+                (int) $wallet->pending_balance_minor
+                < $amount
+            ) {
                 throw ValidationException::withMessages([
                     'remittance' =>
-                        'Logistics pending COD balance is inconsistent.',
+                    'Logistics pending COD balance is inconsistent.',
                 ]);
             }
 
@@ -343,11 +363,11 @@ class CodCustodyService
                 'type' => self::ADMIN_TRANSFER_REJECTED,
                 'amount_minor' => 0,
                 'balance_after_minor' =>
-                    (int) $wallet->available_balance_minor +
-                    (int) $wallet->pending_balance_minor,
+                (int) $wallet->available_balance_minor
+                    + (int) $wallet->pending_balance_minor,
                 'reference' => $locked->reference,
                 'description' =>
-                    'Admin rejected COD transfer; funds returned to available custody.',
+                'Admin rejected COD transfer; funds returned to available custody.',
                 'meta' => [
                     'rejected_by' => $adminUserId,
                     'reason' => $reason,
@@ -355,6 +375,106 @@ class CodCustodyService
             ]);
 
             return $locked->fresh();
+        }, 3);
+    }
+
+    public function debitSellerSettlement(
+        SellerSettlement $settlement
+    ): AdminWalletTransaction {
+        return DB::transaction(function () use ($settlement) {
+            $lockedSettlement = SellerSettlement::query()
+                ->whereKey($settlement->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (
+                !in_array(
+                    $lockedSettlement->status,
+                    ['approved', 'wallet_credited'],
+                    true
+                )
+            ) {
+                throw ValidationException::withMessages([
+                    'settlement' =>
+                    'Only an approved seller settlement can use Admin COD funds.',
+                ]);
+            }
+
+            $amountMinor = (int) $lockedSettlement->net_minor;
+
+            if ($amountMinor <= 0) {
+                throw ValidationException::withMessages([
+                    'settlement' =>
+                    'Seller settlement net amount must be greater than zero.',
+                ]);
+            }
+
+            $existing = AdminWalletTransaction::query()
+                ->where(
+                    'seller_settlement_id',
+                    $lockedSettlement->id
+                )
+                ->where(
+                    'type',
+                    self::SELLER_SETTLEMENT_DEBIT
+                )
+                ->first();
+
+            if ($existing) {
+                return $existing;
+            }
+
+            $adminWallet = $this->adminWallet();
+
+            $adminWallet = AdminWallet::query()
+                ->whereKey($adminWallet->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (
+                (int) $adminWallet->available_balance_minor
+                < $amountMinor
+            ) {
+                throw ValidationException::withMessages([
+                    'settlement' =>
+                    'Insufficient Admin COD wallet balance for this seller settlement.',
+                ]);
+            }
+
+            $newBalance =
+                (int) $adminWallet->available_balance_minor
+                - $amountMinor;
+
+            $adminWallet->update([
+                'available_balance_minor' => $newBalance,
+            ]);
+
+            return AdminWalletTransaction::create([
+                'admin_wallet_id' => $adminWallet->id,
+                'logistic_admin_remittance_id' => null,
+                'seller_settlement_id' =>
+                $lockedSettlement->id,
+                'type' => self::SELLER_SETTLEMENT_DEBIT,
+                'amount_minor' => -$amountMinor,
+                'balance_after_minor' => $newBalance,
+                'reference' =>
+                'SELLER-SETTLEMENT-'
+                    . $lockedSettlement->id,
+                'description' =>
+                'Seller settlement funded from Admin COD wallet.',
+                'meta' => [
+                    'seller_id' =>
+                    (int) $lockedSettlement->seller_id,
+                    'seller_order_id' =>
+                    (int) $lockedSettlement->seller_order_id,
+                    'subtotal_minor' =>
+                    (int) $lockedSettlement->subtotal_minor,
+                    'commission_minor' =>
+                    (int) $lockedSettlement->commission_minor,
+                    'net_minor' =>
+                    (int) $lockedSettlement->net_minor,
+                ],
+            ]);
         }, 3);
     }
 }

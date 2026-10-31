@@ -15,11 +15,11 @@ class CodRemittanceTest extends TestCase
         parent::setUp();
 
         if (
-            ! app()->environment('testing') ||
-            config('database.default') !== 'sqlite' ||
-            config('database.connections.sqlite.database') !== ':memory:' ||
-            DB::connection()->getDriverName() !== 'sqlite' ||
-            DB::connection()->getDatabaseName() !== ':memory:'
+            ! app()->environment('testing')
+            || config('database.default') !== 'sqlite'
+            || config('database.connections.sqlite.database') !== ':memory:'
+            || DB::connection()->getDriverName() !== 'sqlite'
+            || DB::connection()->getDatabaseName() !== ':memory:'
         ) {
             throw new \RuntimeException(
                 'COD remittance tests require SQLite in-memory.'
@@ -63,7 +63,11 @@ class CodRemittanceTest extends TestCase
         Schema::create('role_user', function (Blueprint $table) {
             $table->foreignId('role_id');
             $table->foreignId('user_id');
-            $table->primary(['role_id', 'user_id']);
+
+            $table->primary([
+                'role_id',
+                'user_id',
+            ]);
         });
 
         Schema::create('logistics', function (Blueprint $table) {
@@ -110,28 +114,50 @@ class CodRemittanceTest extends TestCase
             $table->timestamps();
         });
 
-        Schema::create('cod_remittance_payments', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('cod_remittance_id');
-            $table->foreignId('payment_id');
-            $table->unsignedBigInteger('amount_minor');
-            $table->timestamps();
+        Schema::create(
+            'cod_remittance_payments',
+            function (Blueprint $table) {
+                $table->id();
+                $table->foreignId('cod_remittance_id');
+                $table->foreignId('payment_id');
+                $table->unsignedBigInteger('amount_minor');
+                $table->timestamps();
 
-            $table->unique(
-                ['cod_remittance_id', 'payment_id'],
-                'cod_remittance_payment_unique'
-            );
-        });
+                $table->unique(
+                    [
+                        'cod_remittance_id',
+                        'payment_id',
+                    ],
+                    'cod_remittance_payment_unique'
+                );
+            }
+        );
 
+        /*
+         * CodRemittanceController now credits the Logistics COD
+         * custody wallet when a rider remittance is confirmed.
+         *
+         * These tests use a manually-created SQLite in-memory
+         * database, so the COD custody tables must also be created
+         * here before the confirmation tests run.
+         */
         $codWalletMigration = require database_path(
-            'migrations/2026_10_31_070000_create_cod_custody_wallets_and_admin_remittances.php'
+            'migrations/'
+                . '2026_10_31_070000_'
+                . 'create_cod_custody_wallets_and_admin_remittances.php'
         );
 
         $codWalletMigration->up();
 
         DB::table('roles')->insert([
-            ['id' => 1, 'name' => 'rider'],
-            ['id' => 2, 'name' => 'logistics'],
+            [
+                'id' => 1,
+                'name' => 'rider',
+            ],
+            [
+                'id' => 2,
+                'name' => 'logistics',
+            ],
         ]);
     }
 
@@ -161,7 +187,10 @@ class CodRemittanceTest extends TestCase
 
     private function setupActors(): array
     {
-        $owner = $this->user('owner@example.com', 2);
+        $owner = $this->user(
+            'owner@example.com',
+            2
+        );
 
         $logisticId = DB::table('logistics')->insertGetId([
             'owner_user_id' => $owner->id,
@@ -177,7 +206,11 @@ class CodRemittanceTest extends TestCase
             $logisticId
         );
 
-        return [$rider, $owner, $logisticId];
+        return [
+            $rider,
+            $owner,
+            $logisticId,
+        ];
     }
 
     private function payment(
@@ -209,14 +242,25 @@ class CodRemittanceTest extends TestCase
     {
         [$rider, $owner, $logisticId] = $this->setupActors();
 
-        $paymentId = $this->payment($rider->id, $logisticId);
+        $paymentId = $this->payment(
+            $rider->id,
+            $logisticId
+        );
 
         $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertCreated()
-            ->assertJsonPath('remittance.status', 'pending');
+            ->assertJsonPath(
+                'remittance.status',
+                'pending'
+            );
 
         $this->assertDatabaseHas('cod_remittances', [
             'rider_user_id' => $rider->id,
@@ -225,32 +269,57 @@ class CodRemittanceTest extends TestCase
             'status' => 'pending',
         ]);
 
-        $this->assertDatabaseHas('cod_remittance_payments', [
-            'payment_id' => $paymentId,
-            'amount_minor' => 133601,
-        ]);
+        $this->assertDatabaseHas(
+            'cod_remittance_payments',
+            [
+                'payment_id' => $paymentId,
+                'amount_minor' => 133601,
+            ]
+        );
     }
 
     public function test_duplicate_pending_remittance_is_rejected(): void
     {
         [$rider, $owner, $logisticId] = $this->setupActors();
 
-        $paymentId = $this->payment($rider->id, $logisticId);
+        $paymentId = $this->payment(
+            $rider->id,
+            $logisticId
+        );
 
         $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertCreated();
 
-        $this->postJson(route('rider.cod-remittances.store'), [
-            'payment_ids' => [$paymentId],
-        ])
+        $this->postJson(
+            route('rider.cod-remittances.store'),
+            [
+                'payment_ids' => [
+                    $paymentId,
+                ],
+            ]
+        )
             ->assertUnprocessable()
-            ->assertJsonValidationErrors('payment_ids');
+            ->assertJsonValidationErrors(
+                'payment_ids'
+            );
 
-        $this->assertDatabaseCount('cod_remittances', 1);
-        $this->assertDatabaseCount('cod_remittance_payments', 1);
+        $this->assertDatabaseCount(
+            'cod_remittances',
+            1
+        );
+
+        $this->assertDatabaseCount(
+            'cod_remittance_payments',
+            1
+        );
     }
 
     public function test_other_rider_cannot_remit_payment(): void
@@ -263,55 +332,112 @@ class CodRemittanceTest extends TestCase
             $logisticId
         );
 
-        $paymentId = $this->payment($rider->id, $logisticId);
+        $paymentId = $this->payment(
+            $rider->id,
+            $logisticId
+        );
 
         $this->actingAs($otherRider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertUnprocessable();
 
-        $this->assertDatabaseCount('cod_remittances', 0);
+        $this->assertDatabaseCount(
+            'cod_remittances',
+            0
+        );
     }
 
     public function test_logistics_owner_can_confirm_pending_remittance(): void
     {
         [$rider, $owner, $logisticId] = $this->setupActors();
 
-        $paymentId = $this->payment($rider->id, $logisticId);
+        $paymentId = $this->payment(
+            $rider->id,
+            $logisticId
+        );
 
         $response = $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertCreated();
 
-        $remittanceId = $response->json('remittance.id');
+        $remittanceId = $response->json(
+            'remittance.id'
+        );
 
         $this->actingAs($owner)
-            ->postJson(route('logistic.cod-remittances.confirm', $remittanceId))
+            ->postJson(
+                route(
+                    'logistic.cod-remittances.confirm',
+                    $remittanceId
+                )
+            )
             ->assertOk();
 
-        $this->assertDatabaseHas('cod_remittances', [
-            'id' => $remittanceId,
-            'status' => 'confirmed',
-            'confirmed_by' => $owner->id,
-        ]);
+        $this->assertDatabaseHas(
+            'cod_remittances',
+            [
+                'id' => $remittanceId,
+                'status' => 'confirmed',
+                'confirmed_by' => $owner->id,
+            ]
+        );
+
+        $this->assertDatabaseHas(
+            'logistic_cod_wallets',
+            [
+                'logistic_id' => $logisticId,
+                'available_balance_minor' => 133601,
+            ]
+        );
+
+        $this->assertDatabaseHas(
+            'logistic_cod_wallet_transactions',
+            [
+                'cod_remittance_id' => $remittanceId,
+                'type' => 'rider_cod_confirmed',
+                'amount_minor' => 133601,
+            ]
+        );
     }
 
     public function test_other_logistics_owner_cannot_confirm(): void
     {
         [$rider, $owner, $logisticId] = $this->setupActors();
 
-        $paymentId = $this->payment($rider->id, $logisticId);
+        $paymentId = $this->payment(
+            $rider->id,
+            $logisticId
+        );
 
         $response = $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertCreated();
 
-        $otherOwner = $this->user('otherowner@example.com', 2);
+        $otherOwner = $this->user(
+            'otherowner@example.com',
+            2
+        );
 
         DB::table('logistics')->insert([
             'owner_user_id' => $otherOwner->id,
@@ -322,165 +448,270 @@ class CodRemittanceTest extends TestCase
         ]);
 
         $this->actingAs($otherOwner)
-            ->postJson(route(
-                'logistic.cod-remittances.confirm',
-                $response->json('remittance.id')
-            ))
+            ->postJson(
+                route(
+                    'logistic.cod-remittances.confirm',
+                    $response->json(
+                        'remittance.id'
+                    )
+                )
+            )
             ->assertForbidden();
 
-        $this->assertDatabaseHas('cod_remittances', [
-            'id' => $response->json('remittance.id'),
-            'status' => 'pending',
-        ]);
+        $this->assertDatabaseHas(
+            'cod_remittances',
+            [
+                'id' => $response->json(
+                    'remittance.id'
+                ),
+                'status' => 'pending',
+            ]
+        );
     }
 
     public function test_rejected_payment_can_be_resubmitted(): void
     {
         [$rider, $owner, $logisticId] = $this->setupActors();
 
-        $paymentId = $this->payment($rider->id, $logisticId);
+        $paymentId = $this->payment(
+            $rider->id,
+            $logisticId
+        );
 
         $first = $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertCreated();
 
         $this->actingAs($owner)
             ->postJson(
                 route(
                     'logistic.cod-remittances.reject',
-                    $first->json('remittance.id')
+                    $first->json(
+                        'remittance.id'
+                    )
                 ),
-                ['rejection_reason' => 'Test cash discrepancy']
+                [
+                    'rejection_reason' =>
+                    'Test cash discrepancy',
+                ]
             )
             ->assertOk();
 
         $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertCreated();
 
-        $this->assertDatabaseCount('cod_remittances', 2);
-        $this->assertDatabaseCount('cod_remittance_payments', 2);
+        $this->assertDatabaseCount(
+            'cod_remittances',
+            2
+        );
 
-        $this->assertDatabaseHas('cod_remittances', [
-            'id' => $first->json('remittance.id'),
-            'status' => 'rejected',
-        ]);
+        $this->assertDatabaseCount(
+            'cod_remittance_payments',
+            2
+        );
+
+        $this->assertDatabaseHas(
+            'cod_remittances',
+            [
+                'id' => $first->json(
+                    'remittance.id'
+                ),
+                'status' => 'rejected',
+            ]
+        );
     }
 
     public function test_confirmed_payment_cannot_be_resubmitted(): void
     {
         [$rider, $owner, $logisticId] = $this->setupActors();
 
-        $paymentId = $this->payment($rider->id, $logisticId);
+        $paymentId = $this->payment(
+            $rider->id,
+            $logisticId
+        );
 
         $first = $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertCreated();
 
         $this->actingAs($owner)
-            ->postJson(route(
-                'logistic.cod-remittances.confirm',
-                $first->json('remittance.id')
-            ))
+            ->postJson(
+                route(
+                    'logistic.cod-remittances.confirm',
+                    $first->json(
+                        'remittance.id'
+                    )
+                )
+            )
             ->assertOk();
 
         $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertUnprocessable();
 
-        $this->assertDatabaseCount('cod_remittances', 1);
-        $this->assertDatabaseCount('cod_remittance_payments', 1);
-    }
+        $this->assertDatabaseCount(
+            'cod_remittances',
+            1
+        );
 
+        $this->assertDatabaseCount(
+            'cod_remittance_payments',
+            1
+        );
+    }
 
     public function test_rider_sees_confirmed_remittance_in_history(): void
     {
         [$rider, $owner, $logisticId] = $this->setupActors();
 
-        $paymentId = $this->payment($rider->id, $logisticId);
+        $paymentId = $this->payment(
+            $rider->id,
+            $logisticId
+        );
 
-        // Rider submits collected COD cash.
         $submission = $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertCreated();
 
-        $remittanceId = $submission->json('remittance.id');
+        $remittanceId = $submission->json(
+            'remittance.id'
+        );
 
-        // Logistics owner confirms the cash receipt.
         $this->actingAs($owner)
-            ->postJson(route(
-                'logistic.cod-remittances.confirm',
-                $remittanceId
-            ))
+            ->postJson(
+                route(
+                    'logistic.cod-remittances.confirm',
+                    $remittanceId
+                )
+            )
             ->assertOk();
 
-        // Rider should see the confirmed remittance.
         $this->actingAs($rider)
-            ->get(route('rider.cod-remittances.index'))
+            ->get(
+                route(
+                    'rider.cod-remittances.index'
+                )
+            )
             ->assertOk()
             ->assertSee('Confirmed');
 
-        $this->assertDatabaseHas('cod_remittances', [
-            'id' => $remittanceId,
-            'rider_user_id' => $rider->id,
-            'status' => 'confirmed',
-            'confirmed_by' => $owner->id,
-        ]);
+        $this->assertDatabaseHas(
+            'cod_remittances',
+            [
+                'id' => $remittanceId,
+                'rider_user_id' => $rider->id,
+                'status' => 'confirmed',
+                'confirmed_by' => $owner->id,
+            ]
+        );
     }
 
     public function test_rider_sees_rejected_remittance_and_can_resubmit(): void
     {
         [$rider, $owner, $logisticId] = $this->setupActors();
 
-        $paymentId = $this->payment($rider->id, $logisticId);
+        $paymentId = $this->payment(
+            $rider->id,
+            $logisticId
+        );
 
-        // Rider submits cash.
         $submission = $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertCreated();
 
-        $remittanceId = $submission->json('remittance.id');
+        $remittanceId = $submission->json(
+            'remittance.id'
+        );
 
-        // Logistics rejects the remittance.
         $this->actingAs($owner)
             ->postJson(
-                route('logistic.cod-remittances.reject', $remittanceId),
-                ['rejection_reason' => 'Cash amount mismatch']
+                route(
+                    'logistic.cod-remittances.reject',
+                    $remittanceId
+                ),
+                [
+                    'rejection_reason' =>
+                    'Cash amount mismatch',
+                ]
             )
             ->assertOk();
 
-        // Rider should see the rejected status.
         $this->actingAs($rider)
-            ->get(route('rider.cod-remittances.index'))
+            ->get(
+                route(
+                    'rider.cod-remittances.index'
+                )
+            )
             ->assertOk()
             ->assertSee('Rejected');
 
-        $this->assertDatabaseHas('cod_remittances', [
-            'id' => $remittanceId,
-            'status' => 'rejected',
-            'rejection_reason' => 'Cash amount mismatch',
-        ]);
+        $this->assertDatabaseHas(
+            'cod_remittances',
+            [
+                'id' => $remittanceId,
+                'status' => 'rejected',
+                'rejection_reason' =>
+                'Cash amount mismatch',
+            ]
+        );
 
-        // Rejected payment should become eligible for resubmission.
         $this->actingAs($rider)
-            ->postJson(route('rider.cod-remittances.store'), [
-                'payment_ids' => [$paymentId],
-            ])
+            ->postJson(
+                route('rider.cod-remittances.store'),
+                [
+                    'payment_ids' => [
+                        $paymentId,
+                    ],
+                ]
+            )
             ->assertCreated();
 
-        $this->assertDatabaseCount('cod_remittances', 2);
+        $this->assertDatabaseCount(
+            'cod_remittances',
+            2
+        );
     }
 }
-
