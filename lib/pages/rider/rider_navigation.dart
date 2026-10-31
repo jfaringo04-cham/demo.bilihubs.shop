@@ -18,31 +18,22 @@ class RiderNavigation extends StatefulWidget {
 class _RiderNavigationState extends State<RiderNavigation> {
   static const int _homeIndex = 0;
   static const int _profileIndex = 4;
+
+  static const int _firstTabIndex = _homeIndex;
+
   static const int _lastTabIndex = _profileIndex;
 
   int _currentIndex = _homeIndex;
 
   final List<BottomNavItem> _items = const <BottomNavItem>[
-    BottomNavItem(
-      icon: Icons.home_outlined,
-      label: 'Home',
-    ),
-    BottomNavItem(
-      icon: Icons.local_shipping_outlined,
-      label: 'Deliveries',
-    ),
-    BottomNavItem(
-      icon: Icons.qr_code_scanner_rounded,
-      label: 'Scanner',
-    ),
+    BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
+    BottomNavItem(icon: Icons.local_shipping_outlined, label: 'Deliveries'),
+    BottomNavItem(icon: Icons.qr_code_scanner_rounded, label: 'Scanner'),
     BottomNavItem(
       icon: Icons.account_balance_wallet_outlined,
       label: 'Earnings',
     ),
-    BottomNavItem(
-      icon: Icons.person_outline_rounded,
-      label: 'Profile',
-    ),
+    BottomNavItem(icon: Icons.person_outline_rounded, label: 'Profile'),
   ];
 
   late final List<Widget> _pages;
@@ -52,9 +43,7 @@ class _RiderNavigationState extends State<RiderNavigation> {
     super.initState();
 
     _pages = <Widget>[
-      RiderHome(
-        onNavigateTab: _changeTab,
-      ),
+      RiderHome(onNavigateTab: _changeTab),
       const RiderDeliveries(),
       const RiderScanner(),
       const Earnings(),
@@ -67,7 +56,7 @@ class _RiderNavigationState extends State<RiderNavigation> {
   // ============================================================
 
   void _changeTab(int index) {
-    if (index < _homeIndex || index > _lastTabIndex) {
+    if (index < _firstTabIndex || index > _lastTabIndex) {
       return;
     }
 
@@ -84,10 +73,7 @@ class _RiderNavigationState extends State<RiderNavigation> {
   // HANDLE BACK
   // ============================================================
 
-  void _handleBack(
-    bool didPop,
-    dynamic result,
-  ) {
+  void _handleBack(bool didPop, Object? result) {
     if (didPop) {
       return;
     }
@@ -110,10 +96,7 @@ class _RiderNavigationState extends State<RiderNavigation> {
       onPopInvokedWithResult: _handleBack,
       child: Scaffold(
         backgroundColor: Colors.white,
-        body: IndexedStack(
-          index: _currentIndex,
-          children: _pages,
-        ),
+        body: IndexedStack(index: _currentIndex, children: _pages),
         bottomNavigationBar: BottomNav(
           currentIndex: _currentIndex,
           items: _items,

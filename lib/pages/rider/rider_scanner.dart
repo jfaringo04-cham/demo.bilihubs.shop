@@ -95,7 +95,7 @@ class _RiderScannerState extends State<RiderScanner> {
           ),
           SizedBox(height: 2),
           Text(
-            'Scan the BiliHub parcel or website QR code',
+            'Scan the official BiliHub parcel QR code',
             style: TextStyle(color: Colors.white60, fontSize: 11),
           ),
         ],
@@ -133,6 +133,7 @@ class _RiderScannerState extends State<RiderScanner> {
                     return _cameraError(error);
                   },
             ),
+
             ScanWindowOverlay(
               controller: _scannerController,
               scanWindow: scanWindow,
@@ -141,6 +142,7 @@ class _RiderScannerState extends State<RiderScanner> {
               borderRadius: BorderRadius.circular(16),
               color: Colors.black.withValues(alpha: 0.58),
             ),
+
             Positioned(
               left: 0,
               right: 0,
@@ -169,6 +171,7 @@ class _RiderScannerState extends State<RiderScanner> {
                       ),
                     ),
                   ),
+
                   if (_scannedCode != null) ...[
                     const SizedBox(height: 8),
                     Container(
@@ -265,15 +268,19 @@ class _RiderScannerState extends State<RiderScanner> {
       debugPrint('Unable to stop scanner: $error');
     }
 
-    // IMPORTANT:
-    // Send the COMPLETE QR payload to Laravel.
-    //
-    // Do not extract only the tracking number.
-    //
-    // Laravel ScannerController verifies:
-    // t  = tracking_number
-    // q  = qr_token
-    // so = seller_order_id
+    /*
+     * IMPORTANT:
+     *
+     * Send the COMPLETE QR payload to Laravel.
+     *
+     * Do not manually extract only the tracking
+     * number here.
+     *
+     * Laravel is responsible for validating the
+     * QR token, tracking number, shipment and
+     * rider assignment.
+     */
+
     await _processScannedWaybill(qrPayload);
   }
 
@@ -300,7 +307,8 @@ class _RiderScannerState extends State<RiderScanner> {
 
           _scanError = message.isNotEmpty
               ? message
-              : 'Unable to verify the scanned BiliHub QR code.';
+              : 'Unable to verify the scanned '
+                    'BiliHub QR code.';
         });
 
         _showScanError(_scanError!);
@@ -316,7 +324,10 @@ class _RiderScannerState extends State<RiderScanner> {
 
           _foundParcel = null;
 
-          _scanError = 'The QR code was verified but the server returned invalid shipment information.';
+          _scanError =
+              'The QR code was verified, but '
+              'the server returned invalid '
+              'shipment information.';
         });
 
         _showScanError(_scanError!);
@@ -345,7 +356,11 @@ class _RiderScannerState extends State<RiderScanner> {
             ? message
             : 'Waybill verified successfully.';
 
-        _scanType = scanType.isNotEmpty ? scanType : null;
+        _scanType = scanType.isNotEmpty
+            ? scanType
+            : parcel.assignmentType.trim().isNotEmpty
+            ? parcel.assignmentType.trim()
+            : null;
       });
 
       _showScanSuccess(parcel.trackingNumber, _scanMessage!);
@@ -361,7 +376,9 @@ class _RiderScannerState extends State<RiderScanner> {
 
         _foundParcel = null;
 
-        _scanError = 'Unable to process the scanned QR code. Please try again.';
+        _scanError =
+            'Unable to process the scanned '
+            'QR code. Please try again.';
       });
 
       _showScanError(_scanError!);
@@ -404,6 +421,8 @@ class _RiderScannerState extends State<RiderScanner> {
 
     data['id'] ??= data['shipment_id'] ?? data['order_id'] ?? 0;
 
+    data['shipment_id'] ??= data['id'];
+
     data['tracking_number'] ??=
         data['tracking'] ??
         data['tracking_code'] ??
@@ -422,12 +441,46 @@ class _RiderScannerState extends State<RiderScanner> {
         data['recipient_address'] ??
         '';
 
+    data['pickup_address'] ??= data['seller_address'] ?? '';
+
     final dynamic rider = data['rider'];
 
     if (rider is Map) {
       data['rider_name'] ??= rider['name'];
 
       data['rider_id'] ??= rider['id'];
+    }
+
+    final dynamic linehaulRider = data['linehaul_rider'];
+
+    if (linehaulRider is Map) {
+      data['linehaul_rider_name'] ??= linehaulRider['name'];
+
+      data['linehaul_rider_id'] ??= linehaulRider['id'];
+    }
+
+    final dynamic originHub = data['origin_hub'];
+
+    if (originHub is Map) {
+      data['origin_hub_id'] ??= originHub['id'];
+
+      data['origin_hub_name'] ??= originHub['name'];
+    }
+
+    final dynamic destinationHub = data['destination_hub'];
+
+    if (destinationHub is Map) {
+      data['destination_hub_id'] ??= destinationHub['id'];
+
+      data['destination_hub_name'] ??= destinationHub['name'];
+    }
+
+    final dynamic hub = data['hub'];
+
+    if (hub is Map) {
+      data['current_hub_id'] ??= hub['id'];
+
+      data['current_hub_name'] ??= hub['name'];
     }
 
     data['rider_name'] ??= '';
@@ -456,9 +509,13 @@ class _RiderScannerState extends State<RiderScanner> {
       return 'BiliHub QR';
     }
 
-    // This is display-only.
-    // The complete original payload
-    // is still sent to Laravel.
+    /*
+     * Display only.
+     *
+     * The COMPLETE original QR payload is still
+     * sent to Laravel.
+     */
+
     try {
       final Uri? uri = Uri.tryParse(value);
 
@@ -468,7 +525,7 @@ class _RiderScannerState extends State<RiderScanner> {
         return 'BiliHub Website QR';
       }
     } catch (_) {
-      // Keep original display handling below.
+      // Continue with normal display handling.
     }
 
     if (value.startsWith('{') && value.endsWith('}')) {
@@ -487,47 +544,52 @@ class _RiderScannerState extends State<RiderScanner> {
       return;
     }
 
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: RiderColors.success,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle_rounded, color: Colors.white),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    trackingNumber.trim().isNotEmpty
-                        ? trackingNumber
-                        : 'BiliHub Waybill',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: RiderColors.success,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Colors.white),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      trackingNumber.trim().isNotEmpty
+                          ? trackingNumber
+                          : 'BiliHub Waybill',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    message,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70, fontSize: 11),
-                  ),
-                ],
+                    const SizedBox(height: 2),
+                    Text(
+                      message,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
-    );
+      );
   }
 
   // ============================================================
@@ -539,15 +601,15 @@ class _RiderScannerState extends State<RiderScanner> {
       return;
     }
 
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: RiderColors.danger,
-        content: Text(message),
-      ),
-    );
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: RiderColors.danger,
+          content: Text(message),
+        ),
+      );
   }
 
   // ============================================================
@@ -586,7 +648,8 @@ class _RiderScannerState extends State<RiderScanner> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Please allow camera permission and try again.',
+            'Please allow camera permission '
+            'and try again.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white70, fontSize: 12),
           ),
@@ -596,7 +659,10 @@ class _RiderScannerState extends State<RiderScanner> {
               try {
                 await _scannerController.start();
               } catch (scanError) {
-                debugPrint('Scanner start error: $scanError');
+                debugPrint(
+                  'Scanner start error: '
+                  '$scanError',
+                );
               }
             },
             icon: const Icon(Icons.refresh_rounded),
@@ -627,12 +693,22 @@ class _RiderScannerState extends State<RiderScanner> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _scannerControlButton(
-            icon: _scannerController.value.torchState == TorchState.on
-                ? Icons.flash_on_rounded
-                : Icons.flash_off_rounded,
-            label: 'Flash',
-            onTap: _toggleTorch,
+          ValueListenableBuilder<MobileScannerState>(
+            valueListenable: _scannerController,
+            builder:
+                (
+                  BuildContext context,
+                  MobileScannerState state,
+                  Widget? child,
+                ) {
+                  return _scannerControlButton(
+                    icon: state.torchState == TorchState.on
+                        ? Icons.flash_on_rounded
+                        : Icons.flash_off_rounded,
+                    label: 'Flash',
+                    onTap: _toggleTorch,
+                  );
+                },
           ),
           const SizedBox(width: 18),
           _scannerControlButton(
@@ -648,10 +724,6 @@ class _RiderScannerState extends State<RiderScanner> {
   Future<void> _toggleTorch() async {
     try {
       await _scannerController.toggleTorch();
-
-      if (mounted) {
-        setState(() {});
-      }
     } catch (error) {
       debugPrint('Torch error: $error');
     }
@@ -730,7 +802,7 @@ class _RiderScannerState extends State<RiderScanner> {
   Widget _bottomPanel() {
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(maxHeight: 350),
+      constraints: const BoxConstraints(maxHeight: 430),
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
       decoration: const BoxDecoration(
         color: RiderColors.white,
@@ -761,7 +833,8 @@ class _RiderScannerState extends State<RiderScanner> {
           Text('Verifying BiliHub QR...', style: RiderStyle.cardTitle),
           SizedBox(height: 3),
           Text(
-            'Please wait while BiliHub securely verifies the waybill and Rider assignment.',
+            'Please wait while BiliHub securely '
+            'verifies the waybill and rider assignment.',
             textAlign: TextAlign.center,
             style: RiderStyle.small,
           ),
@@ -785,7 +858,9 @@ class _RiderScannerState extends State<RiderScanner> {
             borderRadius: BorderRadius.circular(10),
           ),
         ),
+
         const SizedBox(height: 14),
+
         Container(
           height: 48,
           width: 48,
@@ -803,20 +878,27 @@ class _RiderScannerState extends State<RiderScanner> {
             size: 27,
           ),
         ),
+
         const SizedBox(height: 9),
+
         Text(
           _scanError != null ? 'Unable to Scan' : 'Ready to Scan',
           style: RiderStyle.cardTitle,
         ),
+
         const SizedBox(height: 3),
+
         Text(
           _scanError ??
-              'Point your camera at the original BiliHub waybill QR code.',
+              'Point your camera at the '
+                  'original BiliHub waybill QR code.',
           textAlign: TextAlign.center,
           style: RiderStyle.small,
         ),
+
         if (_scannedCode != null) ...[
           const SizedBox(height: 10),
+
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -839,8 +921,10 @@ class _RiderScannerState extends State<RiderScanner> {
             ),
           ),
         ],
+
         if (_scanError != null) ...[
           const SizedBox(height: 12),
+
           SizedBox(
             width: double.infinity,
             height: 48,
@@ -864,6 +948,12 @@ class _RiderScannerState extends State<RiderScanner> {
   // ============================================================
 
   Widget _parcelFoundPanel(ParcelModel parcel) {
+    final bool sellerPickup = parcel.isSellerPickupAssignment;
+
+    final bool linehaul = parcel.isLinehaulAssignment;
+
+    final bool finalMile = parcel.isFinalMileAssignment;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -877,7 +967,9 @@ class _RiderScannerState extends State<RiderScanner> {
             ),
           ),
         ),
+
         const SizedBox(height: 14),
+
         const Row(
           children: [
             Icon(
@@ -893,7 +985,8 @@ class _RiderScannerState extends State<RiderScanner> {
                   Text('Waybill Verified', style: RiderStyle.sectionTitle),
                   SizedBox(height: 2),
                   Text(
-                    'The secure BiliHub QR has been verified successfully.',
+                    'The secure BiliHub QR has '
+                    'been verified successfully.',
                     style: RiderStyle.small,
                   ),
                 ],
@@ -901,8 +994,10 @@ class _RiderScannerState extends State<RiderScanner> {
             ),
           ],
         ),
+
         if (_scanMessage != null) ...[
           const SizedBox(height: 12),
+
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(11),
@@ -913,24 +1008,86 @@ class _RiderScannerState extends State<RiderScanner> {
             child: Text(_scanMessage!, style: RiderStyle.small),
           ),
         ],
+
         const SizedBox(height: 14),
-        _infoRow('Tracking Number', parcel.trackingNumber),
-        _infoRow(
-          'Customer',
-          parcel.customerName.isNotEmpty
-              ? parcel.customerName
-              : 'Not available',
-        ),
-        _infoRow(
-          'Address',
-          parcel.deliveryAddress.isNotEmpty
-              ? parcel.deliveryAddress
-              : 'Not available',
-        ),
-        _infoRow('Status', _formatStatus(parcel.status)),
+
+        _infoRow('Tracking Number', _displayValue(parcel.trackingNumber)),
+
+        _infoRow('Assignment', parcel.assignmentLabel),
+
+        if (sellerPickup && parcel.pickupAddress.trim().isNotEmpty)
+          _infoRow('Pickup Address', parcel.pickupAddress),
+
+        if (linehaul) ...[
+          if (parcel.originHubName.trim().isNotEmpty)
+            _infoRow('Origin Hub', parcel.originHubName),
+
+          if (parcel.destinationHubName.trim().isNotEmpty)
+            _infoRow('Destination Hub', parcel.destinationHubName),
+
+          if (parcel.linehaulStatus.trim().isNotEmpty)
+            _infoRow('Line-Haul Status', _formatStatus(parcel.linehaulStatus)),
+
+          if (parcel.routingStatus.trim().isNotEmpty)
+            _infoRow('Routing Status', _formatStatus(parcel.routingStatus)),
+
+          if (parcel.requiredVehicleType.trim().isNotEmpty)
+            _infoRow(
+              'Required Vehicle',
+              _formatStatus(parcel.requiredVehicleType),
+            ),
+        ],
+
+        if (finalMile) ...[
+          _infoRow('Customer', _displayValue(parcel.customerName)),
+
+          _infoRow('Delivery Address', _displayValue(parcel.deliveryAddress)),
+        ] else if (!linehaul) ...[
+          _infoRow('Customer', _displayValue(parcel.customerName)),
+
+          _infoRow('Address', _displayValue(parcel.deliveryAddress)),
+        ],
+
+        _infoRow('Shipment Status', _formatStatus(parcel.status)),
+
         if (_scanType != null)
           _infoRow('Scan Type', _formatScanType(_scanType!)),
-        const SizedBox(height: 8),
+
+        if (linehaul) ...[
+          const SizedBox(height: 2),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: RiderColors.background,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: RiderColors.border),
+            ),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline_rounded,
+                  size: 18,
+                  color: RiderColors.primary,
+                ),
+                SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    'Line-haul dispatch and '
+                    'destination-hub receipt are '
+                    'controlled by Logistics.',
+                    style: RiderStyle.small,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 12),
+
         SizedBox(
           width: double.infinity,
           height: 50,
@@ -956,7 +1113,11 @@ class _RiderScannerState extends State<RiderScanner> {
   // ============================================================
 
   String _formatStatus(String status) {
-    final String value = status.trim().replaceAll('-', '_');
+    final String value = status
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
 
     if (value.isEmpty) {
       return 'Not available';
@@ -978,12 +1139,37 @@ class _RiderScannerState extends State<RiderScanner> {
   // ============================================================
 
   String _formatScanType(String type) {
-    switch (type.trim().toLowerCase()) {
+    final String normalized = type
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+
+    switch (normalized) {
       case 'seller_pickup':
         return 'Seller Pickup';
 
       case 'hub_pickup':
         return 'Hub Pickup';
+
+      case 'linehaul':
+      case 'line_haul':
+        return 'Line Haul';
+
+      case 'final_mile':
+        return 'Final-Mile Delivery';
+
+      case 'pickup_and_delivery':
+        return 'Pickup & Final-Mile';
+
+      case 'pickup_and_linehaul':
+        return 'Pickup & Line Haul';
+
+      case 'linehaul_and_delivery':
+        return 'Line Haul & Final-Mile';
+
+      case 'pickup_linehaul_and_delivery':
+        return 'Pickup / Line Haul / Final-Mile';
 
       default:
         return _formatStatus(type);
@@ -1000,7 +1186,7 @@ class _RiderScannerState extends State<RiderScanner> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 105, child: Text(title, style: RiderStyle.small)),
+          SizedBox(width: 112, child: Text(title, style: RiderStyle.small)),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -1012,5 +1198,15 @@ class _RiderScannerState extends State<RiderScanner> {
         ],
       ),
     );
+  }
+
+  String _displayValue(String value, {String fallback = 'Not available'}) {
+    final String cleaned = value.trim();
+
+    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
+      return fallback;
+    }
+
+    return cleaned;
   }
 }

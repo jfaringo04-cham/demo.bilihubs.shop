@@ -880,8 +880,13 @@ class ApiService {
               'tracking=${shipment['tracking_number']} | '
               'assignment=${shipment['assignment_type']} | '
               'pickup_rider_id=${shipment['pickup_rider_id']} | '
+              'linehaul_rider_id=${shipment['linehaul_rider_id']} | '
               'rider_id=${shipment['rider_id']} | '
               'status=${shipment['status']} | '
+              'routing_status=${shipment['routing_status']} | '
+              'linehaul_status=${shipment['linehaul_status']} | '
+              'origin_hub=${shipment['origin_hub_name']} | '
+              'destination_hub=${shipment['destination_hub_name']} | '
               'sorting_status=${shipment['sorting_status']} | '
               'received=${shipment['received_by_sorting_center']}',
             );

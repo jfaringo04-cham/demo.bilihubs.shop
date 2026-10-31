@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
 import '../../sevices/api_services.dart';
 import '../../sevices/auth_storage.dart';
@@ -39,6 +38,10 @@ class _RiderProfileState extends State<RiderProfile> {
   String _riderId = '';
   String _vehicle = '';
   String _availabilityStatus = '';
+  String _accountStatus = '';
+
+  String _licenseNumber = '';
+  String _vehiclePlateNumber = '';
 
   Map<String, dynamic> _savedUser = <String, dynamic>{};
 
@@ -54,7 +57,9 @@ class _RiderProfileState extends State<RiderProfile> {
   // ============================================================
 
   Future<void> _loadProfile({bool refresh = false}) async {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     setState(() {
       if (refresh) {
@@ -71,7 +76,9 @@ class _RiderProfileState extends State<RiderProfile> {
 
       final Map<String, dynamic> result = await ApiService.getRiderDashboard();
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       if (result['success'] == true) {
         final Map<String, dynamic> rider = _extractRiderData(result);
@@ -102,7 +109,9 @@ class _RiderProfileState extends State<RiderProfile> {
     } catch (error) {
       debugPrint('Rider profile error: $error');
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _applyFallbackValues();
@@ -110,7 +119,9 @@ class _RiderProfileState extends State<RiderProfile> {
         _isLoading = false;
         _isRefreshing = false;
 
-        _errorMessage = 'Unable to load rider information. Please try again.';
+        _errorMessage =
+            'Unable to load rider information. '
+            'Please try again.';
       });
     }
   }
@@ -158,7 +169,21 @@ class _RiderProfileState extends State<RiderProfile> {
     _availabilityStatus = _firstText(<dynamic>[
       saved['availability_status'],
       saved['availability'],
+    ]);
+
+    _accountStatus = _firstText(<dynamic>[
       saved['status'],
+      saved['account_status'],
+    ]);
+
+    _licenseNumber = _firstText(<dynamic>[
+      saved['license_number'],
+      saved['driver_license_number'],
+    ]);
+
+    _vehiclePlateNumber = _firstText(<dynamic>[
+      saved['plate_number'],
+      saved['vehicle_plate_number'],
     ]);
 
     final dynamic savedRider = saved['rider'];
@@ -208,7 +233,8 @@ class _RiderProfileState extends State<RiderProfile> {
     return data.containsKey('vehicle_type') ||
         data.containsKey('availability_status') ||
         data.containsKey('rider_id') ||
-        data.containsKey('license_number');
+        data.containsKey('license_number') ||
+        data.containsKey('driver_license_number');
   }
 
   // ============================================================
@@ -254,11 +280,32 @@ class _RiderProfileState extends State<RiderProfile> {
 
     final String availability = _availabilityFromMap(rider);
 
+    final String accountStatus = _firstText(<dynamic>[
+      rider['status'],
+      rider['account_status'],
+      _accountStatus,
+    ]);
+
+    final String licenseNumber = _firstText(<dynamic>[
+      rider['license_number'],
+      rider['driver_license_number'],
+      _licenseNumber,
+    ]);
+
+    final String plateNumber = _firstText(<dynamic>[
+      rider['plate_number'],
+      rider['vehicle_plate_number'],
+      _vehiclePlateNumber,
+    ]);
+
     _name = name;
     _email = email;
     _phone = phone;
     _riderId = riderId;
     _vehicle = vehicle;
+    _accountStatus = accountStatus;
+    _licenseNumber = licenseNumber;
+    _vehiclePlateNumber = plateNumber;
 
     if (availability.isNotEmpty) {
       _availabilityStatus = availability;
@@ -334,6 +381,34 @@ class _RiderProfileState extends State<RiderProfile> {
         widget.vehicle,
       ]);
     }
+
+    if (_availabilityStatus.isEmpty) {
+      _availabilityStatus = _firstText(<dynamic>[
+        _savedUser['availability_status'],
+        _savedUser['availability'],
+      ]);
+    }
+
+    if (_accountStatus.isEmpty) {
+      _accountStatus = _firstText(<dynamic>[
+        _savedUser['status'],
+        _savedUser['account_status'],
+      ]);
+    }
+
+    if (_licenseNumber.isEmpty) {
+      _licenseNumber = _firstText(<dynamic>[
+        _savedUser['license_number'],
+        _savedUser['driver_license_number'],
+      ]);
+    }
+
+    if (_vehiclePlateNumber.isEmpty) {
+      _vehiclePlateNumber = _firstText(<dynamic>[
+        _savedUser['plate_number'],
+        _savedUser['vehicle_plate_number'],
+      ]);
+    }
   }
 
   // ============================================================
@@ -393,13 +468,36 @@ class _RiderProfileState extends State<RiderProfile> {
     return _formatStatus(_availabilityStatus);
   }
 
+  String get _accountStatusText {
+    if (_accountStatus.trim().isEmpty) {
+      return 'Active';
+    }
+
+    return _formatStatus(_accountStatus);
+  }
+
   bool get _isOnline {
-    final String status = _availabilityStatus.trim().toLowerCase().replaceAll(
-      ' ',
-      '_',
-    );
+    final String status = _availabilityStatus
+        .trim()
+        .toLowerCase()
+        .replaceAll(' ', '_')
+        .replaceAll('-', '_');
 
     return status == 'online' || status == 'available' || status == 'active';
+  }
+
+  bool get _isAccountApproved {
+    final String status = _accountStatus
+        .trim()
+        .toLowerCase()
+        .replaceAll(' ', '_')
+        .replaceAll('-', '_');
+
+    if (status.isEmpty) {
+      return true;
+    }
+
+    return status == 'active' || status == 'approved' || status == 'verified';
   }
 
   void _showComingSoon(String feature) {
@@ -407,15 +505,14 @@ class _RiderProfileState extends State<RiderProfile> {
       return;
     }
 
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-
-        content: Text('$feature is not available yet.'),
-      ),
-    );
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('$feature is not available yet.'),
+        ),
+      );
   }
 
   // ============================================================
@@ -438,103 +535,84 @@ class _RiderProfileState extends State<RiderProfile> {
     });
 
     try {
-      final String? token = await AuthStorage.getToken();
-
-      if (token != null && token.trim().isNotEmpty) {
-        try {
-          await http.post(
-            Uri.parse('${ApiService.baseUrl}/auth/logout'),
-            headers: <String, String>{
-              'Accept': 'application/json',
-              'Authorization': 'Bearer ${token.trim()}',
-            },
-          );
-        } catch (error) {
-          debugPrint('Server logout failed: $error');
-        }
-      }
-
+      /*
+       * Mobile auth currently relies on the stored Sanctum
+       * token. Clearing the local session guarantees that the
+       * protected Rider APIs can no longer be called from the
+       * current device session.
+       */
       await AuthStorage.clearSession();
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute<void>(
-          builder: (BuildContext context) => const LoginPage(),
+          builder: (BuildContext context) {
+            return const LoginPage();
+          },
         ),
         (Route<dynamic> route) => false,
       );
     } catch (error) {
       debugPrint('Logout error: $error');
 
-      try {
-        await AuthStorage.clearSession();
-      } catch (_) {
-        // Continue to UI handling below.
+      if (!mounted) {
+        return;
       }
-
-      if (!mounted) return;
 
       setState(() {
         _isLoggingOut = false;
       });
 
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          behavior: SnackBarBehavior.floating,
-
-          content: Text('Unable to complete logout. Please try again.'),
-        ),
-      );
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              'Unable to complete logout. '
+              'Please try again.',
+            ),
+          ),
+        );
     }
   }
 
   Future<bool?> _showLogoutConfirmation() {
     return showDialog<bool>(
       context: context,
-
       builder: (BuildContext dialogContext) {
         return AlertDialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
           ),
-
           title: const Text('Logout', style: RiderStyle.sectionTitle),
-
           content: const Text(
-            'Are you sure you want to log out of your Rider account?',
-
+            'Are you sure you want to log out '
+            'of your Rider account?',
             style: RiderStyle.small,
           ),
-
           actions: [
             TextButton(
               onPressed: () {
                 Navigator.pop(dialogContext, false);
               },
-
               child: const Text('Cancel'),
             ),
-
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(dialogContext, true);
               },
-
               style: ElevatedButton.styleFrom(
                 backgroundColor: RiderColors.danger,
-
                 foregroundColor: Colors.white,
-
                 elevation: 0,
-
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-
               child: const Text('Logout'),
             ),
           ],
@@ -551,45 +629,23 @@ class _RiderProfileState extends State<RiderProfile> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: RiderColors.background,
-
       appBar: AppBar(
         backgroundColor: RiderColors.white,
-
         elevation: 0,
-
         surfaceTintColor: Colors.transparent,
-
         centerTitle: false,
-
+        automaticallyImplyLeading: false,
         title: const Text('My Profile', style: RiderStyle.appBarTitle),
-
-        leading: IconButton(
-          onPressed: () {
-            Navigator.maybePop(context);
-          },
-
-          icon: const Icon(
-            Icons.arrow_back_ios_new_rounded,
-
-            color: RiderColors.textDark,
-
-            size: 20,
-          ),
-        ),
-
         actions: [
           if (_isRefreshing)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16),
-
               child: Center(
                 child: SizedBox(
                   height: 19,
                   width: 19,
-
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-
                     color: RiderColors.primary,
                   ),
                 ),
@@ -598,40 +654,31 @@ class _RiderProfileState extends State<RiderProfile> {
           else
             IconButton(
               tooltip: 'Refresh profile',
-
               onPressed: _isLoading
                   ? null
                   : () {
                       _loadProfile(refresh: true);
                     },
-
               icon: const Icon(
                 Icons.refresh_rounded,
-
                 color: RiderColors.primary,
               ),
             ),
         ],
       ),
-
       body: SafeArea(
         top: false,
-
         child: RefreshIndicator(
           onRefresh: () {
             return _loadProfile(refresh: true);
           },
-
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics(),
             ),
-
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 30),
-
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
                 if (_isLoading) _loadingCard(),
 
@@ -648,62 +695,91 @@ class _RiderProfileState extends State<RiderProfile> {
 
                 const Text(
                   'Personal Information',
-
                   style: RiderStyle.sectionTitle,
                 ),
 
                 const SizedBox(height: 12),
 
                 _infoCard(
+                  icon: Icons.email_outlined,
+                  title: 'Email Address',
+                  value: _displayValue(_email),
+                  iconBackground: RiderColors.lightBlue,
+                  iconColor: RiderColors.primary,
+                ),
+
+                _infoCard(
                   icon: Icons.phone_outlined,
-
                   title: 'Phone Number',
-
                   value: _displayValue(_phone),
-
                   iconBackground: RiderColors.lightGreen,
-
                   iconColor: RiderColors.success,
                 ),
 
                 _infoCard(
                   icon: Icons.badge_outlined,
-
                   title: 'Rider ID',
-
                   value: _displayValue(_riderId),
-
                   iconBackground: RiderColors.lightPurple,
-
                   iconColor: RiderColors.primary,
                 ),
 
+                const SizedBox(height: 10),
+
+                const Text('Rider Information', style: RiderStyle.sectionTitle),
+
+                const SizedBox(height: 12),
+
                 _infoCard(
                   icon: Icons.two_wheeler_outlined,
-
-                  title: 'Vehicle Information',
-
-                  value: _displayValue(_vehicle),
-
+                  title: 'Vehicle Type',
+                  value: _displayValue(_formatStatus(_vehicle)),
                   iconBackground: RiderColors.lightOrange,
-
                   iconColor: RiderColors.warning,
                 ),
+
+                if (_vehiclePlateNumber.trim().isNotEmpty)
+                  _infoCard(
+                    icon: Icons.confirmation_number_outlined,
+                    title: 'Plate Number',
+                    value: _vehiclePlateNumber,
+                    iconBackground: RiderColors.lightBlue,
+                    iconColor: RiderColors.primary,
+                  ),
+
+                if (_licenseNumber.trim().isNotEmpty)
+                  _infoCard(
+                    icon: Icons.credit_card_outlined,
+                    title: 'Driver License',
+                    value: _licenseNumber,
+                    iconBackground: RiderColors.lightPurple,
+                    iconColor: RiderColors.primary,
+                  ),
 
                 _infoCard(
                   icon: _isOnline
                       ? Icons.check_circle_outline_rounded
                       : Icons.pause_circle_outline_rounded,
-
                   title: 'Availability',
-
                   value: _statusText,
-
                   iconBackground: _isOnline
                       ? RiderColors.lightGreen
                       : RiderColors.lightOrange,
-
                   iconColor: _isOnline
+                      ? RiderColors.success
+                      : RiderColors.warning,
+                ),
+
+                _infoCard(
+                  icon: _isAccountApproved
+                      ? Icons.verified_user_outlined
+                      : Icons.pending_actions_outlined,
+                  title: 'Account Status',
+                  value: _accountStatusText,
+                  iconBackground: _isAccountApproved
+                      ? RiderColors.lightGreen
+                      : RiderColors.lightOrange,
+                  iconColor: _isAccountApproved
                       ? RiderColors.success
                       : RiderColors.warning,
                 ),
@@ -730,26 +806,19 @@ class _RiderProfileState extends State<RiderProfile> {
   Widget _loadingCard() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(15),
-
       decoration: RiderStyle.card,
-
       child: const Row(
         children: [
           SizedBox(
             height: 21,
             width: 21,
-
             child: CircularProgressIndicator(
               strokeWidth: 2.2,
-
               color: RiderColors.primary,
             ),
           ),
-
           SizedBox(width: 12),
-
           Expanded(child: Text('Loading profile...', style: RiderStyle.small)),
         ],
       ),
@@ -763,40 +832,28 @@ class _RiderProfileState extends State<RiderProfile> {
   Widget _errorCard() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(15),
-
       decoration: RiderStyle.card,
-
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           const Icon(
             Icons.info_outline_rounded,
-
             color: RiderColors.warning,
-
             size: 21,
           ),
-
           const SizedBox(width: 10),
-
           Expanded(
             child: Text(
               _errorMessage ?? 'Unable to load rider information.',
-
               style: RiderStyle.small,
             ),
           ),
-
           IconButton(
             tooltip: 'Retry',
-
             onPressed: () {
               _loadProfile(refresh: true);
             },
-
             icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
           ),
         ],
@@ -811,44 +868,32 @@ class _RiderProfileState extends State<RiderProfile> {
   Widget _profileHeader() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 22),
-
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: <Color>[RiderColors.primary, RiderColors.primaryDark],
-
           begin: Alignment.topLeft,
-
           end: Alignment.bottomRight,
         ),
-
         borderRadius: BorderRadius.circular(22),
-
         boxShadow: <BoxShadow>[
           BoxShadow(
             color: RiderColors.primary.withValues(alpha: 0.18),
-
             blurRadius: 18,
-
             offset: const Offset(0, 8),
           ),
         ],
       ),
-
       child: Stack(
         children: [
           Positioned(
             right: -45,
             top: -55,
-
             child: Container(
               height: 145,
               width: 145,
-
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-
                 color: Colors.white.withValues(alpha: 0.07),
               ),
             ),
@@ -857,14 +902,11 @@ class _RiderProfileState extends State<RiderProfile> {
           Positioned(
             left: -55,
             bottom: -75,
-
             child: Container(
               height: 130,
               width: 130,
-
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-
                 color: Colors.white.withValues(alpha: 0.05),
               ),
             ),
@@ -875,24 +917,17 @@ class _RiderProfileState extends State<RiderProfile> {
               Container(
                 height: 88,
                 width: 88,
-
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-
                   color: Colors.white.withValues(alpha: 0.16),
-
                   border: Border.all(
                     color: Colors.white.withValues(alpha: 0.30),
-
                     width: 2,
                   ),
                 ),
-
                 child: const Icon(
                   Icons.delivery_dining_rounded,
-
                   color: Colors.white,
-
                   size: 48,
                 ),
               ),
@@ -901,18 +936,12 @@ class _RiderProfileState extends State<RiderProfile> {
 
               Text(
                 _displayValue(_name, fallback: 'Rider'),
-
                 textAlign: TextAlign.center,
-
                 maxLines: 1,
-
                 overflow: TextOverflow.ellipsis,
-
                 style: const TextStyle(
                   color: Colors.white,
-
                   fontSize: 21,
-
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -921,63 +950,66 @@ class _RiderProfileState extends State<RiderProfile> {
 
               Text(
                 _displayValue(_email),
-
                 textAlign: TextAlign.center,
-
                 maxLines: 1,
-
                 overflow: TextOverflow.ellipsis,
-
                 style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
 
               const SizedBox(height: 13),
 
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 7,
-                ),
-
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.14),
-
-                  borderRadius: BorderRadius.circular(20),
-
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.10),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _headerBadge(
+                    icon: Icons.circle,
+                    label: _statusText,
+                    iconColor: _isOnline ? Colors.greenAccent : Colors.white54,
                   ),
-                ),
-
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-
-                  children: [
-                    Icon(
-                      Icons.circle,
-
-                      color: _isOnline ? Colors.greenAccent : Colors.white54,
-
-                      size: 9,
-                    ),
-
-                    const SizedBox(width: 6),
-
-                    Text(
-                      _statusText,
-
-                      style: const TextStyle(
-                        color: Colors.white,
-
-                        fontSize: 11,
-
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
+                  _headerBadge(
+                    icon: _isAccountApproved
+                        ? Icons.verified_rounded
+                        : Icons.schedule_rounded,
+                    label: _accountStatusText,
+                    iconColor: _isAccountApproved
+                        ? Colors.greenAccent
+                        : Colors.amberAccent,
+                  ),
+                ],
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _headerBadge({
+    required IconData icon,
+    required String label,
+    required Color iconColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: iconColor, size: 10),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ],
       ),
@@ -997,25 +1029,18 @@ class _RiderProfileState extends State<RiderProfile> {
   }) {
     return Container(
       width: double.infinity,
-
       margin: const EdgeInsets.only(bottom: 12),
-
       padding: const EdgeInsets.all(15),
-
       decoration: RiderStyle.card,
-
       child: Row(
         children: [
           Container(
             height: 46,
             width: 46,
-
             decoration: BoxDecoration(
               color: iconBackground,
-
               borderRadius: BorderRadius.circular(14),
             ),
-
             child: Icon(icon, color: iconColor, size: 22),
           ),
 
@@ -1024,7 +1049,6 @@ class _RiderProfileState extends State<RiderProfile> {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
                 Text(title, style: RiderStyle.small),
 
@@ -1032,11 +1056,8 @@ class _RiderProfileState extends State<RiderProfile> {
 
                 Text(
                   value,
-
                   maxLines: 2,
-
                   overflow: TextOverflow.ellipsis,
-
                   style: RiderStyle.cardTitle,
                 ),
               ],
@@ -1054,26 +1075,19 @@ class _RiderProfileState extends State<RiderProfile> {
   Widget _accountSection() {
     return Container(
       width: double.infinity,
-
       decoration: RiderStyle.card,
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-
             child: Text('Account', style: RiderStyle.sectionTitle),
           ),
 
           _menuItem(
             icon: Icons.settings_outlined,
-
             title: 'Account Settings',
-
             subtitle: 'Manage your profile information',
-
             onTap: () {
               _showComingSoon('Account settings');
             },
@@ -1083,11 +1097,8 @@ class _RiderProfileState extends State<RiderProfile> {
 
           _menuItem(
             icon: Icons.lock_outline_rounded,
-
             title: 'Security',
-
             subtitle: 'Password and account security',
-
             onTap: () {
               _showComingSoon('Security settings');
             },
@@ -1097,11 +1108,8 @@ class _RiderProfileState extends State<RiderProfile> {
 
           _menuItem(
             icon: Icons.help_outline_rounded,
-
             title: 'Help Center',
-
             subtitle: 'Get help with your rider account',
-
             onTap: () {
               _showComingSoon('Help Center');
             },
@@ -1123,24 +1131,18 @@ class _RiderProfileState extends State<RiderProfile> {
   }) {
     return InkWell(
       onTap: onTap,
-
       borderRadius: BorderRadius.circular(14),
-
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-
         child: Row(
           children: [
             Container(
               height: 40,
               width: 40,
-
               decoration: BoxDecoration(
                 color: RiderColors.lightPurple,
-
                 borderRadius: BorderRadius.circular(12),
               ),
-
               child: Icon(icon, color: RiderColors.primary, size: 20),
             ),
 
@@ -1149,7 +1151,6 @@ class _RiderProfileState extends State<RiderProfile> {
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-
                 children: [
                   Text(title, style: RiderStyle.cardTitle),
 
@@ -1157,11 +1158,8 @@ class _RiderProfileState extends State<RiderProfile> {
 
                   Text(
                     subtitle,
-
                     maxLines: 1,
-
                     overflow: TextOverflow.ellipsis,
-
                     style: RiderStyle.small,
                   ),
                 ],
@@ -1172,9 +1170,7 @@ class _RiderProfileState extends State<RiderProfile> {
 
             const Icon(
               Icons.arrow_forward_ios_rounded,
-
               color: RiderColors.textLight,
-
               size: 15,
             ),
           ],
@@ -1186,7 +1182,6 @@ class _RiderProfileState extends State<RiderProfile> {
   Widget _divider() {
     return const Padding(
       padding: EdgeInsets.only(left: 68),
-
       child: Divider(height: 1, thickness: 1, color: RiderColors.border),
     );
   }
@@ -1199,38 +1194,27 @@ class _RiderProfileState extends State<RiderProfile> {
     return SizedBox(
       width: double.infinity,
       height: 52,
-
       child: OutlinedButton.icon(
         onPressed: _isLoggingOut ? null : _logout,
-
         icon: _isLoggingOut
             ? const SizedBox(
                 height: 18,
                 width: 18,
-
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-
                   color: RiderColors.danger,
                 ),
               )
             : const Icon(Icons.logout_rounded, size: 19),
-
         label: Text(
           _isLoggingOut ? 'Logging out...' : 'Logout',
-
           style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
         ),
-
         style: OutlinedButton.styleFrom(
           foregroundColor: RiderColors.danger,
-
           backgroundColor: RiderColors.white,
-
           disabledForegroundColor: RiderColors.danger.withValues(alpha: 0.60),
-
           side: BorderSide(color: RiderColors.danger.withValues(alpha: 0.35)),
-
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),

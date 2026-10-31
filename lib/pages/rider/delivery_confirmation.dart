@@ -21,11 +21,18 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   final ImagePicker _imagePicker = ImagePicker();
 
   final TextEditingController _receiverController = TextEditingController();
+
   final TextEditingController _notesController = TextEditingController();
 
   bool _isLoading = false;
   bool _isLoadingShipment = true;
   bool _proofUploaded = false;
+
+  bool _isFinalMileAssignment = false;
+  bool _receivedBySortingCenter = false;
+
+  String _sortingStatus = '';
+  String _stagedAt = '';
 
   String? _errorMessage;
   String? _selectedProofPath;
@@ -37,6 +44,24 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
     super.initState();
 
     _currentStatus = _normalizeStatus(widget.parcel.status);
+
+    _isFinalMileAssignment = widget.parcel.isFinalMileAssignment;
+
+    _receivedBySortingCenter = widget.parcel.receivedBySortingCenter;
+
+    _sortingStatus = widget.parcel.normalizedSortingStatus;
+
+    _stagedAt = widget.parcel.stagedAt.trim();
+
+    _proofUploaded = widget.parcel.hasProofOfDelivery;
+
+    if (widget.parcel.deliveredTo.trim().isNotEmpty) {
+      _receiverController.text = widget.parcel.deliveredTo.trim();
+    }
+
+    if (widget.parcel.deliveryNotes.trim().isNotEmpty) {
+      _notesController.text = widget.parcel.deliveryNotes.trim();
+    }
 
     _loadLatestShipment();
   }
@@ -50,7 +75,7 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   }
 
   // ============================================================
-  // STATUS HELPERS
+  // STATUS / ASSIGNMENT HELPERS
   // ============================================================
 
   String _normalizeStatus(String status) {
@@ -71,20 +96,43 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
         _currentStatus == 'failed_return_at_sorting_center';
   }
 
+  bool get _isCancelled {
+    return _currentStatus == 'cancelled';
+  }
+
   bool get _isOutForDelivery {
     return _currentStatus == 'out_for_delivery';
   }
 
+  bool get _isFinalized {
+    return _isAlreadyDelivered || _isDeliveryFailed || _isCancelled;
+  }
+
+  bool get _sortingCenterReady {
+    return _receivedBySortingCenter &&
+        _normalizeStatus(_sortingStatus) == 'staged' &&
+        _stagedAt.isNotEmpty;
+  }
+
   bool get _canStartDelivery {
-    if (_isAlreadyDelivered || _isDeliveryFailed || _isLoading) {
+    if (_isLoading || _isFinalized || !_isFinalMileAssignment) {
       return false;
     }
 
-    return widget.parcel.id > 0 && !_isOutForDelivery;
+    if (widget.parcel.id <= 0) {
+      return false;
+    }
+
+    if (_isOutForDelivery) {
+      return false;
+    }
+
+    return _sortingCenterReady;
   }
 
   bool get _canUploadProof {
     return widget.parcel.id > 0 &&
+        _isFinalMileAssignment &&
         _isOutForDelivery &&
         !_proofUploaded &&
         !_isLoading;
@@ -92,8 +140,17 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
 
   bool get _canConfirmDelivery {
     return widget.parcel.id > 0 &&
+        _isFinalMileAssignment &&
         _isOutForDelivery &&
         _proofUploaded &&
+        !_isLoading;
+  }
+
+  bool get _canMarkDeliveryFailed {
+    return widget.parcel.id > 0 &&
+        _isFinalMileAssignment &&
+        _isOutForDelivery &&
+        !_isFinalized &&
         !_isLoading;
   }
 
@@ -103,7 +160,9 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
 
   Future<void> _loadLatestShipment() async {
     if (widget.parcel.id <= 0) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _isLoadingShipment = false;
@@ -118,13 +177,15 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
         widget.parcel.id,
       );
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       if (result['success'] != true) {
+        final String message = result['message']?.toString().trim() ?? '';
+
         setState(() {
           _isLoadingShipment = false;
-
-          final String message = result['message']?.toString().trim() ?? '';
 
           _errorMessage = message.isEmpty
               ? 'Unable to load the latest shipment information.'
@@ -139,16 +200,18 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
       Map<String, dynamic> shipment = <String, dynamic>{};
 
       if (rawData is Map<String, dynamic>) {
-        shipment = rawData;
+        shipment = Map<String, dynamic>.from(rawData);
       } else if (rawData is Map) {
         shipment = Map<String, dynamic>.from(rawData);
       }
 
+      final ParcelModel latestParcel = ParcelModel.fromJson(shipment);
+
       final String serverStatus =
-          shipment['status']?.toString().trim() ?? _currentStatus;
+          shipment['status']?.toString().trim() ?? latestParcel.status.trim();
 
       final bool hasProof =
-          shipment['has_proof_of_delivery'] == true ||
+          _toBool(shipment['has_proof_of_delivery']) ||
           (shipment['proof_of_delivery']?.toString().trim().isNotEmpty ??
               false);
 
@@ -160,11 +223,39 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           shipment['notes']?.toString().trim() ??
           '';
 
+      final bool isFinalMile =
+          latestParcel.isFinalMileAssignment ||
+          _toBool(shipment['is_final_mile_rider']) ||
+          _assignmentContainsFinalMile(
+            shipment['assignment_type']?.toString() ?? '',
+          );
+
+      final bool received = _toBool(shipment['received_by_sorting_center']);
+
+      final String sortingStatus =
+          shipment['sorting_status']?.toString().trim() ?? '';
+
+      final String stagedAt = shipment['staged_at']?.toString().trim() ?? '';
+
       setState(() {
         _currentStatus = _normalizeStatus(serverStatus);
+
         _proofUploaded = hasProof;
+
+        _isFinalMileAssignment = isFinalMile;
+
+        _receivedBySortingCenter = received;
+
+        _sortingStatus = sortingStatus;
+
+        _stagedAt = stagedAt;
+
         _isLoadingShipment = false;
-        _errorMessage = null;
+
+        _errorMessage = _isFinalMileAssignment
+            ? null
+            : 'This shipment is not assigned to you '
+                  'for final-mile delivery.';
 
         if (deliveredTo.isNotEmpty) {
           _receiverController.text = deliveredTo;
@@ -177,14 +268,27 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
     } catch (error) {
       debugPrint('Load rider shipment error: $error');
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _isLoadingShipment = false;
+
         _errorMessage =
-            'Unable to load the latest shipment information. Please try again.';
+            'Unable to load the latest shipment '
+            'information. Please try again.';
       });
     }
+  }
+
+  bool _assignmentContainsFinalMile(String value) {
+    final String type = _normalizeStatus(value);
+
+    return type == 'final_mile' ||
+        type == 'pickup_and_delivery' ||
+        type == 'linehaul_and_delivery' ||
+        type == 'pickup_linehaul_and_delivery';
   }
 
   // ============================================================
@@ -192,6 +296,23 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   // ============================================================
 
   Future<void> _markOutForDelivery() async {
+    if (!_isFinalMileAssignment) {
+      _showErrorMessage(
+        'Only the assigned final-mile rider can '
+        'start customer delivery.',
+      );
+      return;
+    }
+
+    if (!_sortingCenterReady) {
+      _showErrorMessage(
+        'This parcel must be received, sorted, '
+        'and staged by Logistics before it can '
+        'be marked Out for Delivery.',
+      );
+      return;
+    }
+
     if (!_canStartDelivery) {
       return;
     }
@@ -214,7 +335,8 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           ),
           content: const Text(
             'Mark this parcel as Out for Delivery? '
-            'The buyer will be able to see that the parcel is on the way.',
+            'The buyer will be able to see that '
+            'the parcel is on the way.',
             style: RiderStyle.small,
           ),
           actions: [
@@ -251,7 +373,9 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
             status: 'out_for_delivery',
           );
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _isLoading = false;
@@ -263,9 +387,7 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
         });
 
         _showSuccessMessage(
-          result['message']?.toString().trim().isNotEmpty == true
-              ? result['message'].toString().trim()
-              : 'Parcel is now out for delivery.',
+          _resultMessage(result, fallback: 'Parcel is now out for delivery.'),
         );
 
         return;
@@ -274,20 +396,25 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
       _showErrorMessage(
         _resultMessage(
           result,
-          fallback: 'Unable to mark the parcel as out for delivery.',
+          fallback:
+              'Unable to mark the parcel '
+              'as out for delivery.',
         ),
       );
     } catch (error) {
       debugPrint('Out for delivery error: $error');
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _isLoading = false;
       });
 
       _showErrorMessage(
-        'Unable to update the shipment. Please check your connection.',
+        'Unable to update the shipment. '
+        'Please check your connection.',
       );
     }
   }
@@ -297,7 +424,7 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   // ============================================================
 
   Future<void> _chooseProofSource() async {
-    if (_isLoading) {
+    if (_isLoading || !_isFinalMileAssignment) {
       return;
     }
 
@@ -374,7 +501,9 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
     } catch (error) {
       debugPrint('Proof image picker error: $error');
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       _showErrorMessage('Unable to select the proof photo.');
     }
@@ -385,16 +514,26 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   // ============================================================
 
   Future<void> _uploadProof() async {
+    if (!_isFinalMileAssignment) {
+      _showErrorMessage(
+        'Only the assigned final-mile rider '
+        'can upload delivery proof.',
+      );
+      return;
+    }
+
     if (!_canUploadProof) {
       return;
     }
 
     final String receiverName = _receiverController.text.trim();
+
     final String deliveryNotes = _notesController.text.trim();
 
     if (receiverName.isEmpty) {
       _showErrorMessage(
-        'Please enter the name of the person who received the parcel.',
+        'Please enter the name of the person '
+        'who received the parcel.',
       );
       return;
     }
@@ -402,7 +541,10 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
     final String? proofPath = _selectedProofPath;
 
     if (proofPath == null || proofPath.trim().isEmpty) {
-      _showErrorMessage('Please take or choose a proof-of-delivery photo.');
+      _showErrorMessage(
+        'Please take or choose a '
+        'proof-of-delivery photo.',
+      );
       return;
     }
 
@@ -419,7 +561,9 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
             deliveryNotes: deliveryNotes.isEmpty ? null : deliveryNotes,
           );
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _isLoading = false;
@@ -431,9 +575,10 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
         });
 
         _showSuccessMessage(
-          result['message']?.toString().trim().isNotEmpty == true
-              ? result['message'].toString().trim()
-              : 'Delivery proof uploaded successfully.',
+          _resultMessage(
+            result,
+            fallback: 'Delivery proof uploaded successfully.',
+          ),
         );
 
         return;
@@ -442,20 +587,25 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
       _showErrorMessage(
         _resultMessage(
           result,
-          fallback: 'Unable to upload the delivery proof.',
+          fallback:
+              'Unable to upload the '
+              'delivery proof.',
         ),
       );
     } catch (error) {
       debugPrint('Delivery proof upload error: $error');
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _isLoading = false;
       });
 
       _showErrorMessage(
-        'Unable to upload the delivery proof. Please try again.',
+        'Unable to upload the delivery proof. '
+        'Please try again.',
       );
     }
   }
@@ -465,6 +615,14 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   // ============================================================
 
   Future<void> _confirmDelivery() async {
+    if (!_isFinalMileAssignment) {
+      _showErrorMessage(
+        'Only the assigned final-mile rider '
+        'can confirm this delivery.',
+      );
+      return;
+    }
+
     if (!_canConfirmDelivery) {
       return;
     }
@@ -484,6 +642,9 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           await ApiService.updateRiderDeliveryStatus(
             shipmentId: widget.parcel.id,
             status: 'delivered',
+            deliveryNotes: _notesController.text.trim().isEmpty
+                ? null
+                : _notesController.text.trim(),
           );
 
       if (!mounted) {
@@ -499,12 +660,13 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           _currentStatus = 'delivered';
         });
 
-        final String message = result['message']?.toString().trim() ?? '';
-
         _showSuccessDialog(
-          message.isEmpty
-              ? 'The parcel has been successfully marked as delivered.'
-              : message,
+          _resultMessage(
+            result,
+            fallback:
+                'The parcel has been successfully '
+                'marked as delivered.',
+          ),
         );
 
         return;
@@ -513,7 +675,9 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
       _showErrorMessage(
         _resultMessage(
           result,
-          fallback: 'Unable to confirm delivery. Please try again.',
+          fallback:
+              'Unable to confirm delivery. '
+              'Please try again.',
         ),
       );
     } catch (error) {
@@ -528,7 +692,9 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
       });
 
       _showErrorMessage(
-        'Unable to confirm delivery. Please check your connection and try again.',
+        'Unable to confirm delivery. '
+        'Please check your connection '
+        'and try again.',
       );
     }
   }
@@ -538,14 +704,15 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   // ============================================================
 
   Future<void> _markDeliveryFailed() async {
-    if (_isLoading || _isAlreadyDelivered || _isDeliveryFailed) {
+    if (!_isFinalMileAssignment) {
+      _showErrorMessage(
+        'Only the assigned final-mile rider '
+        'can mark a delivery as failed.',
+      );
       return;
     }
 
-    if (!_isOutForDelivery) {
-      _showErrorMessage(
-        'The shipment must be Out for Delivery before it can be marked as failed.',
-      );
+    if (!_canMarkDeliveryFailed) {
       return;
     }
 
@@ -627,10 +794,14 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
       final Map<String, dynamic> result =
           await ApiService.updateRiderDeliveryStatus(
             shipmentId: widget.parcel.id,
-            status: 'failed',
+            status: 'delivery_failed',
+            failureReason: reason.trim(),
+            deliveryNotes: reason.trim(),
           );
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _isLoading = false;
@@ -642,10 +813,12 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
         });
 
         _showSuccessDialog(
-          result['message']?.toString().trim().isNotEmpty == true
-              ? result['message'].toString().trim()
-              : 'Delivery has been marked as failed.',
+          _resultMessage(
+            result,
+            fallback: 'Delivery has been marked as failed.',
+          ),
           closePageTitle: 'Delivery Failed',
+          success: false,
         );
 
         return;
@@ -660,13 +833,18 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
     } catch (error) {
       debugPrint('Delivery failed update error: $error');
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _isLoading = false;
       });
 
-      _showErrorMessage('Unable to update the shipment. Please try again.');
+      _showErrorMessage(
+        'Unable to update the shipment. '
+        'Please try again.',
+      );
     }
   }
 
@@ -696,8 +874,10 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
             ],
           ),
           content: const Text(
-            'Confirm only after the customer has received the parcel. '
-            'This will mark the shipment as delivered and update the buyer order.',
+            'Confirm only after the customer has '
+            'received the parcel. This will mark '
+            'the shipment as delivered and update '
+            'the buyer order.',
             style: RiderStyle.small,
           ),
           actions: [
@@ -721,17 +901,28 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   }
 
   // ============================================================
-  // SUCCESS DIALOG
+  // SUCCESS / RESULT DIALOG
   // ============================================================
 
   void _showSuccessDialog(
     String message, {
     String closePageTitle = 'Parcel Delivered Successfully',
+    bool success = true,
   }) {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (BuildContext dialogContext) {
+        final Color color = success ? RiderColors.success : RiderColors.danger;
+
+        final Color background = success
+            ? RiderColors.lightGreen
+            : RiderColors.danger.withValues(alpha: 0.08);
+
+        final IconData icon = success
+            ? Icons.check_circle_rounded
+            : Icons.error_outline_rounded;
+
         return AlertDialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
@@ -742,15 +933,11 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
               Container(
                 height: 82,
                 width: 82,
-                decoration: const BoxDecoration(
-                  color: RiderColors.lightGreen,
+                decoration: BoxDecoration(
+                  color: background,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.check_circle_rounded,
-                  color: RiderColors.success,
-                  size: 54,
-                ),
+                child: Icon(icon, color: color, size: 54),
               ),
               const SizedBox(height: 18),
               Text(
@@ -803,15 +990,15 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
       return;
     }
 
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: RiderColors.success,
-        content: Text(message),
-      ),
-    );
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: RiderColors.success,
+          content: Text(message),
+        ),
+      );
   }
 
   void _showErrorMessage(String message) {
@@ -819,15 +1006,15 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
       return;
     }
 
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: RiderColors.danger,
-        content: Text(message),
-      ),
-    );
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: RiderColors.danger,
+          content: Text(message),
+        ),
+      );
   }
 
   String _resultMessage(
@@ -893,6 +1080,7 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _statusHeader(),
+
                       const SizedBox(height: 16),
 
                       if (_errorMessage != null) ...[
@@ -900,28 +1088,43 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
                         const SizedBox(height: 16),
                       ],
 
-                      _parcelInformation(parcel),
-                      const SizedBox(height: 18),
+                      if (!_isFinalMileAssignment)
+                        _notFinalMileCard()
+                      else ...[
+                        _parcelInformation(parcel),
 
-                      _deliveryProgressCard(),
-
-                      if (_isOutForDelivery &&
-                          !_isAlreadyDelivered &&
-                          !_isDeliveryFailed) ...[
                         const SizedBox(height: 18),
-                        _proofSection(),
+
+                        _sortingReadinessCard(),
+
+                        const SizedBox(height: 18),
+
+                        _deliveryProgressCard(),
+
+                        if (_isOutForDelivery &&
+                            !_isAlreadyDelivered &&
+                            !_isDeliveryFailed) ...[
+                          const SizedBox(height: 18),
+                          _proofSection(),
+                        ],
+
+                        const SizedBox(height: 24),
+
+                        _actionSection(),
+
+                        const SizedBox(height: 14),
+
+                        if (!_isAlreadyDelivered &&
+                            !_isDeliveryFailed &&
+                            !_isCancelled)
+                          const Text(
+                            'Delivery updates are synced '
+                            'to the server and reflected '
+                            'in buyer order tracking.',
+                            textAlign: TextAlign.center,
+                            style: RiderStyle.small,
+                          ),
                       ],
-
-                      const SizedBox(height: 24),
-                      _actionSection(),
-                      const SizedBox(height: 14),
-
-                      if (!_isAlreadyDelivered && !_isDeliveryFailed)
-                        const Text(
-                          'Delivery updates are synced to the server and can be reflected in buyer order tracking.',
-                          textAlign: TextAlign.center,
-                          style: RiderStyle.small,
-                        ),
                     ],
                   ),
                 ),
@@ -936,29 +1139,75 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
 
   Widget _statusHeader() {
     IconData icon = Icons.local_shipping_rounded;
+
     Color iconColor = RiderColors.primary;
+
     Color background = RiderColors.lightPurple;
 
     String title = 'Delivery in Progress';
+
     String subtitle = 'Review the shipment and update its delivery status.';
 
-    if (_isAlreadyDelivered) {
+    if (!_isFinalMileAssignment) {
+      icon = Icons.lock_outline_rounded;
+
+      iconColor = RiderColors.danger;
+
+      background = RiderColors.danger.withValues(alpha: 0.08);
+
+      title = 'Final-Mile Access Required';
+
+      subtitle =
+          'This shipment is not assigned to you '
+          'for final customer delivery.';
+    } else if (_isAlreadyDelivered) {
       icon = Icons.check_circle_rounded;
+
       iconColor = RiderColors.success;
+
       background = RiderColors.lightGreen;
+
       title = 'Delivery Completed';
+
       subtitle = 'This parcel has been delivered successfully.';
     } else if (_isDeliveryFailed) {
       icon = Icons.error_outline_rounded;
+
       iconColor = RiderColors.danger;
+
+      background = RiderColors.danger.withValues(alpha: 0.08);
+
       title = 'Delivery Failed';
+
       subtitle = 'This parcel was not successfully delivered.';
+    } else if (_isCancelled) {
+      icon = Icons.cancel_outlined;
+
+      iconColor = RiderColors.danger;
+
+      background = RiderColors.danger.withValues(alpha: 0.08);
+
+      title = 'Shipment Cancelled';
+
+      subtitle = 'This shipment has been cancelled.';
     } else if (_isOutForDelivery) {
       icon = Icons.delivery_dining_rounded;
+
       title = 'Out for Delivery';
+
       subtitle = _proofUploaded
-          ? 'Proof uploaded. You can now complete the delivery.'
-          : 'Upload proof after the customer receives the parcel.';
+          ? 'Proof uploaded. You can now '
+                'complete the delivery.'
+          : 'Upload proof after the customer '
+                'receives the parcel.';
+    } else if (!_sortingCenterReady) {
+      icon = Icons.warehouse_outlined;
+
+      title = 'Waiting for Logistics';
+
+      subtitle =
+          'The parcel must finish sorting and '
+          'staging before final delivery.';
     }
 
     return Container(
@@ -997,7 +1246,7 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   }
 
   // ============================================================
-  // ERROR BANNER
+  // ERROR / ACCESS
   // ============================================================
 
   Widget _errorBanner() {
@@ -1015,6 +1264,37 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           const Icon(Icons.error_outline_rounded, color: RiderColors.danger),
           const SizedBox(width: 10),
           Expanded(child: Text(_errorMessage ?? '', style: RiderStyle.small)),
+        ],
+      ),
+    );
+  }
+
+  Widget _notFinalMileCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: RiderStyle.card,
+      child: const Column(
+        children: [
+          Icon(
+            Icons.delivery_dining_outlined,
+            size: 48,
+            color: RiderColors.textGrey,
+          ),
+          SizedBox(height: 14),
+          Text(
+            'Final-Mile Delivery Only',
+            style: RiderStyle.sectionTitle,
+            textAlign: TextAlign.center,
+          ),
+          SizedBox(height: 7),
+          Text(
+            'Seller pickup and line-haul '
+            'assignments cannot use customer '
+            'delivery confirmation.',
+            style: RiderStyle.small,
+            textAlign: TextAlign.center,
+          ),
         ],
       ),
     );
@@ -1062,6 +1342,13 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
             value: _displayValue(parcel.deliveryAddress),
           ),
 
+          if (parcel.destinationHubName.trim().isNotEmpty)
+            _infoRow(
+              icon: Icons.warehouse_outlined,
+              title: 'Destination Hub',
+              value: parcel.destinationHubName,
+            ),
+
           _infoRow(
             icon: Icons.local_shipping_outlined,
             title: 'Status',
@@ -1070,6 +1357,72 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           ),
         ],
       ),
+    );
+  }
+
+  // ============================================================
+  // SORTING READINESS
+  // ============================================================
+
+  Widget _sortingReadinessCard() {
+    final bool ready = _sortingCenterReady;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: RiderStyle.card,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Sorting Center Readiness',
+            style: RiderStyle.sectionTitle,
+          ),
+          const SizedBox(height: 14),
+
+          _readinessRow(
+            label: 'Received by Logistics',
+            completed: _receivedBySortingCenter,
+          ),
+
+          const SizedBox(height: 9),
+
+          _readinessRow(
+            label: 'Sorting Status: ${_formatStatus(_sortingStatus)}',
+            completed: _normalizeStatus(_sortingStatus) == 'staged',
+          ),
+
+          const SizedBox(height: 9),
+
+          _readinessRow(
+            label: 'Ready for Final-Mile Delivery',
+            completed: ready,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _readinessRow({required String label, required bool completed}) {
+    return Row(
+      children: [
+        Icon(
+          completed ? Icons.check_circle_rounded : Icons.schedule_rounded,
+          color: completed ? RiderColors.success : RiderColors.warning,
+          size: 20,
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: RiderColors.textDark,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1087,6 +1440,17 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
         children: [
           const Text('Delivery Progress', style: RiderStyle.sectionTitle),
           const SizedBox(height: 16),
+
+          _progressItem(
+            label: 'Ready for Final Mile',
+            completed:
+                _sortingCenterReady ||
+                _isOutForDelivery ||
+                _isAlreadyDelivered ||
+                _isDeliveryFailed,
+          ),
+
+          _progressLine(),
 
           _progressItem(
             label: 'Out for Delivery',
@@ -1167,7 +1531,9 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           const Text('Proof of Delivery', style: RiderStyle.sectionTitle),
           const SizedBox(height: 6),
           const Text(
-            'Provide the receiver name and a photo after the parcel has been received.',
+            'Provide the receiver name and '
+            'a photo after the parcel has '
+            'been received.',
             style: RiderStyle.small,
           ),
           const SizedBox(height: 18),
@@ -1277,59 +1643,76 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
   // ============================================================
 
   Widget _actionSection() {
+    if (!_isFinalMileAssignment) {
+      return const SizedBox.shrink();
+    }
+
     if (_isAlreadyDelivered) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: RiderStyle.card,
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.verified_rounded, color: RiderColors.success),
-            SizedBox(width: 8),
-            Text(
-              'DELIVERY COMPLETED',
-              style: TextStyle(
-                color: RiderColors.success,
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
+      return _finalStateBox(
+        icon: Icons.verified_rounded,
+        text: 'DELIVERY COMPLETED',
+        color: RiderColors.success,
       );
     }
 
     if (_isDeliveryFailed) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: RiderStyle.card,
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.error_outline_rounded, color: RiderColors.danger),
-            SizedBox(width: 8),
-            Text(
-              'DELIVERY FAILED',
-              style: TextStyle(
-                color: RiderColors.danger,
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
+      return _finalStateBox(
+        icon: Icons.error_outline_rounded,
+        text: 'DELIVERY FAILED',
+        color: RiderColors.danger,
+      );
+    }
+
+    if (_isCancelled) {
+      return _finalStateBox(
+        icon: Icons.cancel_outlined,
+        text: 'SHIPMENT CANCELLED',
+        color: RiderColors.danger,
       );
     }
 
     if (!_isOutForDelivery) {
-      return CustomButton(
-        text: 'MARK OUT FOR DELIVERY',
-        icon: Icons.delivery_dining_rounded,
-        isLoading: _isLoading,
-        backgroundColor: RiderColors.primary,
-        onPressed: _canStartDelivery ? _markOutForDelivery : null,
+      return Column(
+        children: [
+          if (!_sortingCenterReady) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(13),
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: RiderColors.background,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: RiderColors.border),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    color: RiderColors.primary,
+                    size: 18,
+                  ),
+                  SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      'Waiting for Logistics to '
+                      'complete sorting and staging.',
+                      style: RiderStyle.small,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          CustomButton(
+            text: 'MARK OUT FOR DELIVERY',
+            icon: Icons.delivery_dining_rounded,
+            isLoading: _isLoading,
+            backgroundColor: RiderColors.primary,
+            onPressed: _canStartDelivery ? _markOutForDelivery : null,
+          ),
+        ],
       );
     }
 
@@ -1358,7 +1741,7 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           width: double.infinity,
           height: 48,
           child: OutlinedButton.icon(
-            onPressed: _isLoading ? null : _markDeliveryFailed,
+            onPressed: _canMarkDeliveryFailed ? _markDeliveryFailed : null,
             icon: const Icon(Icons.error_outline_rounded),
             label: const Text('MARK DELIVERY FAILED'),
             style: OutlinedButton.styleFrom(
@@ -1375,6 +1758,33 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _finalStateBox({
+    required IconData icon,
+    required String text,
+    required Color color,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: RiderStyle.card,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1454,5 +1864,23 @@ class _DeliveryConfirmationState extends State<DeliveryConfirmation> {
               '${word.substring(1).toLowerCase()}';
         })
         .join(' ');
+  }
+
+  bool _toBool(dynamic value) {
+    if (value == null) {
+      return false;
+    }
+
+    if (value is bool) {
+      return value;
+    }
+
+    if (value is num) {
+      return value != 0;
+    }
+
+    final String text = value.toString().trim().toLowerCase();
+
+    return text == 'true' || text == '1' || text == 'yes' || text == 'y';
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../models/parcel_model.dart';
 import '../../sevices/api_services.dart';
 import '../../sevices/auth_storage.dart';
 import '../../styles/rider_style.dart';
@@ -42,7 +43,9 @@ class _RiderHomeState extends State<RiderHome> {
   // ============================================================
 
   Future<void> _loadDashboard({bool refresh = false}) async {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     setState(() {
       if (refresh) {
@@ -63,7 +66,9 @@ class _RiderHomeState extends State<RiderHome> {
       final Map<String, dynamic> deliveryResult =
           await ApiService.getRiderDeliveries();
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       final Map<String, dynamic> riderData = _extractRiderData(dashboardResult);
 
@@ -79,17 +84,43 @@ class _RiderHomeState extends State<RiderHome> {
         deliveryResult,
       );
 
-      final List<Map<String, dynamic>> finalTasks = dashboardTasks.isNotEmpty
-          ? dashboardTasks
-          : deliveryTasks;
+      /*
+       * Prefer /api/rider/orders when available because this
+       * contains the latest assignment_type, line-haul and
+       * hub-routing fields required by the mobile Rider UI.
+       */
+      final List<Map<String, dynamic>> finalTasks = deliveryTasks.isNotEmpty
+          ? deliveryTasks
+          : dashboardTasks;
 
       final Map<String, dynamic> finalRider = riderData.isNotEmpty
           ? riderData
           : _extractSavedRider();
 
-      final Map<String, dynamic> finalOverview = overviewData.isNotEmpty
-          ? overviewData
-          : _buildOverviewFromTasks(finalTasks);
+      /*
+       * Preserve dashboard statistics but add the statistics
+       * calculated from the current mobile assignment list.
+       */
+      final Map<String, dynamic> computedOverview = _buildOverviewFromTasks(
+        finalTasks,
+      );
+
+      final Map<String, dynamic> finalOverview = <String, dynamic>{
+        ...computedOverview,
+        ...overviewData,
+      };
+
+      /*
+       * Assignment counters should always come from the latest
+       * Rider shipment list because older dashboard responses
+       * may not know about line-haul assignments yet.
+       */
+      finalOverview.addAll({
+        'seller_pickup': computedOverview['seller_pickup'] ?? 0,
+        'linehaul': computedOverview['linehaul'] ?? 0,
+        'final_mile': computedOverview['final_mile'] ?? 0,
+        'active': computedOverview['active'] ?? 0,
+      });
 
       final bool dashboardSuccess = dashboardResult['success'] == true;
 
@@ -116,10 +147,37 @@ class _RiderHomeState extends State<RiderHome> {
         }
       }
 
+      final List<Map<String, dynamic>> sortedTasks =
+          List<Map<String, dynamic>>.from(finalTasks);
+
+      sortedTasks.sort((Map<String, dynamic> a, Map<String, dynamic> b) {
+        final DateTime? aDate = _taskActivityDate(a);
+
+        final DateTime? bDate = _taskActivityDate(b);
+
+        if (aDate != null && bDate != null) {
+          final int comparison = bDate.compareTo(aDate);
+
+          if (comparison != 0) {
+            return comparison;
+          }
+        } else if (aDate != null) {
+          return -1;
+        } else if (bDate != null) {
+          return 1;
+        }
+
+        final int aId = int.tryParse(a['id']?.toString() ?? '') ?? 0;
+
+        final int bId = int.tryParse(b['id']?.toString() ?? '') ?? 0;
+
+        return bId.compareTo(aId);
+      });
+
       setState(() {
         _rider = finalRider;
         _overview = finalOverview;
-        _tasks = finalTasks;
+        _tasks = sortedTasks;
 
         _hasDashboardData = hasUsefulData;
 
@@ -128,15 +186,17 @@ class _RiderHomeState extends State<RiderHome> {
         _isLoading = false;
         _isRefreshing = false;
       });
-    } catch (e) {
-      if (!mounted) return;
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _isLoading = false;
         _isRefreshing = false;
         _hasDashboardData = false;
 
-        _errorMessage = 'Unable to load rider dashboard: $e';
+        _errorMessage = 'Unable to load rider dashboard: $error';
       });
     }
   }
@@ -154,9 +214,9 @@ class _RiderHomeState extends State<RiderHome> {
 
     _savedUser = Map<String, dynamic>.from(saved);
 
-    final String? savedName = saved['name']?.toString().trim();
+    final String savedName = saved['name']?.toString().trim() ?? '';
 
-    if (savedName != null && savedName.isNotEmpty) {
+    if (savedName.isNotEmpty) {
       _savedUserName = savedName;
     }
   }
@@ -270,16 +330,24 @@ class _RiderHomeState extends State<RiderHome> {
     final dynamic rawData = result['data'];
 
     if (rawData is Map) {
-      final dynamic nestedOverview = rawData['overview'];
+      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
+
+      final dynamic nestedOverview = data['overview'];
 
       if (nestedOverview is Map) {
         return Map<String, dynamic>.from(nestedOverview);
       }
 
-      final dynamic statistics = rawData['statistics'];
+      final dynamic statistics = data['statistics'];
 
       if (statistics is Map) {
         return Map<String, dynamic>.from(statistics);
+      }
+
+      final dynamic stats = data['stats'];
+
+      if (stats is Map) {
+        return Map<String, dynamic>.from(stats);
       }
     }
 
@@ -293,9 +361,7 @@ class _RiderHomeState extends State<RiderHome> {
   List<Map<String, dynamic>> _extractDashboardTasks(
     Map<String, dynamic> result,
   ) {
-    final dynamic directTasks = result['tasks'];
-
-    final List<Map<String, dynamic>> parsedDirect = _toMapList(directTasks);
+    final List<Map<String, dynamic>> parsedDirect = _toMapList(result['tasks']);
 
     if (parsedDirect.isNotEmpty) {
       return parsedDirect;
@@ -304,38 +370,20 @@ class _RiderHomeState extends State<RiderHome> {
     final dynamic rawData = result['data'];
 
     if (rawData is Map) {
-      final dynamic tasks = rawData['tasks'];
+      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
 
-      final List<Map<String, dynamic>> parsedTasks = _toMapList(tasks);
+      for (final String key in <String>[
+        'tasks',
+        'deliveries',
+        'orders',
+        'shipments',
+        'recent_tasks',
+      ]) {
+        final List<Map<String, dynamic>> list = _toMapList(data[key]);
 
-      if (parsedTasks.isNotEmpty) {
-        return parsedTasks;
-      }
-
-      final dynamic deliveries = rawData['deliveries'];
-
-      final List<Map<String, dynamic>> parsedDeliveries = _toMapList(
-        deliveries,
-      );
-
-      if (parsedDeliveries.isNotEmpty) {
-        return parsedDeliveries;
-      }
-
-      final dynamic orders = rawData['orders'];
-
-      final List<Map<String, dynamic>> parsedOrders = _toMapList(orders);
-
-      if (parsedOrders.isNotEmpty) {
-        return parsedOrders;
-      }
-
-      final dynamic shipments = rawData['shipments'];
-
-      final List<Map<String, dynamic>> parsedShipments = _toMapList(shipments);
-
-      if (parsedShipments.isNotEmpty) {
-        return parsedShipments;
+        if (list.isNotEmpty) {
+          return list;
+        }
       }
     }
 
@@ -353,9 +401,39 @@ class _RiderHomeState extends State<RiderHome> {
       return <Map<String, dynamic>>[];
     }
 
+    for (final String key in <String>[
+      'data',
+      'deliveries',
+      'orders',
+      'shipments',
+    ]) {
+      final List<Map<String, dynamic>> list = _toMapList(result[key]);
+
+      if (list.isNotEmpty) {
+        return list;
+      }
+    }
+
     final dynamic rawData = result['data'];
 
-    return _toMapList(rawData);
+    if (rawData is Map) {
+      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
+
+      for (final String key in <String>[
+        'data',
+        'deliveries',
+        'orders',
+        'shipments',
+      ]) {
+        final List<Map<String, dynamic>> list = _toMapList(data[key]);
+
+        if (list.isNotEmpty) {
+          return list;
+        }
+      }
+    }
+
+    return <Map<String, dynamic>>[];
   }
 
   // ============================================================
@@ -381,6 +459,67 @@ class _RiderHomeState extends State<RiderHome> {
   }
 
   // ============================================================
+  // NORMALIZE TASK
+  // ============================================================
+
+  Map<String, dynamic> _normalizeTask(Map<String, dynamic> raw) {
+    final Map<String, dynamic> map = Map<String, dynamic>.from(raw);
+
+    final dynamic shipment = raw['shipment'];
+
+    if (shipment is Map) {
+      map.addAll(Map<String, dynamic>.from(shipment));
+    }
+
+    final dynamic order = raw['order'];
+
+    if (order is Map) {
+      final Map<String, dynamic> orderMap = Map<String, dynamic>.from(order);
+
+      map['customer_name'] ??=
+          orderMap['customer_name'] ?? orderMap['buyer_name'];
+
+      map['customer_phone'] ??= orderMap['customer_phone'] ?? orderMap['phone'];
+
+      map['delivery_address'] ??=
+          orderMap['delivery_address'] ?? orderMap['address'];
+
+      map['order_date'] ??= orderMap['created_at'];
+    }
+
+    map['id'] ??= map['shipment_id'] ?? map['order_id'] ?? 0;
+
+    map['shipment_id'] ??= map['id'];
+
+    map['tracking_number'] ??=
+        map['tracking_code'] ?? map['waybill_number'] ?? '';
+
+    map['customer_name'] ??= map['recipient_name'] ?? map['buyer_name'] ?? '';
+
+    map['customer_phone'] ??= map['phone'] ?? map['recipient_phone'] ?? '';
+
+    map['delivery_address'] ??= map['address'] ?? map['shipping_address'] ?? '';
+
+    map['pickup_address'] ??= map['seller_address'] ?? '';
+
+    map['rider_name'] ??= map['driver_name'] ?? '';
+
+    map['rider_id'] ??= map['driver_id'];
+
+    map['status'] ??= map['shipment_status'] ?? map['delivery_status'] ?? '';
+
+    map['order_date'] ??= map['created_at'] ?? map['assigned_at'] ?? '';
+
+    map['delivery_earnings'] ??= map['earnings'] ?? map['delivery_fee'] ?? 0;
+
+    map['latitude'] ??= map['rider_latitude'];
+
+    map['longitude'] ??= map['rider_longitude'];
+
+    return map;
+  }
+
+  // ============================================================
   // BUILD OVERVIEW FROM TASKS
   // ============================================================
 
@@ -390,31 +529,110 @@ class _RiderHomeState extends State<RiderHome> {
     int assigned = 0;
     int completed = 0;
     int pending = 0;
+    int active = 0;
 
-    for (final Map<String, dynamic> task in tasks) {
-      final String status = _normalizeStatus(task['status']?.toString() ?? '');
+    int sellerPickup = 0;
+    int linehaul = 0;
+    int finalMile = 0;
 
-      if (status == 'delivered' || status == 'completed') {
-        completed++;
-        continue;
+    for (final Map<String, dynamic> raw in tasks) {
+      try {
+        final ParcelModel parcel = ParcelModel.fromJson(_normalizeTask(raw));
+
+        if (parcel.isSellerPickupAssignment) {
+          sellerPickup++;
+        }
+
+        if (parcel.isLinehaulAssignment) {
+          linehaul++;
+        }
+
+        if (parcel.isFinalMileAssignment) {
+          finalMile++;
+        }
+
+        if (parcel.isDelivered || parcel.normalizedStatus == 'completed') {
+          completed++;
+          continue;
+        }
+
+        if (parcel.isFailed) {
+          continue;
+        }
+
+        active++;
+        assigned++;
+
+        final String status = parcel.normalizedStatus;
+
+        if (status == 'pending' ||
+            status == 'assigned' ||
+            status == 'staged' ||
+            status == 'ready_for_pickup' ||
+            status == 'at_sorting_center') {
+          pending++;
+        }
+      } catch (_) {
+        final String status = _normalizeStatus(raw['status']?.toString() ?? '');
+
+        if (status == 'delivered' || status == 'completed') {
+          completed++;
+          continue;
+        }
+
+        if (status == 'cancelled' ||
+            status == 'failed' ||
+            status == 'delivery_failed') {
+          continue;
+        }
+
+        assigned++;
+        active++;
       }
-
-      if (status == 'pending' ||
-          status == 'assigned' ||
-          status == 'staged' ||
-          status == 'ready_for_pickup') {
-        pending++;
-      }
-
-      assigned++;
     }
 
     return <String, dynamic>{
       'today_delivery': assigned,
       'assigned': assigned,
+      'active': active,
       'completed': completed,
       'pending': pending,
+      'seller_pickup': sellerPickup,
+      'linehaul': linehaul,
+      'final_mile': finalMile,
     };
+  }
+
+  // ============================================================
+  // TASK ACTIVITY DATE
+  // ============================================================
+
+  DateTime? _taskActivityDate(Map<String, dynamic> task) {
+    final List<dynamic> candidates = <dynamic>[
+      task['updated_at'],
+      task['linehaul_started_at'],
+      task['linehaul_assigned_at'],
+      task['assigned_at'],
+      task['picked_up_at'],
+      task['created_at'],
+      task['order_date'],
+    ];
+
+    for (final dynamic value in candidates) {
+      final String text = value?.toString().trim() ?? '';
+
+      if (text.isEmpty || text.toLowerCase() == 'null') {
+        continue;
+      }
+
+      final DateTime? parsed = DateTime.tryParse(text);
+
+      if (parsed != null) {
+        return parsed;
+      }
+    }
+
+    return null;
   }
 
   // ============================================================
@@ -508,19 +726,9 @@ class _RiderHomeState extends State<RiderHome> {
             .trim()
             .toLowerCase();
 
-    if (availability == 'available' ||
+    return availability == 'available' ||
         availability == 'online' ||
-        availability == 'active') {
-      return true;
-    }
-
-    if (availability == 'unavailable' ||
-        availability == 'offline' ||
-        availability == 'inactive') {
-      return false;
-    }
-
-    return false;
+        availability == 'active';
   }
 
   String get _availabilityStatus {
@@ -534,18 +742,20 @@ class _RiderHomeState extends State<RiderHome> {
       _localAvailabilityOverride = newValue;
     });
 
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        content: Text(
-          newValue
-              ? 'You are now shown as Available on this device.'
-              : 'You are now shown as Unavailable on this device.',
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            newValue
+                ? 'You are now shown as Available '
+                      'on this device.'
+                : 'You are now shown as Unavailable '
+                      'on this device.',
+          ),
         ),
-      ),
-    );
+      );
   }
 
   // ============================================================
@@ -628,12 +838,14 @@ class _RiderHomeState extends State<RiderHome> {
       case 'cancelled':
       case 'failed':
       case 'delivery_failed':
+      case 'failed_return_at_sorting_center':
         return RiderColors.danger;
 
       case 'pending':
       case 'assigned':
       case 'staged':
       case 'ready_for_pickup':
+      case 'awaiting_assignment':
         return RiderColors.warning;
 
       case 'picked_up':
@@ -641,6 +853,9 @@ class _RiderHomeState extends State<RiderHome> {
       case 'out_for_delivery':
       case 'at_sorting_center':
       case 'sorted':
+      case 'at_origin_hub':
+      case 'in_hub_transfer':
+      case 'at_destination_hub':
         return RiderColors.primary;
 
       default:
@@ -660,25 +875,21 @@ class _RiderHomeState extends State<RiderHome> {
 
     return Scaffold(
       backgroundColor: RiderColors.background,
-
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: () {
             return _loadDashboard(refresh: true);
           },
-
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics(),
             ),
-
             padding: EdgeInsets.fromLTRB(
               horizontalPadding,
               16,
               horizontalPadding,
               30,
             ),
-
             children: [
               _header(),
 
@@ -703,6 +914,10 @@ class _RiderHomeState extends State<RiderHome> {
 
               const SizedBox(height: 20),
 
+              _assignmentOverview(screenWidth),
+
+              const SizedBox(height: 20),
+
               _assignedShipments(),
             ],
           ),
@@ -718,17 +933,13 @@ class _RiderHomeState extends State<RiderHome> {
   Widget _header() {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
-
       children: [
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
               const Text('Rider Dashboard', style: RiderStyle.title),
-
               const SizedBox(height: 4),
-
               Text('Welcome, $_firstName', style: RiderStyle.small),
             ],
           ),
@@ -769,34 +980,25 @@ class _RiderHomeState extends State<RiderHome> {
 
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(16),
-
       decoration: RiderStyle.card,
-
       child: Row(
         children: [
           Container(
             height: 46,
             width: 46,
-
             decoration: BoxDecoration(
               color: available
                   ? RiderColors.lightGreen
                   : RiderColors.lightOrange,
-
               borderRadius: BorderRadius.circular(14),
             ),
-
             alignment: Alignment.center,
-
             child: Icon(
               available
                   ? Icons.check_circle_outline_rounded
                   : Icons.pause_circle_outline_rounded,
-
               color: available ? RiderColors.success : RiderColors.warning,
-
               size: 25,
             ),
           ),
@@ -806,17 +1008,13 @@ class _RiderHomeState extends State<RiderHome> {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
                 const Text('Availability', style: RiderStyle.cardTitle),
-
                 const SizedBox(height: 3),
-
                 Text(
                   available
-                      ? 'You are available for delivery assignments.'
+                      ? 'You are available for new rider assignments.'
                       : 'You are currently unavailable for new assignments.',
-
                   style: RiderStyle.small,
                 ),
               ],
@@ -827,32 +1025,23 @@ class _RiderHomeState extends State<RiderHome> {
 
           GestureDetector(
             onTap: _toggleAvailability,
-
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
-
               width: 54,
               height: 30,
-
               padding: const EdgeInsets.all(3),
-
               decoration: BoxDecoration(
                 color: available ? RiderColors.success : RiderColors.border,
-
                 borderRadius: BorderRadius.circular(20),
               ),
-
               child: AnimatedAlign(
                 duration: const Duration(milliseconds: 180),
-
                 alignment: available
                     ? Alignment.centerRight
                     : Alignment.centerLeft,
-
                 child: Container(
                   height: 24,
                   width: 24,
-
                   decoration: const BoxDecoration(
                     color: Colors.white,
                     shape: BoxShape.circle,
@@ -873,14 +1062,10 @@ class _RiderHomeState extends State<RiderHome> {
   Widget _riderInfoCard() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(16),
-
       decoration: RiderStyle.card,
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           const Text('Rider Information', style: RiderStyle.sectionTitle),
 
@@ -891,14 +1076,11 @@ class _RiderHomeState extends State<RiderHome> {
               Container(
                 height: 50,
                 width: 50,
-
                 decoration: const BoxDecoration(
                   color: RiderColors.primary,
                   shape: BoxShape.circle,
                 ),
-
                 alignment: Alignment.center,
-
                 child: const Icon(
                   Icons.two_wheeler_rounded,
                   color: Colors.white,
@@ -911,15 +1093,11 @@ class _RiderHomeState extends State<RiderHome> {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     Text(
                       _riderName,
-
                       maxLines: 1,
-
                       overflow: TextOverflow.ellipsis,
-
                       style: RiderStyle.cardTitle,
                     ),
 
@@ -932,17 +1110,12 @@ class _RiderHomeState extends State<RiderHome> {
                           size: 14,
                           color: RiderColors.textGrey,
                         ),
-
                         const SizedBox(width: 5),
-
                         Expanded(
                           child: Text(
                             _vehicleType,
-
                             maxLines: 1,
-
                             overflow: TextOverflow.ellipsis,
-
                             style: RiderStyle.small,
                           ),
                         ),
@@ -956,12 +1129,10 @@ class _RiderHomeState extends State<RiderHome> {
                         Container(
                           height: 7,
                           width: 7,
-
                           decoration: BoxDecoration(
                             color: _isAvailable
                                 ? RiderColors.success
                                 : RiderColors.warning,
-
                             shape: BoxShape.circle,
                           ),
                         ),
@@ -970,14 +1141,11 @@ class _RiderHomeState extends State<RiderHome> {
 
                         Text(
                           _availabilityStatus,
-
                           style: TextStyle(
                             color: _isAvailable
                                 ? RiderColors.success
                                 : RiderColors.warning,
-
                             fontSize: 11,
-
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -1002,7 +1170,6 @@ class _RiderHomeState extends State<RiderHome> {
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-
       children: [
         const Text('Delivery Overview', style: RiderStyle.sectionTitle),
 
@@ -1012,18 +1179,14 @@ class _RiderHomeState extends State<RiderHome> {
           children: [
             Expanded(
               child: _overviewCard(
-                title: 'Assigned',
-
+                title: 'Active',
                 value: _overviewValue(<String>[
-                  'today_delivery',
+                  'active',
                   'assigned',
-                  'total',
+                  'today_delivery',
                 ]),
-
                 icon: Icons.inventory_2_outlined,
-
                 background: RiderColors.lightBlue,
-
                 compact: compact,
               ),
             ),
@@ -1033,17 +1196,13 @@ class _RiderHomeState extends State<RiderHome> {
             Expanded(
               child: _overviewCard(
                 title: 'Completed',
-
                 value: _overviewValue(<String>[
                   'completed',
                   'delivered',
                   'completed_delivery',
                 ]),
-
                 icon: Icons.check_circle_outline_rounded,
-
                 background: RiderColors.lightGreen,
-
                 compact: compact,
               ),
             ),
@@ -1053,17 +1212,66 @@ class _RiderHomeState extends State<RiderHome> {
         const SizedBox(height: 10),
 
         _wideOverviewCard(
-          title: 'Pending Deliveries',
-
+          title: 'Pending Assignments',
           value: _overviewValue(<String>[
             'pending',
             'pending_delivery',
             'pending_deliveries',
           ]),
-
           icon: Icons.pending_actions_outlined,
-
           background: RiderColors.lightOrange,
+        ),
+      ],
+    );
+  }
+
+  // ============================================================
+  // ASSIGNMENT OVERVIEW
+  // ============================================================
+
+  Widget _assignmentOverview(double screenWidth) {
+    final bool compact = screenWidth < 380;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Assignment Types', style: RiderStyle.sectionTitle),
+
+        const SizedBox(height: 12),
+
+        Row(
+          children: [
+            Expanded(
+              child: _overviewCard(
+                title: 'Seller Pickup',
+                value: _overviewValue(const <String>['seller_pickup']),
+                icon: Icons.inventory_2_outlined,
+                background: RiderColors.lightOrange,
+                compact: compact,
+              ),
+            ),
+
+            const SizedBox(width: 10),
+
+            Expanded(
+              child: _overviewCard(
+                title: 'Line Haul',
+                value: _overviewValue(const <String>['linehaul']),
+                icon: Icons.multiple_stop_rounded,
+                background: RiderColors.lightBlue,
+                compact: compact,
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 10),
+
+        _wideOverviewCard(
+          title: 'Final-Mile Delivery',
+          value: _overviewValue(const <String>['final_mile']),
+          icon: Icons.delivery_dining_rounded,
+          background: RiderColors.lightGreen,
         ),
       ],
     );
@@ -1078,14 +1286,10 @@ class _RiderHomeState extends State<RiderHome> {
   }) {
     return Container(
       padding: EdgeInsets.all(compact ? 12 : 14),
-
       decoration: RiderStyle.card,
-
       child: Column(
         mainAxisSize: MainAxisSize.min,
-
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           _statIcon(icon, background),
 
@@ -1093,11 +1297,8 @@ class _RiderHomeState extends State<RiderHome> {
 
           Text(
             title,
-
             maxLines: 1,
-
             overflow: TextOverflow.ellipsis,
-
             style: RiderStyle.small,
           ),
 
@@ -1105,11 +1306,8 @@ class _RiderHomeState extends State<RiderHome> {
 
           Text(
             value,
-
             maxLines: 1,
-
             overflow: TextOverflow.ellipsis,
-
             style: const TextStyle(
               color: RiderColors.textDark,
               fontSize: 21,
@@ -1129,11 +1327,8 @@ class _RiderHomeState extends State<RiderHome> {
   }) {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(14),
-
       decoration: RiderStyle.card,
-
       child: Row(
         children: [
           _statIcon(icon, background),
@@ -1143,9 +1338,7 @@ class _RiderHomeState extends State<RiderHome> {
           Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
-
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
                 Text(title, style: RiderStyle.small),
 
@@ -1153,11 +1346,8 @@ class _RiderHomeState extends State<RiderHome> {
 
                 Text(
                   value,
-
                   maxLines: 1,
-
                   overflow: TextOverflow.ellipsis,
-
                   style: const TextStyle(
                     color: RiderColors.textDark,
                     fontSize: 22,
@@ -1176,15 +1366,11 @@ class _RiderHomeState extends State<RiderHome> {
     return Container(
       height: 38,
       width: 38,
-
       decoration: BoxDecoration(
         color: background,
-
         borderRadius: BorderRadius.circular(11),
       ),
-
       alignment: Alignment.center,
-
       child: Icon(icon, color: RiderColors.primary, size: 20),
     );
   }
@@ -1196,27 +1382,24 @@ class _RiderHomeState extends State<RiderHome> {
   Widget _assignedShipments() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(16),
-
       decoration: RiderStyle.card,
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           Row(
             children: [
               const Expanded(
                 child: Text(
-                  'Assigned Shipments',
+                  'Latest Assignments',
                   style: RiderStyle.sectionTitle,
                 ),
               ),
 
               TextButton(
-                onPressed: () => _goToTab(1),
-
+                onPressed: () {
+                  _goToTab(1);
+                },
                 child: const Text('View All'),
               ),
             ],
@@ -1227,7 +1410,6 @@ class _RiderHomeState extends State<RiderHome> {
           if (_isLoading && !_hasDashboardData)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 20),
-
               child: Center(
                 child: CircularProgressIndicator(color: RiderColors.primary),
               ),
@@ -1243,70 +1425,106 @@ class _RiderHomeState extends State<RiderHome> {
     );
   }
 
-  Widget _shipmentItem(Map<String, dynamic> task) {
-    final String tracking = _firstNonEmpty(<dynamic>[
-      task['tracking_number'],
-      task['tracking_code'],
-      task['waybill_number'],
-    ], fallback: 'Tracking unavailable');
+  Widget _shipmentItem(Map<String, dynamic> raw) {
+    final Map<String, dynamic> normalized = _normalizeTask(raw);
 
-    final String customer = _firstNonEmpty(<dynamic>[
-      task['customer_name'],
-      task['recipient_name'],
-      task['buyer_name'],
-    ], fallback: 'Customer unavailable');
+    ParcelModel? parcel;
 
-    final String address = _firstNonEmpty(<dynamic>[
-      task['delivery_address'],
-      task['address'],
-    ], fallback: 'Delivery address unavailable');
+    try {
+      parcel = ParcelModel.fromJson(normalized);
+    } catch (error) {
+      debugPrint('Rider dashboard parcel parse error: $error');
+    }
 
-    final String rawStatus = task['status']?.toString().trim() ?? '';
+    final String tracking = parcel != null
+        ? _displayValue(parcel.trackingNumber, fallback: 'Tracking unavailable')
+        : _firstNonEmpty(<dynamic>[
+            normalized['tracking_number'],
+            normalized['tracking_code'],
+            normalized['waybill_number'],
+          ], fallback: 'Tracking unavailable');
+
+    final String rawStatus =
+        parcel?.status ?? normalized['status']?.toString() ?? '';
 
     final String status = _formatStatus(rawStatus);
 
     final Color statusColor = _statusColor(rawStatus);
 
+    final String assignment =
+        parcel?.assignmentLabel ??
+        _formatAssignment(normalized['assignment_type']?.toString() ?? '');
+
+    final bool sellerPickup = parcel?.isSellerPickupAssignment ?? false;
+
+    final bool linehaul = parcel?.isLinehaulAssignment ?? false;
+
+    final bool finalMile = parcel?.isFinalMileAssignment ?? false;
+
+    String primaryLocation = '';
+
+    if (linehaul) {
+      final String origin = parcel?.originHubName.trim() ?? '';
+
+      final String destination = parcel?.destinationHubName.trim() ?? '';
+
+      if (origin.isNotEmpty && destination.isNotEmpty) {
+        primaryLocation = '$origin → $destination';
+      } else if (origin.isNotEmpty) {
+        primaryLocation = origin;
+      } else if (destination.isNotEmpty) {
+        primaryLocation = destination;
+      }
+    }
+
+    if (primaryLocation.isEmpty && sellerPickup) {
+      primaryLocation = parcel?.pickupAddress.trim() ?? '';
+    }
+
+    if (primaryLocation.isEmpty && finalMile) {
+      primaryLocation = parcel?.deliveryAddress.trim() ?? '';
+    }
+
+    if (primaryLocation.isEmpty) {
+      primaryLocation = _firstNonEmpty(<dynamic>[
+        normalized['delivery_address'],
+        normalized['pickup_address'],
+        normalized['address'],
+      ], fallback: 'Location unavailable');
+    }
+
+    final IconData assignmentIcon = linehaul
+        ? Icons.multiple_stop_rounded
+        : sellerPickup
+        ? Icons.inventory_2_outlined
+        : Icons.local_shipping_outlined;
+
     return Container(
       width: double.infinity,
-
       margin: const EdgeInsets.only(bottom: 10),
-
       padding: const EdgeInsets.all(13),
-
       decoration: BoxDecoration(
         color: RiderColors.background,
-
         borderRadius: BorderRadius.circular(14),
-
         border: Border.all(color: RiderColors.border),
       ),
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
               Container(
                 height: 40,
                 width: 40,
-
                 decoration: BoxDecoration(
                   color: RiderColors.lightPurple,
-
                   borderRadius: BorderRadius.circular(11),
                 ),
-
                 alignment: Alignment.center,
-
-                child: const Icon(
-                  Icons.inventory_2_outlined,
-
+                child: Icon(
+                  assignmentIcon,
                   color: RiderColors.primary,
-
                   size: 20,
                 ),
               ),
@@ -1316,27 +1534,20 @@ class _RiderHomeState extends State<RiderHome> {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     Text(
                       tracking,
-
                       maxLines: 1,
-
                       overflow: TextOverflow.ellipsis,
-
                       style: RiderStyle.cardTitle,
                     ),
 
                     const SizedBox(height: 3),
 
                     Text(
-                      customer,
-
+                      assignment.isNotEmpty ? assignment : 'Rider Assignment',
                       maxLines: 1,
-
                       overflow: TextOverflow.ellipsis,
-
                       style: RiderStyle.small,
                     ),
                   ],
@@ -1347,16 +1558,14 @@ class _RiderHomeState extends State<RiderHome> {
 
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.10),
-
                   borderRadius: BorderRadius.circular(18),
                 ),
-
                 child: Text(
                   status,
-
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: statusColor,
                     fontSize: 9,
@@ -1371,13 +1580,14 @@ class _RiderHomeState extends State<RiderHome> {
 
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
-              const Icon(
-                Icons.location_on_outlined,
-
+              Icon(
+                linehaul
+                    ? Icons.route_outlined
+                    : sellerPickup
+                    ? Icons.storefront_outlined
+                    : Icons.location_on_outlined,
                 color: RiderColors.textGrey,
-
                 size: 15,
               ),
 
@@ -1385,20 +1595,68 @@ class _RiderHomeState extends State<RiderHome> {
 
               Expanded(
                 child: Text(
-                  address,
-
+                  primaryLocation,
                   maxLines: 2,
-
                   overflow: TextOverflow.ellipsis,
-
                   style: RiderStyle.small,
                 ),
               ),
             ],
           ),
+
+          if (linehaul &&
+              parcel != null &&
+              parcel.linehaulStatus.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(
+                  Icons.compare_arrows_rounded,
+                  color: RiderColors.primary,
+                  size: 15,
+                ),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    'Line Haul: '
+                    '${_formatStatus(parcel.linehaulStatus)}',
+                    style: RiderStyle.small,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  String _formatAssignment(String value) {
+    switch (_normalizeStatus(value)) {
+      case 'seller_pickup':
+        return 'Seller Pickup';
+
+      case 'linehaul':
+        return 'Line Haul';
+
+      case 'final_mile':
+        return 'Final-Mile Delivery';
+
+      case 'pickup_and_delivery':
+        return 'Pickup & Final-Mile';
+
+      case 'pickup_and_linehaul':
+        return 'Pickup & Line Haul';
+
+      case 'linehaul_and_delivery':
+        return 'Line Haul & Final-Mile';
+
+      case 'pickup_linehaul_and_delivery':
+        return 'Pickup / Line Haul / Final-Mile';
+
+      default:
+        return '';
+    }
   }
 
   String _firstNonEmpty(List<dynamic> values, {required String fallback}) {
@@ -1413,20 +1671,26 @@ class _RiderHomeState extends State<RiderHome> {
     return fallback;
   }
 
+  String _displayValue(String value, {required String fallback}) {
+    final String cleaned = value.trim();
+
+    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
+      return fallback;
+    }
+
+    return cleaned;
+  }
+
   Widget _emptyShipmentState(String message) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 22),
-
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
-
           children: [
             const Icon(
               Icons.inventory_2_outlined,
-
               color: RiderColors.textGrey,
-
               size: 34,
             ),
 
@@ -1446,20 +1710,15 @@ class _RiderHomeState extends State<RiderHome> {
   Widget _loadingCard() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(15),
-
       decoration: RiderStyle.card,
-
       child: const Row(
         children: [
           SizedBox(
             height: 21,
             width: 21,
-
             child: CircularProgressIndicator(
               strokeWidth: 2.2,
-
               color: RiderColors.primary,
             ),
           ),
@@ -1481,20 +1740,14 @@ class _RiderHomeState extends State<RiderHome> {
   Widget _errorCard() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(15),
-
       decoration: RiderStyle.card,
-
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           const Icon(
             Icons.info_outline_rounded,
-
             color: RiderColors.warning,
-
             size: 21,
           ),
 
@@ -1503,11 +1756,9 @@ class _RiderHomeState extends State<RiderHome> {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
                 const Text(
                   'Unable to load rider data',
-
                   style: RiderStyle.cardTitle,
                 ),
 
@@ -1515,7 +1766,6 @@ class _RiderHomeState extends State<RiderHome> {
 
                 Text(
                   _errorMessage ?? 'Unable to load rider dashboard.',
-
                   style: RiderStyle.small,
                 ),
               ],
@@ -1526,7 +1776,6 @@ class _RiderHomeState extends State<RiderHome> {
             onPressed: () {
               _loadDashboard(refresh: true);
             },
-
             icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
           ),
         ],
@@ -1541,41 +1790,33 @@ class _RiderHomeState extends State<RiderHome> {
   Widget _notificationButton() {
     return Material(
       color: Colors.transparent,
-
       child: InkWell(
         onTap: () {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              behavior: SnackBarBehavior.floating,
-
-              content: Text('No new rider notifications.'),
-            ),
-          );
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              const SnackBar(
+                behavior: SnackBarBehavior.floating,
+                content: Text(
+                  'Open the Notifications tab '
+                  'to view rider updates.',
+                ),
+              ),
+            );
         },
-
         borderRadius: BorderRadius.circular(13),
-
         child: Container(
           height: 40,
           width: 40,
-
           decoration: BoxDecoration(
             color: RiderColors.white,
-
             borderRadius: BorderRadius.circular(13),
-
             border: Border.all(color: RiderColors.border),
           ),
-
           alignment: Alignment.center,
-
           child: const Icon(
             Icons.notifications_none_rounded,
-
             color: RiderColors.textDark,
-
             size: 20,
           ),
         ),
