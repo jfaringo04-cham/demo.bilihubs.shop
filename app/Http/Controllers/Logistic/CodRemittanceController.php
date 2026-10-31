@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CodRemittance;
 use App\Models\SellerOrder;
 use App\Services\SellerSettlementService;
+use App\Services\CodCustodyService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -69,7 +70,8 @@ class CodRemittanceController extends Controller
      */
     public function confirm(
         Request $request,
-        CodRemittance $remittance
+        CodRemittance $remittance,
+        CodCustodyService $custodyService
     ) {
         $logistic = $request->user()->ownedLogistic;
 
@@ -82,7 +84,8 @@ class CodRemittanceController extends Controller
         DB::transaction(function () use (
             $remittance,
             $request,
-            $logistic
+            $logistic,
+            $custodyService
         ) {
             $locked = CodRemittance::query()
                 ->whereKey($remittance->id)
@@ -106,6 +109,10 @@ class CodRemittanceController extends Controller
                 'confirmed_at' => now(),
                 'confirmed_by' => $request->user()->id,
             ]);
+
+            $custodyService->creditConfirmedRiderRemittance(
+                $locked->fresh()
+            );
 
             // Run only after successful database commit.
             DB::afterCommit(function () use ($locked) {

@@ -132,6 +132,11 @@
                 <span class="badge bg-danger ms-auto">{{ $logisticWithdrawalPendingCount }}</span>
               @endif
             </a>
+            <a href="{{ route('admin.cod-wallet.index') }}"
+              class="nav-link {{ request()->routeIs('admin.cod-wallet.*') ? 'active' : '' }}">
+              <i class="bi bi-wallet-fill me-2"></i>
+              Admin COD Wallet
+            </a>
             <a class="nav-link {{ request()->routeIs('admin.registrations.*') ? 'active' : '' }}" href="{{ route('admin.registrations.index') }}">
               <i class="bi bi-clipboard-check"></i> Registrations
             </a>

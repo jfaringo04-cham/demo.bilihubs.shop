@@ -90,6 +90,13 @@
           </span>
           <span>COD Reconciliation</span>
         </a>
+        <a href="{{ route('logistic.cod-admin-remittances.index') }}"
+          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.cod-admin-remittances.*') ? 'active' : '' }}">
+          <span class="sidebar-icon">
+            <i class="bi bi-bank"></i>
+          </span>
+          <span>COD to Admin</span>
+        </a>
 
         <div class="sidebar-divider"></div>
 

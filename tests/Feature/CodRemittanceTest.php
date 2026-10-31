@@ -123,6 +123,12 @@ class CodRemittanceTest extends TestCase
             );
         });
 
+        $codWalletMigration = require database_path(
+            'migrations/2026_10_31_070000_create_cod_custody_wallets_and_admin_remittances.php'
+        );
+
+        $codWalletMigration->up();
+
         DB::table('roles')->insert([
             ['id' => 1, 'name' => 'rider'],
             ['id' => 2, 'name' => 'logistics'],
@@ -477,3 +483,4 @@ class CodRemittanceTest extends TestCase
         $this->assertDatabaseCount('cod_remittances', 2);
     }
 }
+

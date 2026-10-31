@@ -185,6 +185,21 @@ Route::middleware('auth')->group(function () {
             [\App\Http\Controllers\Admin\LogisticWithdrawalController::class, 'reject']
         )->name('logistic-withdrawals.reject');
 
+        Route::get(
+            '/cod-wallet',
+            [\App\Http\Controllers\Admin\CodWalletController::class, 'index']
+        )->name('cod-wallet.index');
+
+        Route::post(
+            '/cod-wallet/{remittance}/confirm',
+            [\App\Http\Controllers\Admin\CodWalletController::class, 'confirm']
+        )->name('cod-wallet.confirm');
+
+        Route::post(
+            '/cod-wallet/{remittance}/reject',
+            [\App\Http\Controllers\Admin\CodWalletController::class, 'reject']
+        )->name('cod-wallet.reject');
+
         Route::post(
             '/seller-settlements/{settlement}/approve',
             [SellerSettlementController::class, 'approve']
@@ -666,6 +681,16 @@ Route::middleware('auth')->group(function () {
         Route::get('/cod-remittances', [LogisticCodRemittanceController::class, 'index'])
 
             ->name('cod-remittances.index');
+
+        Route::get(
+            '/cod-to-admin',
+            [\App\Http\Controllers\Logistic\CodAdminRemittanceController::class, 'index']
+        )->name('cod-admin-remittances.index');
+
+        Route::post(
+            '/cod-to-admin',
+            [\App\Http\Controllers\Logistic\CodAdminRemittanceController::class, 'store']
+        )->name('cod-admin-remittances.store');
 
 
 
