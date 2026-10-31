@@ -2361,7 +2361,13 @@ class LogisticController extends Controller
             return redirect()->route('logistic.hubs')->with('error', 'Hub not found.');
         }
 
-        $hub->load('riders');
+        $hub->load([
+            'riders' => function ($query) {
+                $query->whereHas('roles', function ($roleQuery) {
+                    $roleQuery->where('name', 'rider');
+                });
+            },
+        ]);
 
         $availableRiders = $logistic->riders()
             ->whereHas('roles', function ($query) {
@@ -2449,7 +2455,13 @@ class LogisticController extends Controller
             return redirect()->route('logistic.hubs')->with('error', 'Hub not found.');
         }
 
-        $hub->load(['riders']);
+        $hub->load([
+            'riders' => function ($query) {
+                $query->whereHas('roles', function ($roleQuery) {
+                    $roleQuery->where('name', 'rider');
+                });
+            },
+        ]);
 
         $availableRiders = $logistic->riders()
             ->whereHas('roles', function ($query) {
@@ -2474,8 +2486,14 @@ class LogisticController extends Controller
             'rider_id' => ['required', 'exists:users,id'],
         ]);
 
-        $rider = \App\Models\User::where('id', $validated['rider_id'])
+        $rider = \App\Models\User::query()
+            ->whereKey($validated['rider_id'])
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'rider');
+            })
             ->where('logistic_id', $logistic->id)
+            ->where('logistic_status', 'approved')
+            ->where('status', \App\Models\User::STATUS_ACTIVE)
             ->whereNull('hub_id')
             ->first();
 
@@ -2507,7 +2525,12 @@ class LogisticController extends Controller
             'rider_id' => ['required', 'exists:users,id'],
         ]);
 
-        $rider = \App\Models\User::where('id', $validated['rider_id'])
+        $rider = \App\Models\User::query()
+            ->whereKey($validated['rider_id'])
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'rider');
+            })
+            ->where('logistic_id', $logistic->id)
             ->where('hub_id', $hub->id)
             ->first();
 

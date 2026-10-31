@@ -49,6 +49,14 @@ class PickupOfferRetryTest extends TestCase
             'assigned_zone' => 'Santa Cruz',
         ]);
 
+        $riderRole = Role::firstOrCreate([
+            'name' => 'rider',
+        ]);
+
+        $rider->roles()->syncWithoutDetaching([
+            $riderRole->id,
+        ]);
+
         RiderHubAssignmentService::assign($rider, $hub);
         $rider->refresh();
 
