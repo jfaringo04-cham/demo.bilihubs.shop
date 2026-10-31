@@ -84,7 +84,13 @@ class LogisticController extends Controller
 
         $recentShipments = $shipments->with(['sellerOrder.order.user', 'sellerOrder.seller', 'rider'])->latest()->take(10)->get();
 
-        $recentRiders = $logistic->riders()->latest()->take(5)->get();
+        $recentRiders = $logistic->riders()
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'rider');
+            })
+            ->latest()
+            ->take(5)
+            ->get();
 
         return view('logistic.dashboard', compact(
             'logistic',
@@ -304,7 +310,12 @@ class LogisticController extends Controller
             return redirect()->route('home')->with('error', 'No logistics company found for your account.');
         }
 
-        $riders = $logistic->riders()->latest()->paginate(15);
+        $riders = $logistic->riders()
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'rider');
+            })
+            ->latest()
+            ->paginate(15);
 
         return view('logistic.riders', compact('logistic', 'riders'));
     }
@@ -423,7 +434,13 @@ class LogisticController extends Controller
             return redirect()->route('home')->with('error', 'No logistics company found for your account.');
         }
 
-        $applications = $logistic->riders()->where('logistic_status', 'pending')->latest()->paginate(15);
+        $applications = $logistic->riders()
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'rider');
+            })
+            ->where('logistic_status', 'pending')
+            ->latest()
+            ->paginate(15);
 
         return view('logistic.applications', compact('logistic', 'applications'));
     }
@@ -1831,6 +1848,9 @@ class LogisticController extends Controller
         }
 
         $riders = $logistic->riders()
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'rider');
+            })
             ->where('logistic_status', 'approved')
             ->get();
 
@@ -2198,7 +2218,12 @@ class LogisticController extends Controller
 
         $totalShipments = $logistic->shipments()->count();
         $deliveredShipments = $logistic->shipments()->where('status', 'delivered')->count();
-        $totalRiders = $logistic->riders()->where('logistic_status', 'approved')->count();
+        $totalRiders = $logistic->riders()
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'rider');
+            })
+            ->where('logistic_status', 'approved')
+            ->count();
         $totalHubs = $logistic->hubs()->count();
 
         return view('logistic.about', compact('logistic', 'totalShipments', 'deliveredShipments', 'totalRiders', 'totalHubs'));
@@ -2339,6 +2364,9 @@ class LogisticController extends Controller
         $hub->load('riders');
 
         $availableRiders = $logistic->riders()
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'rider');
+            })
             ->where('logistic_status', 'approved')
             ->whereNull('hub_id')
             ->where('availability_status', 'available')
@@ -2424,6 +2452,9 @@ class LogisticController extends Controller
         $hub->load(['riders']);
 
         $availableRiders = $logistic->riders()
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'rider');
+            })
             ->where('logistic_status', 'approved')
             ->whereNull('hub_id')
             ->get();
