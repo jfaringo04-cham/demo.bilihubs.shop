@@ -9,7 +9,10 @@
 <div class="card border-0 shadow-sm">
   <div class="card-body">
     <div class="alert alert-info">
-      <i class="bi bi-info-circle"></i> Registering a rider under <strong>{{ $logistic->company_name }}</strong>. The rider will need to wait for admin approval before they can log in.
+      <i class="bi bi-info-circle"></i>
+      Registering a rider under
+      <strong>{{ $logistic->company_name }}</strong>.
+      The rider account will be activated and approved automatically after successful registration.
     </div>
 
     <form method="POST" action="{{ route('logistic.riders.register.store') }}" enctype="multipart/form-data">
@@ -102,7 +105,6 @@
 </div>
 
 @push('scripts')
-  @vite('resources/js/logistics/riders.js')
+@vite('resources/js/logistics/riders.js')
 @endpush
 @endsection
-
