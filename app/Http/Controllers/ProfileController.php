@@ -14,8 +14,17 @@ class ProfileController extends Controller
         $user = Auth::user()->load('roles');
 
         $defaultAddress = null;
+
         $orderCount = 0;
         $addressCount = 0;
+        $reviewCount = 0;
+        $supportTicketCount = 0;
+        $notificationCount = 0;
+
+        $toShipCount = 0;
+        $toReceiveCount = 0;
+        $completedCount = 0;
+        $cancelledCount = 0;
 
         if ($user->isCustomer()) {
             $defaultAddress = $user->addresses()
@@ -24,14 +33,77 @@ class ProfileController extends Controller
                 ->first();
 
             $orderCount = $user->orders()->count();
+
             $addressCount = $user->addresses()->count();
+
+            $reviewCount = $user->reviews()->count();
+
+            $supportTicketCount = $user->supportTickets()->count();
+
+            $notificationCount = $user->notifications()->count();
+
+            /*
+            |--------------------------------------------------------------------------
+            | Order Status Summary
+            |--------------------------------------------------------------------------
+            |
+            | These groups make the buyer profile easier to understand.
+            |
+            | To Ship:
+            | Seller is still preparing the order or it is waiting for pickup.
+            |
+            | To Receive:
+            | Parcel is already moving through the logistics/delivery flow.
+            |
+            */
+
+            $toShipCount = $user->orders()
+                ->whereIn('status', [
+                    'pending',
+                    'placed',
+                    'confirmed',
+                    'preparing',
+                    'ready_for_pickup',
+                ])
+                ->count();
+
+            $toReceiveCount = $user->orders()
+                ->whereIn('status', [
+                    'picked_up',
+                    'in_transit',
+                    'at_sorting_center',
+                    'sorted',
+                    'staged',
+                    'assigned_to_rider',
+                    'out_for_delivery',
+                    'partially_delivered',
+                ])
+                ->count();
+
+            $completedCount = $user->orders()
+                ->whereIn('status', [
+                    'delivered',
+                    'completed',
+                ])
+                ->count();
+
+            $cancelledCount = $user->orders()
+                ->where('status', 'cancelled')
+                ->count();
         }
 
         return view('profile.edit', compact(
             'user',
             'defaultAddress',
             'orderCount',
-            'addressCount'
+            'addressCount',
+            'reviewCount',
+            'supportTicketCount',
+            'notificationCount',
+            'toShipCount',
+            'toReceiveCount',
+            'completedCount',
+            'cancelledCount',
         ));
     }
 
@@ -40,7 +112,12 @@ class ProfileController extends Controller
         $user = Auth::user();
 
         $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+            ],
+
             'email' => [
                 'required',
                 'string',
@@ -48,15 +125,30 @@ class ProfileController extends Controller
                 'max:255',
                 Rule::unique('users', 'email')->ignore($user->id),
             ],
-            'phone' => ['nullable', 'string', 'max:20'],
-            'address' => ['nullable', 'string', 'max:1000'],
+
+            'phone' => [
+                'nullable',
+                'string',
+                'max:20',
+            ],
+
+            'address' => [
+                'nullable',
+                'string',
+                'max:1000',
+            ],
+
             'profile_photo' => [
                 'nullable',
                 'image',
                 'mimes:jpg,jpeg,png,webp',
                 'max:2048',
             ],
-            'remove_profile_photo' => ['nullable', 'boolean'],
+
+            'remove_profile_photo' => [
+                'nullable',
+                'boolean',
+            ],
         ]);
 
         $user->name = $validated['name'];
@@ -69,9 +161,12 @@ class ProfileController extends Controller
         | Remove Profile Photo
         |--------------------------------------------------------------------------
         */
+
         if ($request->boolean('remove_profile_photo')) {
             if ($user->profile_photo_path) {
-                $this->deleteProfilePhoto($user->profile_photo_path);
+                $this->deleteProfilePhoto(
+                    $user->profile_photo_path
+                );
             }
 
             $user->profile_photo_path = null;
@@ -82,20 +177,27 @@ class ProfileController extends Controller
         | Upload New Profile Photo to S3
         |--------------------------------------------------------------------------
         */
+
         if ($request->hasFile('profile_photo')) {
             if ($user->profile_photo_path) {
-                $this->deleteProfilePhoto($user->profile_photo_path);
+                $this->deleteProfilePhoto(
+                    $user->profile_photo_path
+                );
             }
 
             $path = $request
                 ->file('profile_photo')
-                ->store('profile-pictures', 's3');
+                ->store(
+                    'profile-pictures',
+                    's3'
+                );
 
             if (!$path) {
                 return back()
                     ->withInput()
                     ->withErrors([
-                        'profile_photo' => 'Unable to upload profile photo. Please try again.',
+                        'profile_photo' =>
+                        'Unable to upload profile photo. Please try again.',
                     ]);
             }
 
@@ -104,23 +206,30 @@ class ProfileController extends Controller
 
         $user->save();
 
-        return back()->with('success', 'Profile updated successfully.');
+        return back()->with(
+            'success',
+            'Profile updated successfully.'
+        );
     }
 
     public function updatePassword(Request $request)
     {
-        $validated = $request->validateWithBag('passwordUpdate', [
-            'current_password' => [
-                'required',
-                'current_password',
-            ],
-            'password' => [
-                'required',
-                'string',
-                'min:8',
-                'confirmed',
-            ],
-        ]);
+        $validated = $request->validateWithBag(
+            'passwordUpdate',
+            [
+                'current_password' => [
+                    'required',
+                    'current_password',
+                ],
+
+                'password' => [
+                    'required',
+                    'string',
+                    'min:8',
+                    'confirmed',
+                ],
+            ]
+        );
 
         $user = Auth::user();
 
@@ -133,8 +242,9 @@ class ProfileController extends Controller
         );
     }
 
-    private function deleteProfilePhoto(?string $path): void
-    {
+    private function deleteProfilePhoto(
+        ?string $path
+    ): void {
         if (!$path) {
             return;
         }
@@ -143,13 +253,15 @@ class ProfileController extends Controller
         |--------------------------------------------------------------------------
         | Delete from S3
         |--------------------------------------------------------------------------
-        |
-        | New profile photos are stored here.
-        |
         */
+
         try {
-            if (Storage::disk('s3')->exists($path)) {
-                Storage::disk('s3')->delete($path);
+            if (
+                Storage::disk('s3')
+                ->exists($path)
+            ) {
+                Storage::disk('s3')
+                    ->delete($path);
             }
         } catch (\Throwable $e) {
             report($e);
@@ -157,16 +269,17 @@ class ProfileController extends Controller
 
         /*
         |--------------------------------------------------------------------------
-        | Delete old local copy if present
+        | Delete Legacy Local Copy
         |--------------------------------------------------------------------------
-        |
-        | This keeps compatibility with profile photos uploaded before we moved
-        | profile storage to S3.
-        |
         */
+
         try {
-            if (Storage::disk('public')->exists($path)) {
-                Storage::disk('public')->delete($path);
+            if (
+                Storage::disk('public')
+                ->exists($path)
+            ) {
+                Storage::disk('public')
+                    ->delete($path);
             }
         } catch (\Throwable $e) {
             report($e);
