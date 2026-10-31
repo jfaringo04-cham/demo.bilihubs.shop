@@ -416,6 +416,12 @@ class LogisticController extends Controller
             return redirect()->route('home')->with('error', 'No logistics company found for your account.');
         }
 
+        $request->merge([
+            'vehicle_type' => strtolower(
+                trim((string) $request->input('vehicle_type'))
+            ),
+        ]);
+
         $validated = $request->validate([
             'first_name' => ['required', 'string', 'max:255'],
             'last_name' => ['required', 'string', 'max:255'],
@@ -424,12 +430,20 @@ class LogisticController extends Controller
             'birthday' => ['required', 'date'],
             'age' => ['required', 'integer', 'min:0', 'max:120'],
             'password' => ['required', 'confirmed', Rules\Password::defaults()],
-            'vehicle_type' => ['required', 'string', 'max:255'],
+            'vehicle_type' => ['required', 'string', 'in:motorcycle,car,van,truck'],
             'license_number' => ['required', 'string', 'max:255'],
             'or_document' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
             'cr_document' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
         ]);
 
+
+        $maxCapacity = match ($validated['vehicle_type']) {
+            'motorcycle' => 5,
+            'car' => 10,
+            'van' => 30,
+            'truck' => 100,
+            default => 5,
+        };
 
         $uploadedPaths = [];
 
@@ -458,7 +472,8 @@ class LogisticController extends Controller
                 $validated,
                 $logistic,
                 $orPath,
-                $crPath
+                $crPath,
+                $maxCapacity
             ) {
                 $user = User::create([
                     'first_name' => $validated['first_name'],
@@ -479,6 +494,9 @@ class LogisticController extends Controller
                     'phone' => $validated['mobile_number'],
                     'status' => User::STATUS_ACTIVE,
                     'vehicle_type' => $validated['vehicle_type'],
+                    'max_capacity' => $maxCapacity,
+                    'current_load' => 0,
+                    'availability_status' => 'offline',
                     'license_number' => $validated['license_number'],
                     'logistic_id' => $logistic->id,
                     'logistic_status' => 'approved',

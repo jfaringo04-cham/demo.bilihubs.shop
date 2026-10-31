@@ -1616,7 +1616,7 @@ class DashboardController extends Controller
 
             'street_address' => ['nullable', 'string', 'max:255'],
 
-            'vehicle_type' => ['required', 'string', 'max:255'],
+            'vehicle_type' => ['required', 'string', 'in:motorcycle,car,van,truck'],
 
             'license_number' => ['required', 'string', 'max:255'],
 

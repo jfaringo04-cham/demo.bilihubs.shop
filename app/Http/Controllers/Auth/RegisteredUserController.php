@@ -226,6 +226,12 @@ class RegisteredUserController extends Controller
 
         $this->normalizeMobileNumberInput($request);
 
+        $request->merge([
+            'vehicle_type' => strtolower(
+                trim((string) $request->input('vehicle_type'))
+            ),
+        ]);
+
         $email = $this->normalizeEmail($request->input('email'));
 
         if ($this->isRepeatSubmissionFromThisSession($request, $email, 'rider_registration_email')) {
@@ -323,7 +329,7 @@ class RegisteredUserController extends Controller
 
             ],
 
-            'vehicle_type' => ['required', 'string', 'max:255'],
+            'vehicle_type' => ['required', 'string', 'in:motorcycle,car,van,truck'],
 
             'license_number' => ['required', 'string', 'max:255'],
 
@@ -555,6 +561,12 @@ class RegisteredUserController extends Controller
         $this->normalizeEmailInput($request);
 
         $this->normalizeMobileNumberInput($request);
+
+        $request->merge([
+            'vehicle_type' => strtolower(
+                trim((string) $request->input('vehicle_type'))
+            ),
+        ]);
 
         $email = $this->normalizeEmail($request->input('email'));
 

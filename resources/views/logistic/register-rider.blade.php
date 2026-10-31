@@ -55,10 +55,10 @@
           <label for="vehicle_type" class="form-label">Vehicle Type <span class="text-danger">*</span></label>
           <select name="vehicle_type" id="vehicle_type" class="form-select" required>
             <option value="">Select Vehicle Type</option>
-            <option value="Motorcycle" {{ old('vehicle_type') == 'Motorcycle' ? 'selected' : '' }}>Motorcycle</option>
-            <option value="Car" {{ old('vehicle_type') == 'Car' ? 'selected' : '' }}>Car</option>
-            <option value="Van" {{ old('vehicle_type') == 'Van' ? 'selected' : '' }}>Van</option>
-            <option value="Truck" {{ old('vehicle_type') == 'Truck' ? 'selected' : '' }}>Truck</option>
+            <option value="motorcycle" {{ old('vehicle_type') == 'motorcycle' ? 'selected' : '' }}>Motorcycle</option>
+            <option value="car" {{ old('vehicle_type') == 'car' ? 'selected' : '' }}>Car</option>
+            <option value="van" {{ old('vehicle_type') == 'van' ? 'selected' : '' }}>Van</option>
+            <option value="truck" {{ old('vehicle_type') == 'truck' ? 'selected' : '' }}>Truck</option>
           </select>
           @error('vehicle_type') <div class="text-danger">{{ $message }}</div> @enderror
         </div>
