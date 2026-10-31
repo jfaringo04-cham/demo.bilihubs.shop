@@ -1825,83 +1825,539 @@ class DashboardController extends Controller
     public function account()
     {
         $user = Auth::user();
-        return view('seller.account', compact('user'));
+        $shopId = $user->seller?->id;
+
+        /*
+    |--------------------------------------------------------------------------
+    | Active Logistics Companies
+    |--------------------------------------------------------------------------
+    */
+
+        $logistics = \App\Models\Logistic::query()
+            ->where('status', 'active')
+            ->orderBy('company_name')
+            ->get();
+
+        /*
+    |--------------------------------------------------------------------------
+    | Product Statistics
+    |--------------------------------------------------------------------------
+    */
+
+        $totalProducts = $user->products()->count();
+
+        /*
+    |--------------------------------------------------------------------------
+    | Seller Order Statistics
+    |--------------------------------------------------------------------------
+    */
+
+        if ($shopId) {
+            $sellerOrdersQuery = SellerOrder::query()
+                ->where('seller_id', $shopId);
+
+            $totalOrders = (clone $sellerOrdersQuery)->count();
+
+            $activeOrders = (clone $sellerOrdersQuery)
+                ->whereIn('status', [
+                    'pending',
+                    'placed',
+                    'confirmed',
+                    'preparing',
+                    'ready_for_pickup',
+                    'picked_up',
+                    'at_sorting_center',
+                    'sorted',
+                    'assigned_to_rider',
+                    'out_for_delivery',
+                    'in_transit',
+                    'delivery_failed',
+                ])
+                ->count();
+
+            $completedOrders = (clone $sellerOrdersQuery)
+                ->whereIn('status', [
+                    'delivered',
+                    'completed',
+                ])
+                ->count();
+
+            $cancelledOrders = (clone $sellerOrdersQuery)
+                ->where('status', 'cancelled')
+                ->count();
+        } else {
+            $totalOrders = 0;
+            $activeOrders = 0;
+            $completedOrders = 0;
+            $cancelledOrders = 0;
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Notification Statistics
+    |--------------------------------------------------------------------------
+    */
+
+        $unreadNotifications = Notification::query()
+            ->where('user_id', $user->id)
+            ->where('is_read', false)
+            ->count();
+
+        /*
+    |--------------------------------------------------------------------------
+    | Message Statistics
+    |--------------------------------------------------------------------------
+    |
+    | Keep compatibility with the existing User model. If an unread message
+    | helper exists, use it. Otherwise the account page safely displays zero.
+    |
+    */
+
+        $unreadMessages = method_exists(
+            $user,
+            'unreadMessagesCount'
+        )
+            ? (int) $user->unreadMessagesCount()
+            : 0;
+
+        /*
+    |--------------------------------------------------------------------------
+    | Seller Wallet
+    |--------------------------------------------------------------------------
+    |
+    | Seller wallets use the seller/shop ID, which is also the ID stored in
+    | seller_orders.seller_id and seller_settlements.seller_id.
+    |
+    */
+
+        $wallet = $shopId
+            ? \App\Models\SellerWallet::query()
+            ->where('seller_id', $shopId)
+            ->first()
+            : null;
+
+        $availableWalletMinor = (int) (
+            $wallet?->available_balance_minor ?? 0
+        );
+
+        $pendingWalletMinor = (int) (
+            $wallet?->pending_balance_minor ?? 0
+        );
+
+        /*
+    |--------------------------------------------------------------------------
+    | Current Preferred Logistics
+    |--------------------------------------------------------------------------
+    */
+
+        $preferredLogistic = null;
+
+        if ($user->preferred_logistic_id) {
+            $preferredLogistic = $logistics->firstWhere(
+                'id',
+                (int) $user->preferred_logistic_id
+            );
+
+            if (!$preferredLogistic) {
+                $preferredLogistic = \App\Models\Logistic::query()
+                    ->find($user->preferred_logistic_id);
+            }
+        }
+
+        return view('seller.account', compact(
+            'user',
+            'logistics',
+            'preferredLogistic',
+            'totalProducts',
+            'totalOrders',
+            'activeOrders',
+            'completedOrders',
+            'cancelledOrders',
+            'unreadNotifications',
+            'unreadMessages',
+            'availableWalletMinor',
+            'pendingWalletMinor',
+        ));
     }
+
 
     public function updateAccount(Request $request)
     {
         $user = Auth::user();
 
-        $validated = $request->validate([
-            'first_name' => ['required', 'string', 'max:255'],
-            'last_name' => ['required', 'string', 'max:255'],
-            'middle_name' => ['nullable', 'string', 'max:255'],
-            'sex' => ['required', Rule::in(['Male', 'Female'])],
-            'email' => [
-                'required',
-                'email',
-                'max:255',
-                Rule::unique('users', 'email')->ignore($user->id),
-            ],
-            'mobile_number' => ['required', 'string', 'max:20'],
-            'birthday' => ['required', 'date', 'before_or_equal:today'],
-            'region' => ['required', 'string', 'max:255'],
-            'province' => ['required', 'string', 'max:255'],
-            'municipality' => ['required', 'string', 'max:255'],
-            'barangay' => ['required', 'string', 'max:255'],
-            'house_number' => ['nullable', 'string', 'max:50'],
-            'street_address' => ['nullable', 'string', 'max:255'],
-            'business_name' => ['required', 'string', 'max:255'],
-            'logo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,gif', 'max:2048'],
-            'preferred_logistic_id' => ['nullable', 'exists:logistics,id'],
-        ]);
+        /*
+    |--------------------------------------------------------------------------
+    | Validate Account Information
+    |--------------------------------------------------------------------------
+    */
 
-        $middleName = trim((string) ($validated['middle_name'] ?? ''));
-        $displayName = trim($validated['last_name'] . ', ' . $validated['first_name'] . ($middleName !== '' ? ' ' . $middleName : ''));
+        $validated = $request->validateWithBag(
+            'updateAccount',
+            [
+                'first_name' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+
+                'last_name' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+
+                'middle_name' => [
+                    'nullable',
+                    'string',
+                    'max:255',
+                ],
+
+                'sex' => [
+                    'required',
+                    Rule::in([
+                        'Male',
+                        'Female',
+                    ]),
+                ],
+
+                'email' => [
+                    'required',
+                    'email',
+                    'max:255',
+                    Rule::unique('users', 'email')
+                        ->ignore($user->id),
+                ],
+
+                'mobile_number' => [
+                    'required',
+                    'string',
+                    'max:20',
+                ],
+
+                'birthday' => [
+                    'required',
+                    'date',
+                    'before_or_equal:today',
+                ],
+
+                'region' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+
+                'province' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+
+                'municipality' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+
+                'barangay' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+
+                'house_number' => [
+                    'nullable',
+                    'string',
+                    'max:50',
+                ],
+
+                'street_address' => [
+                    'nullable',
+                    'string',
+                    'max:255',
+                ],
+
+                'business_name' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+
+                'logo' => [
+                    'nullable',
+                    'image',
+                    'mimes:jpg,jpeg,png,webp',
+                    'max:2048',
+                ],
+
+                'remove_logo' => [
+                    'nullable',
+                    'boolean',
+                ],
+
+                'preferred_logistic_id' => [
+                    'nullable',
+                    Rule::exists('logistics', 'id')
+                        ->where(
+                            fn($query) =>
+                            $query->where(
+                                'status',
+                                'active'
+                            )
+                        ),
+                ],
+            ]
+        );
+
+        /*
+    |--------------------------------------------------------------------------
+    | Prepare Seller Name
+    |--------------------------------------------------------------------------
+    */
+
+        $middleName = trim(
+            (string) (
+                $validated['middle_name'] ?? ''
+            )
+        );
+
+        $displayName = trim(
+            $validated['last_name']
+                . ', '
+                . $validated['first_name']
+                . (
+                    $middleName !== ''
+                    ? ' ' . $middleName
+                    : ''
+                )
+        );
+
+        /*
+    |--------------------------------------------------------------------------
+    | Detect Email Change
+    |--------------------------------------------------------------------------
+    */
+
+        $newEmail = strtolower(
+            trim($validated['email'])
+        );
+
+        $currentEmail = strtolower(
+            trim((string) $user->email)
+        );
+
+        $emailChanged = $currentEmail !== $newEmail;
+
+        /*
+    |--------------------------------------------------------------------------
+    | Prepare User Data
+    |--------------------------------------------------------------------------
+    */
 
         $userData = [
-            'first_name' => $validated['first_name'],
-            'middle_name' => $middleName !== '' ? $middleName : null,
-            'last_name' => $validated['last_name'],
-            'name' => $displayName,
-            'sex' => $validated['sex'],
-            'email' => $validated['email'],
-            'mobile_number' => $validated['mobile_number'],
-            'birthday' => $validated['birthday'],
-            'age' => Carbon::parse($validated['birthday'])->age,
-            'region' => $validated['region'],
-            'province' => $validated['province'],
-            'municipality' => $validated['municipality'],
-            'barangay' => $validated['barangay'],
-            'house_number' => $validated['house_number'] ?? null,
-            'street_address' => $validated['street_address'] ?? null,
-            'business_name' => $validated['business_name'],
-            'store_name' => $validated['business_name'],
-            'preferred_logistic_id' => $validated['preferred_logistic_id'] ?? null,
+            'first_name' =>
+            $validated['first_name'],
+
+            'middle_name' =>
+            $middleName !== ''
+                ? $middleName
+                : null,
+
+            'last_name' =>
+            $validated['last_name'],
+
+            'name' =>
+            $displayName,
+
+            'sex' =>
+            $validated['sex'],
+
+            'email' =>
+            $newEmail,
+
+            'mobile_number' =>
+            $validated['mobile_number'],
+
+            'phone' =>
+            $validated['mobile_number'],
+
+            'birthday' =>
+            $validated['birthday'],
+
+            'age' =>
+            Carbon::parse(
+                $validated['birthday']
+            )->age,
+
+            'region' =>
+            $validated['region'],
+
+            'province' =>
+            $validated['province'],
+
+            'municipality' =>
+            $validated['municipality'],
+
+            'barangay' =>
+            $validated['barangay'],
+
+            'house_number' =>
+            $validated['house_number']
+                ?? null,
+
+            'street_address' =>
+            $validated['street_address']
+                ?? null,
+
+            'business_name' =>
+            $validated['business_name'],
+
+            'store_name' =>
+            $validated['business_name'],
+
+            'preferred_logistic_id' =>
+            $validated['preferred_logistic_id']
+                ?? null,
         ];
 
-        if ($request->hasFile('logo')) {
-            // Delete the previous logo from whichever storage currently owns it.
+        /*
+    |--------------------------------------------------------------------------
+    | Email Verification
+    |--------------------------------------------------------------------------
+    |
+    | A verified old email must not automatically make a newly-entered email
+    | verified.
+    |
+    */
+
+        if ($emailChanged) {
+            $userData['email_verified_at'] = null;
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Remove Current Shop Logo
+    |--------------------------------------------------------------------------
+    */
+
+        if ($request->boolean('remove_logo')) {
             if ($user->logo) {
-                try {
-                    if (Storage::disk('s3')->exists($user->logo)) {
-                        Storage::disk('s3')->delete($user->logo);
-                    } elseif (Storage::disk('public')->exists($user->logo)) {
-                        Storage::disk('public')->delete($user->logo);
-                    }
-                } catch (\Throwable $e) {
-                    // Do not block the account update if old-file cleanup fails.
-                    report($e);
-                }
+                $this->deleteSellerLogo($user->logo);
             }
 
-            // New seller logos are stored persistently in Supabase Storage.
-            $userData['logo'] = $request->file('logo')->store('logos', 's3');
+            $userData['logo'] = null;
         }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Upload New Shop Logo
+    |--------------------------------------------------------------------------
+    */
+
+        if ($request->hasFile('logo')) {
+            $logoPath = $request
+                ->file('logo')
+                ->store(
+                    'logos',
+                    's3'
+                );
+
+            if (!$logoPath) {
+                return back()
+                    ->withInput()
+                    ->withErrors(
+                        [
+                            'logo' =>
+                            'Unable to upload the shop logo. Please try again.',
+                        ],
+                        'updateAccount'
+                    );
+            }
+
+            /*
+        | Delete the old image only after the new image has been stored.
+        | This prevents losing the existing logo when the upload fails.
+        */
+
+            if ($user->logo) {
+                $this->deleteSellerLogo($user->logo);
+            }
+
+            $userData['logo'] = $logoPath;
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Save Account
+    |--------------------------------------------------------------------------
+    */
 
         $user->update($userData);
 
-        return back()->with('success', 'Account updated successfully.');
+        /*
+    |--------------------------------------------------------------------------
+    | Response
+    |--------------------------------------------------------------------------
+    */
+
+        if ($emailChanged) {
+            return back()->with(
+                'success',
+                'Account updated successfully. '
+                    . 'Please verify your new email address.'
+            );
+        }
+
+        return back()->with(
+            'success',
+            'Account updated successfully.'
+        );
+    }
+
+
+    /**
+     * Delete a seller logo from whichever storage disk currently contains it.
+     */
+    private function deleteSellerLogo(?string $path): void
+    {
+        if (!$path) {
+            return;
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Supabase / S3
+    |--------------------------------------------------------------------------
+    */
+
+        try {
+            if (
+                Storage::disk('s3')
+                ->exists($path)
+            ) {
+                Storage::disk('s3')
+                    ->delete($path);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Legacy Local Storage
+    |--------------------------------------------------------------------------
+    */
+
+        try {
+            if (
+                Storage::disk('public')
+                ->exists($path)
+            ) {
+                Storage::disk('public')
+                    ->delete($path);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     public function updatePassword(Request $request)

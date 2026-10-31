@@ -13,10 +13,30 @@ class ProfileController extends Controller
     {
         $user = Auth::user()->load('roles');
 
-        $defaultAddress = null;
+        /*
+    |--------------------------------------------------------------------------
+    | Redirect Role-Specific Accounts
+    |--------------------------------------------------------------------------
+    */
 
+        if ($user->hasRole('seller')) {
+            return redirect()->route('seller.account');
+        }
+
+        if ($user->hasRole('rider')) {
+            return redirect()->route('rider.account');
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Buyer Profile
+    |--------------------------------------------------------------------------
+    */
+
+        $defaultAddress = null;
         $orderCount = 0;
         $addressCount = 0;
+
         $reviewCount = 0;
         $supportTicketCount = 0;
         $notificationCount = 0;
@@ -38,24 +58,13 @@ class ProfileController extends Controller
 
             $reviewCount = $user->reviews()->count();
 
-            $supportTicketCount = $user->supportTickets()->count();
+            $supportTicketCount = $user
+                ->supportTickets()
+                ->count();
 
-            $notificationCount = $user->notifications()->count();
-
-            /*
-            |--------------------------------------------------------------------------
-            | Order Status Summary
-            |--------------------------------------------------------------------------
-            |
-            | These groups make the buyer profile easier to understand.
-            |
-            | To Ship:
-            | Seller is still preparing the order or it is waiting for pickup.
-            |
-            | To Receive:
-            | Parcel is already moving through the logistics/delivery flow.
-            |
-            */
+            $notificationCount = $user
+                ->notifications()
+                ->count();
 
             $toShipCount = $user->orders()
                 ->whereIn('status', [
