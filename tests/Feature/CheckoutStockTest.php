@@ -266,6 +266,15 @@ class CheckoutStockTest extends TestCase
 
             $table->foreignId('destination_hub_id')->nullable();
 
+            $table->foreignId('linehaul_rider_id')->nullable();
+            $table->string('required_vehicle_type', 30)->nullable();
+            $table->decimal('parcel_weight_kg', 10, 2)->nullable();
+            $table->decimal('estimated_distance_km', 10, 2)->nullable();
+            $table->string('linehaul_status', 40)->default('not_required');
+            $table->timestamp('linehaul_assigned_at')->nullable();
+            $table->timestamp('linehaul_started_at')->nullable();
+            $table->timestamp('linehaul_completed_at')->nullable();
+
             $table->string('routing_status')->default('awaiting_pickup');
 
             $table->timestamp('origin_hub_received_at')->nullable();
@@ -1274,3 +1283,4 @@ class CheckoutStockTest extends TestCase
         $this->assertSame($before, $after);
     }
 }
+

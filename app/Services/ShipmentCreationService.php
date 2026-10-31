@@ -28,7 +28,8 @@ class ShipmentCreationService
             ->lockForUpdate()
             ->firstOrFail();
 
-        if (Shipment::query()
+        if (
+            Shipment::query()
             ->where('seller_order_id', $lockedSellerOrder->id)
             ->exists()
         ) {
@@ -55,6 +56,19 @@ class ShipmentCreationService
         $originMatch = $route['origin_match'] ?? 'unresolved';
         $destinationMatch = $route['destination_match'] ?? 'unresolved';
 
+        /*
+         * Determine whether this shipment needs an inter-hub
+         * line-haul vehicle such as a car, van, or truck.
+         *
+         * Parcel weight is currently nullable because the existing
+         * order/product flow does not yet provide a reliable shipment
+         * weight value.
+         */
+        $linehaulFields = LineHaulAssignmentService::routingFields(
+            $originHub,
+            $destinationHub
+        );
+
         $pickup = $pickupAddress
             ? collect([
                 $pickupAddress->address_line1,
@@ -77,44 +91,95 @@ class ShipmentCreationService
 
         $delivery = is_array($address)
             ? (
-                $address['address'] ??
-                collect($address)
-                    ->only([
-                        'address_line1',
-                        'address_line2',
-                        'barangay',
-                        'city',
-                        'province',
-                        'postal_code',
-                        'country',
-                    ])
-                    ->filter()
-                    ->implode(', ')
+                $address['address']
+                ?? collect($address)
+                ->only([
+                    'address_line1',
+                    'address_line2',
+                    'barangay',
+                    'city',
+                    'province',
+                    'postal_code',
+                    'country',
+                ])
+                ->filter()
+                ->implode(', ')
             )
             : (string) $address;
 
         Shipment::create([
             'seller_order_id' => $lockedSellerOrder->id,
+
             'logistic_id' => $originHub?->logistic_id,
+
             'hub_id' => $originHub?->id,
+
             'origin_hub_id' => $originHub?->id,
+
             'destination_hub_id' => $destinationHub?->id,
+
             'routing_status' => $originHub && $destinationHub
                 ? 'awaiting_pickup'
                 : 'routing_unresolved',
-            'tracking_number' => 'SPE-' . Str::upper(Str::random(10)),
-            'tracking_code' => 'SPE-' . Str::upper(Str::random(12)),
+
+            /*
+             * Line-haul routing information.
+             */
+            'required_vehicle_type' =>
+            $linehaulFields['required_vehicle_type'],
+
+            'parcel_weight_kg' =>
+            $linehaulFields['parcel_weight_kg'],
+
+            'estimated_distance_km' =>
+            $linehaulFields['estimated_distance_km'],
+
+            'linehaul_status' =>
+            $linehaulFields['linehaul_status'],
+
+            'tracking_number' =>
+            'SPE-' . Str::upper(Str::random(10)),
+
+            'tracking_code' =>
+            'SPE-' . Str::upper(Str::random(12)),
+
             'status' => 'pending',
-            'pickup_address' => $pickup ?: 'Seller address',
-            'delivery_address' => $delivery ?: 'Delivery address unavailable',
+
+            'pickup_address' =>
+            $pickup ?: 'Seller address',
+
+            'delivery_address' =>
+            $delivery ?: 'Delivery address unavailable',
+
             'notes' => $originHub && $destinationHub
-                ? 'Route: ' . $originHub->name . ' -> ' . $destinationHub->name
-                    . ' | Origin match: ' . $originMatch
-                    . ' | Destination match: ' . $destinationMatch
+                ? 'Route: '
+                . $originHub->name
+                . ' -> '
+                . $destinationHub->name
+                . ' | Origin match: '
+                . $originMatch
+                . ' | Destination match: '
+                . $destinationMatch
+                . (
+                    $linehaulFields['required_vehicle_type']
+                    ? ' | Required vehicle: '
+                    . $linehaulFields['required_vehicle_type']
+                    : ''
+                )
+                . (
+                    $linehaulFields['estimated_distance_km'] !== null
+                    ? ' | Estimated distance: '
+                    . $linehaulFields['estimated_distance_km']
+                    . ' km'
+                    : ''
+                )
                 : 'Routing unresolved: no valid active hub/default hub found',
         ]);
 
-        if (!$lockedSellerOrder->logistic_id && $originHub) {
+        if (
+            !$lockedSellerOrder->logistic_id
+            && $originHub
+        ) {
             $lockedSellerOrder->update([
                 'logistic_id' => $originHub->logistic_id,
             ]);

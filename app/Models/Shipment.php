@@ -16,6 +16,14 @@ class Shipment extends Model
         'routing_status',
         'rider_id',
         'pickup_rider_id',
+        'linehaul_rider_id',
+        'required_vehicle_type',
+        'parcel_weight_kg',
+        'estimated_distance_km',
+        'linehaul_status',
+        'linehaul_assigned_at',
+        'linehaul_started_at',
+        'linehaul_completed_at',
         'rider_profile_id',
         'seller_order_id',
         'tracking_number',
@@ -85,6 +93,12 @@ class Shipment extends Model
         'longitude' => 'decimal:7',
         'rider_latitude' => 'decimal:7',
         'rider_longitude' => 'decimal:7',
+
+        'parcel_weight_kg' => 'decimal:2',
+        'estimated_distance_km' => 'decimal:2',
+        'linehaul_assigned_at' => 'datetime',
+        'linehaul_started_at' => 'datetime',
+        'linehaul_completed_at' => 'datetime',
     ];
 
     protected static function booted()
@@ -133,6 +147,14 @@ class Shipment extends Model
     public function rider(): BelongsTo
     {
         return $this->belongsTo(User::class, 'rider_id');
+    }
+
+    public function linehaulRider(): BelongsTo
+    {
+        return $this->belongsTo(
+            User::class,
+            'linehaul_rider_id'
+        );
     }
 
     public function riderProfile(): BelongsTo
