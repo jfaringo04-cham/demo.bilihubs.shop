@@ -16,13 +16,16 @@ class LogisticsNavigation extends StatefulWidget {
 }
 
 class _LogisticsNavigationState extends State<LogisticsNavigation> {
-  int _currentIndex = 0;
+  static const int _homeIndex = 0;
+  static const int _scannerIndex = 1;
+  static const int _profileIndex = 4;
 
-  // ============================================================
-  // BOTTOM NAV ITEMS
-  // ============================================================
+  static const int _firstTabIndex = _homeIndex;
+  static const int _lastTabIndex = _profileIndex;
 
-  final List<BottomNavItem> _items = const [
+  int _currentIndex = _homeIndex;
+
+  final List<BottomNavItem> _items = const <BottomNavItem>[
     BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
     BottomNavItem(icon: Icons.qr_code_scanner_rounded, label: 'Scanner'),
     BottomNavItem(icon: Icons.location_on_outlined, label: 'Tracking'),
@@ -30,12 +33,35 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
     BottomNavItem(icon: Icons.person_outline_rounded, label: 'Profile'),
   ];
 
+  late final List<Widget> _pages;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _pages = <Widget>[
+      LogisticsHome(
+        onOpenScanner: () {
+          _changeTab(_scannerIndex);
+        },
+      ),
+      const ParcelScanner(),
+      const TrackingMap(),
+      const ParcelList(),
+      const LogisticsProfile(),
+    ];
+  }
+
   // ============================================================
   // CHANGE TAB
   // ============================================================
 
   void _changeTab(int index) {
-    if (index < 0 || index >= _items.length || index == _currentIndex) {
+    if (index < _firstTabIndex || index > _lastTabIndex) {
+      return;
+    }
+
+    if (index == _currentIndex) {
       return;
     }
 
@@ -45,36 +71,18 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
   }
 
   // ============================================================
-  // BUILD PAGE
+  // HANDLE BACK
   // ============================================================
 
-  Widget _buildCurrentPage() {
-    switch (_currentIndex) {
-      case 0:
-        return LogisticsHome(
-          onOpenScanner: () {
-            _changeTab(1);
-          },
-        );
+  void _handleBack(bool didPop, Object? result) {
+    if (didPop) {
+      return;
+    }
 
-      case 1:
-        return const ParcelScanner();
-
-      case 2:
-        return const TrackingMap();
-
-      case 3:
-        return const ParcelList();
-
-      case 4:
-        return const LogisticsProfile();
-
-      default:
-        return LogisticsHome(
-          onOpenScanner: () {
-            _changeTab(1);
-          },
-        );
+    if (_currentIndex != _homeIndex) {
+      setState(() {
+        _currentIndex = _homeIndex;
+      });
     }
   }
 
@@ -84,15 +92,17 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-
-      body: SafeArea(top: false, bottom: false, child: _buildCurrentPage()),
-
-      bottomNavigationBar: BottomNav(
-        currentIndex: _currentIndex,
-        items: _items,
-        onTap: _changeTab,
+    return PopScope(
+      canPop: _currentIndex == _homeIndex,
+      onPopInvokedWithResult: _handleBack,
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: IndexedStack(index: _currentIndex, children: _pages),
+        bottomNavigationBar: BottomNav(
+          currentIndex: _currentIndex,
+          items: _items,
+          onTap: _changeTab,
+        ),
       ),
     );
   }

@@ -118,7 +118,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
       }
 
       final http.Response userResponse = responses[0];
-
       final http.Response addressResponse = responses[1];
 
       Map<String, dynamic>? serverUser;
@@ -171,8 +170,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
       setState(() {
         if (serverUser != null) {
-          final String serverName =
-              serverUser['name']?.toString().trim() ?? '';
+          final String serverName = serverUser['name']?.toString().trim() ?? '';
 
           final String serverEmail =
               serverUser['email']?.toString().trim() ?? '';
@@ -191,7 +189,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
         }
 
         buyerAddresses = loadedAddresses;
-
         defaultAddress = selectedDefault;
 
         if (selectedDefault != null) {
@@ -241,31 +238,21 @@ class _BuyerProfileState extends State<BuyerProfile> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildHeader(),
-
                 const SizedBox(height: 20),
-
                 _buildProfileCard(),
-
                 const SizedBox(height: 25),
-
                 const Text(
                   'Personal Information',
                   style: BuyerStyle.sectionTitle,
                 ),
-
                 const SizedBox(height: 12),
-
                 _buildPersonalInformation(),
-
                 const SizedBox(height: 25),
-
                 const Text(
                   'Delivery Information',
                   style: BuyerStyle.sectionTitle,
                 ),
-
                 const SizedBox(height: 12),
-
                 Container(
                   decoration: BuyerStyle.card,
                   child: _profileInfo(
@@ -274,37 +261,21 @@ class _BuyerProfileState extends State<BuyerProfile> {
                     buyerAddress,
                   ),
                 ),
-
                 const SizedBox(height: 25),
-
                 const Text('My Account', style: BuyerStyle.sectionTitle),
-
                 const SizedBox(height: 12),
-
                 _buildAccountSection(),
-
                 const SizedBox(height: 25),
-
                 const Text('Preferences', style: BuyerStyle.sectionTitle),
-
                 const SizedBox(height: 12),
-
                 _buildPreferencesSection(),
-
                 const SizedBox(height: 25),
-
                 const Text('Support', style: BuyerStyle.sectionTitle),
-
                 const SizedBox(height: 12),
-
                 _buildSupportSection(),
-
                 const SizedBox(height: 25),
-
                 _buildLogoutButton(),
-
                 const SizedBox(height: 20),
-
                 const Center(
                   child: Text(
                     'BiliHub • Shop smart. Shop easy.',
@@ -587,7 +558,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
               }
 
               final String name = nameController.text.trim();
-
               final String phone = phoneController.text.trim();
 
               if (name.isEmpty) {
@@ -715,9 +685,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _sheetHandle(),
-
                       const SizedBox(height: 20),
-
                       Row(
                         children: [
                           const Expanded(
@@ -736,13 +704,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 20),
-
                       const Text('Full Name', style: BuyerStyle.label),
-
                       const SizedBox(height: 7),
-
                       TextField(
                         controller: nameController,
                         enabled: !isSaving,
@@ -752,13 +716,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           icon: Icons.person_outline,
                         ),
                       ),
-
                       const SizedBox(height: 15),
-
                       const Text('Email Address', style: BuyerStyle.label),
-
                       const SizedBox(height: 7),
-
                       TextField(
                         controller: emailController,
                         enabled: false,
@@ -770,13 +730,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                               helperText: 'Email cannot be changed from the mobile profile.',
                             ),
                       ),
-
                       const SizedBox(height: 15),
-
                       const Text('Phone Number', style: BuyerStyle.label),
-
                       const SizedBox(height: 7),
-
                       TextField(
                         controller: phoneController,
                         enabled: !isSaving,
@@ -787,9 +743,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           icon: Icons.phone_outlined,
                         ).copyWith(counterText: ''),
                       ),
-
                       const SizedBox(height: 25),
-
                       SizedBox(
                         width: double.infinity,
                         height: 52,
@@ -853,7 +807,11 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
     bool keepManagerOpen = true;
 
-    while (mounted && keepManagerOpen) {
+    while (keepManagerOpen) {
+      if (!mounted) {
+        return;
+      }
+
       final _AddressAction? action = await showModalBottomSheet<_AddressAction>(
         context: context,
         isScrollControlled: true,
@@ -943,6 +901,10 @@ class _BuyerProfileState extends State<BuyerProfile> {
 
             if (success) {
               await _refreshProfile();
+
+              if (!mounted) {
+                return;
+              }
             }
 
             break;
@@ -981,9 +943,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
         child: Column(
           children: [
             const SizedBox(height: 12),
-
             _sheetHandle(),
-
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
               child: Row(
@@ -1012,7 +972,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
                 ],
               ),
             ),
-
             Expanded(
               child: buyerAddresses.isEmpty
                   ? _buildNoAddressState()
@@ -1030,7 +989,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
                       },
                     ),
             ),
-
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
               child: SizedBox(
@@ -1106,21 +1064,16 @@ class _BuyerProfileState extends State<BuyerProfile> {
                 ),
             ],
           ),
-
           const SizedBox(height: 10),
-
           Text(
             fullAddress.isNotEmpty ? fullAddress : _buildFullAddress(address),
             style: BuyerStyle.small,
           ),
-
           if (phone.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(phone, style: BuyerStyle.small),
           ],
-
           const SizedBox(height: 12),
-
           Row(
             children: [
               Expanded(
@@ -1137,7 +1090,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   label: const Text('Edit'),
                 ),
               ),
-
               if (!isDefault) ...[
                 const SizedBox(width: 8),
                 Expanded(
@@ -1263,6 +1215,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   modalContext,
                   'Please complete the required address fields.',
                 );
+
                 return;
               }
 
@@ -1271,6 +1224,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   modalContext,
                   'Please enter a valid 11-digit Philippine mobile number.',
                 );
+
                 return;
               }
 
@@ -1415,9 +1369,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _sheetHandle(),
-
                       const SizedBox(height: 20),
-
                       Row(
                         children: [
                           Expanded(
@@ -1436,13 +1388,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 20),
-
                       const Text('Address Label', style: BuyerStyle.label),
-
                       const SizedBox(height: 7),
-
                       TextField(
                         controller: labelController,
                         enabled: !isSaving,
@@ -1452,13 +1400,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           icon: Icons.label_outline,
                         ),
                       ),
-
                       const SizedBox(height: 15),
-
                       const Text('Address Line 1 *', style: BuyerStyle.label),
-
                       const SizedBox(height: 7),
-
                       TextField(
                         controller: line1Controller,
                         enabled: !isSaving,
@@ -1468,13 +1412,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           icon: Icons.home_outlined,
                         ),
                       ),
-
                       const SizedBox(height: 15),
-
                       const Text('Address Line 2', style: BuyerStyle.label),
-
                       const SizedBox(height: 7),
-
                       TextField(
                         controller: line2Controller,
                         enabled: !isSaving,
@@ -1483,16 +1423,12 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           icon: Icons.location_city_outlined,
                         ),
                       ),
-
                       const SizedBox(height: 15),
-
                       const Text(
                         'City / Municipality *',
                         style: BuyerStyle.label,
                       ),
-
                       const SizedBox(height: 7),
-
                       TextField(
                         controller: cityController,
                         enabled: !isSaving,
@@ -1502,13 +1438,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           icon: Icons.location_city_outlined,
                         ),
                       ),
-
                       const SizedBox(height: 15),
-
                       const Text('Province *', style: BuyerStyle.label),
-
                       const SizedBox(height: 7),
-
                       TextField(
                         controller: provinceController,
                         enabled: !isSaving,
@@ -1518,13 +1450,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           icon: Icons.map_outlined,
                         ),
                       ),
-
                       const SizedBox(height: 15),
-
                       const Text('Postal Code', style: BuyerStyle.label),
-
                       const SizedBox(height: 7),
-
                       TextField(
                         controller: postalController,
                         enabled: !isSaving,
@@ -1534,13 +1462,9 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           icon: Icons.markunread_mailbox_outlined,
                         ),
                       ),
-
                       const SizedBox(height: 15),
-
                       const Text('Contact Number *', style: BuyerStyle.label),
-
                       const SizedBox(height: 7),
-
                       TextField(
                         controller: phoneController,
                         enabled: !isSaving,
@@ -1551,9 +1475,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                           icon: Icons.phone_outlined,
                         ).copyWith(counterText: ''),
                       ),
-
                       const SizedBox(height: 12),
-
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text(
@@ -1573,9 +1495,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                                 });
                               },
                       ),
-
                       const SizedBox(height: 18),
-
                       SizedBox(
                         width: double.infinity,
                         height: 52,
@@ -1703,17 +1623,13 @@ class _BuyerProfileState extends State<BuyerProfile> {
             ),
             child: Icon(icon, color: BuyerColors.primary, size: 21),
           ),
-
           const SizedBox(width: 13),
-
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: BuyerStyle.small),
-
                 const SizedBox(height: 4),
-
                 Text(value, style: BuyerStyle.cardTitle),
               ],
             ),
@@ -1751,9 +1667,7 @@ class _BuyerProfileState extends State<BuyerProfile> {
                 ),
                 child: Icon(icon, color: BuyerColors.primary, size: 21),
               ),
-
               const SizedBox(width: 13),
-
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1769,7 +1683,6 @@ class _BuyerProfileState extends State<BuyerProfile> {
                   ],
                 ),
               ),
-
               const Icon(
                 Icons.chevron_right,
                 color: BuyerColors.textGrey,
