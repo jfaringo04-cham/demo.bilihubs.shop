@@ -611,7 +611,16 @@ Route::middleware([
         )->name('shipments.stage');
 
         // ====================================================
-        // ASSIGN RIDER
+        // AVAILABLE FINAL-MILE RIDERS
+        // ====================================================
+
+        Route::get(
+            '/shipments/{shipment}/available-riders',
+            [LogisticShipmentController::class, 'availableRiders']
+        )->name('shipments.available-riders');
+
+        // ====================================================
+        // ASSIGN FINAL-MILE RIDER
         // ====================================================
 
         Route::post(

@@ -110,7 +110,10 @@ class ShipmentController extends Controller
             'success' => true,
 
             'data' => collect($shipments->items())
-                ->map(fn (Shipment $shipment) => $this->shipmentData($shipment))
+                ->map(
+                    fn (Shipment $shipment) =>
+                    $this->shipmentData($shipment)
+                )
                 ->values(),
 
             'meta' => [
@@ -680,6 +683,170 @@ class ShipmentController extends Controller
     }
 
     /**
+     * GET /api/logistic/shipments/{shipment}/available-riders
+     */
+    public function availableRiders(
+        Request $request,
+        Shipment $shipment
+    ): JsonResponse {
+        $logistic = $request->user()?->ownedLogistic;
+
+        if (
+            !$logistic ||
+            (int) $shipment->logistic_id !== (int) $logistic->id
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Shipment does not belong to your logistics company.',
+            ], 403);
+        }
+
+        if ($shipment->sorting_status !== 'staged') {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'This shipment must be sorted and staged before '
+                    . 'loading available final-mile riders.',
+            ], 422);
+        }
+
+        if (!$shipment->received_by_sorting_center) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Shipment must be received by the sorting center '
+                    . 'before final-mile rider assignment.',
+            ], 422);
+        }
+
+        if ($shipment->rider_id !== null) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'This shipment already has a delivery rider assigned.',
+            ], 422);
+        }
+
+        if (
+            in_array(
+                $shipment->status,
+                [
+                    'delivered',
+                    'cancelled',
+                    'canceled',
+                    'delivery_failed',
+                ],
+                true
+            )
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Available riders cannot be loaded for this shipment '
+                    . 'in its current status.',
+            ], 422);
+        }
+
+        $shipment->loadMissing([
+            'sellerOrder.order',
+            'hub',
+            'destinationHub',
+        ]);
+
+        if (!$shipment->sellerOrder?->order) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Shipment is not linked to a valid order.',
+            ], 422);
+        }
+
+        if ($shipment->failed_return_received_at !== null) {
+            $sellerOrder = $shipment->sellerOrder;
+
+            if (
+                !$sellerOrder ||
+                $sellerOrder->reschedule_status !== 'approved'
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' =>
+                        'This seller order requires an approved '
+                        . 'reschedule before rider assignment.',
+                ], 422);
+            }
+
+            if (
+                $shipment->status
+                !== 'failed_return_at_sorting_center'
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' =>
+                        'The failed-return shipment is not in the '
+                        . 'expected sorting-center state.',
+                ], 422);
+            }
+        }
+
+        try {
+            $riders =
+                RiderAssignmentService::eligibleRidersForShipment(
+                    $shipment
+                );
+
+            return response()->json([
+                'success' => true,
+
+                'message' => $riders->isEmpty()
+                    ? 'No eligible final-mile riders are currently available.'
+                    : 'Available final-mile riders loaded successfully.',
+
+                'data' => $riders->values(),
+                'riders' => $riders->values(),
+
+                'meta' => [
+                    'total' => $riders->count(),
+
+                    'shipment_id' =>
+                        (int) $shipment->id,
+
+                    'tracking_number' =>
+                        $shipment->tracking_number,
+
+                    'logistic_id' =>
+                        (int) $shipment->logistic_id,
+
+                    'destination_hub_id' =>
+                        $shipment->destination_hub_id !== null
+                            ? (int) $shipment->destination_hub_id
+                            : (
+                                $shipment->hub_id !== null
+                                    ? (int) $shipment->hub_id
+                                    : null
+                            ),
+
+                    'destination_hub_name' =>
+                        $shipment->destinationHub?->name
+                        ?? $shipment->hub?->name,
+
+                    'delivery_zone' =>
+                        $shipment->delivery_zone,
+                ],
+            ]);
+        } catch (Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Unable to load available final-mile riders.',
+            ], 500);
+        }
+    }
+
+    /**
      * POST /api/logistic/shipments/{shipment}/assign
      *
      * Required:
@@ -851,7 +1018,8 @@ class ShipmentController extends Controller
             'tracking_code' =>
                 $shipment->tracking_code,
 
-            'status' => $shipment->status,
+            'status' =>
+                $shipment->status,
 
             'sorting_status' =>
                 $shipment->sorting_status,
