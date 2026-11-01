@@ -66,6 +66,8 @@ use App\Http\Controllers\Rider\CodRemittanceController as RiderCodRemittanceCont
 
 use App\Http\Controllers\Logistic\CodRemittanceController as LogisticCodRemittanceController;
 
+use App\Http\Controllers\Logistic\LinehaulTripController;
+
 use App\Http\Controllers\Admin\SellerSettlementController;
 
 
@@ -743,23 +745,105 @@ Route::middleware('auth')->group(function () {
 
         Route::get('/applications', [LogisticController::class, 'pendingApplications'])->name('applications');
 
-        Route::get('/shipments', [LogisticController::class, 'shipments'])->name('shipments');
+        Route::get('/shipments', [LogisticController::class, 'shipments'])
+            ->name('shipments');
 
-        Route::get('/sorting-area', [LogisticController::class, 'sortingArea'])->name('sorting-area');
+        Route::get('/sorting-area', [LogisticController::class, 'sortingArea'])
+            ->name('sorting-area');
 
-        Route::get('/hub-transfers', [LogisticController::class, 'hubTransfers'])->name('hub-transfers');
-        Route::post('/shipments/{shipment}/dispatch-transfer', [LogisticController::class, 'dispatchHubTransfer'])->name('shipments.dispatch-transfer');
-        Route::post('/shipments/{shipment}/receive-destination', [LogisticController::class, 'receiveDestinationHub'])->name('shipments.receive-destination');
+        /*
+|--------------------------------------------------------------------------
+| Hub Transfers / Truck Linehaul Manifests
+|--------------------------------------------------------------------------
+|
+| Existing single-parcel hub transfer routes remain available as a
+| fallback. Truck manifests allow multiple parcels with the same
+| origin and destination hubs to travel together in one truck trip.
+|
+*/
 
-        Route::post('/shipments/{shipment}/receive', [LogisticController::class, 'receiveShipment'])->name('shipments.receive');
+        Route::get(
+            '/hub-transfers',
+            [LogisticController::class, 'hubTransfers']
+        )->name('hub-transfers');
 
-        Route::post('/shipments/{shipment}/scan', [LogisticController::class, 'scanShipment'])->name('shipments.scan');
+        /*
+|--------------------------------------------------------------------------
+| Truck Manifest / Scheduled Linehaul Trips
+|--------------------------------------------------------------------------
+*/
 
-        Route::post('/shipments/{shipment}/scan-at-hub', [App\Http\Controllers\ShipmentQrController::class, 'scanAtHub'])->name('shipments.scan-at-hub');
+        Route::get(
+            '/linehaul-trips',
+            [LinehaulTripController::class, 'index']
+        )->name('linehaul-trips.index');
 
-        Route::post('/shipments/{shipment}/sort', [LogisticController::class, 'sortShipment'])->name('shipments.sort');
+        Route::post(
+            '/linehaul-trips',
+            [LinehaulTripController::class, 'store']
+        )->name('linehaul-trips.store');
 
-        Route::post('/shipments/{shipment}/stage', [LogisticController::class, 'stageShipment'])->name('shipments.stage');
+        Route::post(
+            '/linehaul-trips/{trip}/load',
+            [LinehaulTripController::class, 'load']
+        )->name('linehaul-trips.load');
+
+        Route::post(
+            '/linehaul-trips/{trip}/dispatch',
+            [LinehaulTripController::class, 'dispatch']
+        )->name('linehaul-trips.dispatch');
+
+        Route::post(
+            '/linehaul-trips/{trip}/receive',
+            [LinehaulTripController::class, 'receive']
+        )->name('linehaul-trips.receive');
+
+        /*
+|--------------------------------------------------------------------------
+| Existing Single-Parcel Hub Transfer Fallback
+|--------------------------------------------------------------------------
+*/
+
+        Route::post(
+            '/shipments/{shipment}/dispatch-transfer',
+            [LogisticController::class, 'dispatchHubTransfer']
+        )->name('shipments.dispatch-transfer');
+
+        Route::post(
+            '/shipments/{shipment}/receive-destination',
+            [LogisticController::class, 'receiveDestinationHub']
+        )->name('shipments.receive-destination');
+
+        /*
+|--------------------------------------------------------------------------
+| Shipment Processing
+|--------------------------------------------------------------------------
+*/
+
+        Route::post(
+            '/shipments/{shipment}/receive',
+            [LogisticController::class, 'receiveShipment']
+        )->name('shipments.receive');
+
+        Route::post(
+            '/shipments/{shipment}/scan',
+            [LogisticController::class, 'scanShipment']
+        )->name('shipments.scan');
+
+        Route::post(
+            '/shipments/{shipment}/scan-at-hub',
+            [App\Http\Controllers\ShipmentQrController::class, 'scanAtHub']
+        )->name('shipments.scan-at-hub');
+
+        Route::post(
+            '/shipments/{shipment}/sort',
+            [LogisticController::class, 'sortShipment']
+        )->name('shipments.sort');
+
+        Route::post(
+            '/shipments/{shipment}/stage',
+            [LogisticController::class, 'stageShipment']
+        )->name('shipments.stage');
 
         Route::post('/shipments/{shipment}/assign-rider', [LogisticController::class, 'assignRider'])->name('shipments.assign-rider');
 

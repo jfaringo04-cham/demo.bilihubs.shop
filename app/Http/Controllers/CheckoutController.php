@@ -13,6 +13,7 @@ use App\Models\SellerOrder;
 use App\Models\Notification;
 
 use App\Services\ShipmentCreationService;
+use App\Services\ShippingFeeService;
 
 use Illuminate\Http\Request;
 
@@ -394,7 +395,8 @@ class CheckoutController extends Controller
     }
 
     public function index(
-        \App\Services\VoucherCalculationService $voucherService
+        \App\Services\VoucherCalculationService $voucherService,
+        ShippingFeeService $shippingFeeService
     ) {
         $request = request();
 
@@ -465,17 +467,54 @@ class CheckoutController extends Controller
 
         $paymentMethods = ['cod' => 'Cash on Delivery'];
 
-        $user = \Illuminate\Support\Facades\Auth::user();
-        $defaultAddress = $this->buildUserAddress($user);
+                $user = Auth::user();
+
+        $savedAddresses = $user->addresses()
+            ->orderByDesc('is_default')
+            ->orderByDesc('id')
+            ->get();
+
+        $defaultAddressRecord = $savedAddresses->firstWhere(
+            'is_default',
+            true
+        ) ?? $savedAddresses->first();
+
+        $defaultAddress = $defaultAddressRecord
+            ? $this->buildSavedAddress($defaultAddressRecord)
+            : $this->buildUserAddress($user);
+
+        $shippingQuote = $shippingFeeService->quoteForCart(
+            $cartItems,
+            $defaultAddressRecord,
+            $defaultAddress
+        );
+
+        $shippingMinor =
+            (int) $shippingQuote['total_fee_minor'];
+
+        $shipping = $shippingMinor / 100;
+
+        $totalMinor = max(
+            0,
+            $subtotalMinor
+                + $taxMinor
+                + $shippingMinor
+                - $voucherDiscountMinor
+        );
+
+        $total = $totalMinor / 100;
 
         return view('checkout.index', compact(
             'cartItems',
             'subtotal',
             'tax',
             'shipping',
+            'shippingQuote',
             'total',
             'paymentMethods',
             'user',
+            'savedAddresses',
+            'defaultAddressRecord',
             'defaultAddress',
             'voucherCode',
             'voucherDiscount',
@@ -506,23 +545,65 @@ class CheckoutController extends Controller
         return implode(', ', $parts);
     }
 
+
+    private function buildSavedAddress(
+        \App\Models\Address $address
+    ): string {
+        return collect([
+            $address->address_line1,
+            $address->address_line2,
+            $address->city,
+            $address->province,
+            $address->postal_code,
+            $address->country,
+        ])
+            ->filter(
+                fn ($value) =>
+                    $value !== null
+                    && trim((string) $value) !== ''
+            )
+            ->map(
+                fn ($value) => trim((string) $value)
+            )
+            ->implode(', ');
+    }
+
     public function store(
         Request $request,
-        \App\Services\VoucherCalculationService $voucherService
+        \App\Services\VoucherCalculationService $voucherService,
+        ShippingFeeService $shippingFeeService
     ) {
 
         $request->validate([
-
-            'shipping_address' => 'required|string|max:1000',
-
-            'payment_method' => 'required|in:cod',
-
-            'contact_name' => 'nullable|string|max:255',
-
-            'contact_phone' => 'nullable|string|max:20',
-
-            'notes' => 'nullable|string|max:1000',
-
+            'address_id' => [
+                'nullable',
+                'integer',
+                'exists:addresses,id',
+            ],
+            'shipping_address' => [
+                'required',
+                'string',
+                'max:1000',
+            ],
+            'payment_method' => [
+                'required',
+                'in:cod',
+            ],
+            'contact_name' => [
+                'nullable',
+                'string',
+                'max:255',
+            ],
+            'contact_phone' => [
+                'nullable',
+                'string',
+                'max:20',
+            ],
+            'notes' => [
+                'nullable',
+                'string',
+                'max:1000',
+            ],
         ]);
 
         $isBuyNow = $request->session()->has('checkout.buy_now');
@@ -585,23 +666,95 @@ class CheckoutController extends Controller
 
         $total = $totalMinor / 100;
 
+        $selectedAddress = null;
+
+        if ($request->filled('address_id')) {
+            $selectedAddress = Auth::user()
+                ->addresses()
+                ->whereKey(
+                    $request->integer('address_id')
+                )
+                ->firstOrFail();
+        }
+
+        $selectedAddressText = $selectedAddress
+            ? $this->buildSavedAddress(
+                $selectedAddress
+            )
+            : trim(
+                (string) $request->shipping_address
+            );
+
         $shippingAddress = [
+            'recipient' =>
+                $request->contact_name
+                ?: Auth::user()->name,
 
-            'recipient' => $request->contact_name ?: Auth::user()->name,
+            'phone' =>
+                $request->contact_phone
+                ?: $selectedAddress?->phone
+                ?: Auth::user()->phone,
 
-            'phone' => $request->contact_phone ?: Auth::user()->phone,
+            'address' => $selectedAddressText,
 
-            'address' => $request->shipping_address,
+            'address_id' =>
+                $selectedAddress?->id,
 
+            'address_line1' =>
+                $selectedAddress?->address_line1,
+
+            'address_line2' =>
+                $selectedAddress?->address_line2,
+
+            'barangay' =>
+                $selectedAddress?->label,
+
+            'barangay' =>
+                $selectedAddress?->barangay,
+
+            'city' =>
+                $selectedAddress?->city,
+
+            'province' =>
+                $selectedAddress?->province,
+
+            'postal_code' =>
+                $selectedAddress?->postal_code,
+
+            'country' =>
+                $selectedAddress?->country,
         ];
 
-        $geocoded = $this->geocodeAddress($request->shipping_address);
+        $geocoded = $this->geocodeAddress(
+            $selectedAddressText
+        );
 
         $customerLat = $geocoded['lat'] ?? null;
 
         $customerLng = $geocoded['lng'] ?? null;
 
         $deliveryZone = $this->determineDeliveryZone($customerLat, $customerLng);
+
+        $shippingQuote = $shippingFeeService->quoteForCart(
+            $cartItems,
+            $selectedAddress,
+            $selectedAddressText
+        );
+
+        $shippingBySellerMinor =
+            $shippingQuote['per_seller_minor'];
+
+        $shippingMinor =
+            (int) $shippingQuote['total_fee_minor'];
+
+        $shipping = $shippingMinor / 100;
+
+        $totalMinor =
+            $subtotalMinor
+            + $taxMinor
+            + $shippingMinor;
+
+        $total = $totalMinor / 100;
 
         $order = DB::transaction(function () use (
 
@@ -625,7 +778,7 @@ class CheckoutController extends Controller
 
             $shippingMinor,
 
-            $shippingPerSellerMinor,
+            $shippingBySellerMinor,
 
             $totalMinor,
 
@@ -867,7 +1020,10 @@ class CheckoutController extends Controller
 
                 // Each SellerOrder represents one seller/shipment and receives the full
                 // per-seller shipping fee. Tax/service fee still reconciles proportionally.
-                $sellerShippingMinor = $shippingPerSellerMinor;
+                $sellerShippingMinor = (int) (
+                    $shippingBySellerMinor[(int) $sellerId]
+                    ?? config('shipping.base_fee_minor', 5000)
+                );
 
                 if ($sellerIndex === $sellerCount) {
                     $sellerTaxMinor = $taxMinor - $allocatedTaxMinor;

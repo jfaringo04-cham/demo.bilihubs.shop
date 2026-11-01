@@ -22,7 +22,7 @@ return [
     */
     'pickup_earning_minor' => 1500,
     'delivery_earning_minor' => 2500,
-    'logistics_earning_minor' => 1000,
+    'logistics_earning_minor' => 500,
     'delivery_earning_source' => 'shipping_fee',
 
     // Minimum rider withdrawal, in centavos.

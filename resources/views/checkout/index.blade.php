@@ -30,6 +30,13 @@
   <form action="{{ route('checkout.store') }}" method="POST">
     @csrf
 
+    @if($defaultAddressRecord)
+      <input
+        type="hidden"
+        name="address_id"
+        value="{{ $defaultAddressRecord->id }}">
+    @endif
+
     <div class="row g-4">
 
       {{-- LEFT COLUMN --}}
@@ -372,15 +379,76 @@
             </div>
 
             {{-- Shipping Fee --}}
-            <div class="d-flex justify-content-between gap-3 mb-3">
+            <div class="mb-3">
 
-              <span class="text-muted">
-                Shipping Fee
-              </span>
+              <div class="d-flex justify-content-between gap-3">
+                <span class="text-muted">
+                  Shipping Fee
+                </span>
 
-              <span class="text-nowrap">
-                &#8369;{{ number_format($shipping, 2) }}
-              </span>
+                <span class="text-nowrap fw-semibold">
+                  &#8369;{{ number_format($shipping, 2) }}
+                </span>
+              </div>
+
+              @if(!empty($shippingQuote['rows']))
+                <div class="mt-2 small text-muted">
+
+                  @foreach($shippingQuote['rows'] as $shippingRow)
+
+                    <div
+                      class="d-flex justify-content-between
+                             align-items-start gap-3 mb-1">
+
+                      <span class="text-break">
+                        {{ $shippingRow['seller_name'] }}
+
+                        @if($shippingRow['distance_km'] !== null)
+                          &middot;
+                          {{ number_format(
+                              $shippingRow['distance_km'],
+                              2
+                          ) }} km
+                        @else
+                          &middot; distance unavailable
+                        @endif
+                      </span>
+
+                      <span class="text-nowrap">
+                        &#8369;{{ number_format(
+                            $shippingRow['fee_minor'] / 100,
+                            2
+                        ) }}
+                      </span>
+
+                    </div>
+
+                  @endforeach
+
+                  <div class="mt-2">
+                    Base
+                    &#8369;{{ number_format(
+                        $shippingQuote['base_fee_minor'] / 100,
+                        2
+                    ) }}
+                    includes the first
+                    {{ number_format(
+                        $shippingQuote['included_distance_km'],
+                        0
+                    ) }}
+                    km.
+
+                    Additional started km:
+                    &#8369;{{ number_format(
+                        $shippingQuote[
+                            'additional_per_km_minor'
+                        ] / 100,
+                        2
+                    ) }}/km.
+                  </div>
+
+                </div>
+              @endif
 
             </div>
 

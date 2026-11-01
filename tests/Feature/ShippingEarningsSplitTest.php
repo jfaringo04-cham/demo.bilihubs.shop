@@ -219,7 +219,7 @@ class ShippingEarningsSplitTest extends TestCase
         $this->assertSame(1, LogisticWalletTransaction::where('shipment_id', $shipment->id)->count());
     }
 
-    public function test_low_shipping_fee_is_capped_and_still_reserves_logistics_share(): void
+    public function test_low_shipping_fee_is_capped_without_exceeding_shipping_fee(): void
     {
         $shipment = $this->makeShipment(3000);
         $this->creditAll($shipment);
@@ -229,18 +229,21 @@ class ShippingEarningsSplitTest extends TestCase
             'type' => 'pickup_credit',
             'amount_minor' => 1500,
         ]);
+
         $this->assertDatabaseHas('rider_wallet_transactions', [
             'shipment_id' => $shipment->id,
             'type' => 'delivery_credit',
-            'amount_minor' => 500,
+            'amount_minor' => 1500,
         ]);
-        $this->assertDatabaseHas('logistic_wallet_transactions', [
+
+        $this->assertDatabaseMissing('logistic_wallet_transactions', [
             'shipment_id' => $shipment->id,
-            'amount_minor' => 1000,
+            'type' => 'shipment_credit',
         ]);
 
         $total = (int) RiderWalletTransaction::where('shipment_id', $shipment->id)->sum('amount_minor')
             + (int) LogisticWalletTransaction::where('shipment_id', $shipment->id)->sum('amount_minor');
+
         $this->assertSame(3000, $total);
     }
 

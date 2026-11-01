@@ -14,6 +14,7 @@ use Illuminate\Validation\ValidationException;
 class RiderWalletService
 {
     public const TYPE_PICKUP_CREDIT = 'pickup_credit';
+    public const TYPE_LINEHAUL_CREDIT = 'linehaul_credit';
     public const TYPE_DELIVERY_CREDIT = 'delivery_credit';
     public const TYPE_DELIVERY_ADJUSTMENT = 'delivery_credit_adjustment';
 
@@ -32,6 +33,7 @@ class RiderWalletService
     {
         return [
             self::TYPE_PICKUP_CREDIT,
+            self::TYPE_LINEHAUL_CREDIT,
             self::TYPE_DELIVERY_CREDIT,
         ];
     }
@@ -52,6 +54,18 @@ class RiderWalletService
         }
 
         return User::find((int) $shipment->pickup_rider_id);
+    }
+
+    public function resolveLinehaulRiderUser(
+        Shipment $shipment
+    ): ?User {
+        if (empty($shipment->linehaul_rider_id)) {
+            return null;
+        }
+
+        return User::find(
+            (int) $shipment->linehaul_rider_id
+        );
     }
 
     public function sellerOrderForShipment(Shipment $shipment): ?SellerOrder
@@ -90,37 +104,107 @@ class RiderWalletService
     }
 
     /**
-     * Final-delivery pay is reserved after the configured pickup share so the
-     * combined rider payout can never exceed the shipment shipping fee.
+     * Final-delivery rider receives the configured fixed share.
+     * Shipping is always capped so total allocations cannot exceed
+     * the SellerOrder shipping fee.
      */
-    public function calculateDeliveryEarningMinor(Shipment $shipment): int
-    {
-        $sellerOrder = $this->sellerOrderForShipment($shipment);
+    public function calculateDeliveryEarningMinor(
+        Shipment $shipment
+    ): int {
+        $sellerOrder =
+            $this->sellerOrderForShipment($shipment);
 
         if (!$sellerOrder) {
             return 0;
         }
 
-        $shippingMinor = max(0, (int) ($sellerOrder->shipping_minor ?? 0));
-        $pickupTarget = $this->calculatePickupEarningMinor($shipment);
-        $logisticsTarget = min(
-            max(0, (int) config('rider_wallet.logistics_earning_minor', 1000)),
-            max(0, $shippingMinor - $pickupTarget)
+        $shippingMinor = max(
+            0,
+            (int) ($sellerOrder->shipping_minor ?? 0)
         );
+
+        $pickupTarget =
+            $this->calculatePickupEarningMinor($shipment);
+
         $configuredDeliveryPay = max(
             0,
-            (int) config('rider_wallet.delivery_earning_minor', 2500)
+            (int) config(
+                'rider_wallet.delivery_earning_minor',
+                2500
+            )
         );
 
         return min(
             $configuredDeliveryPay,
-            max(0, $shippingMinor - $pickupTarget - $logisticsTarget)
+            max(
+                0,
+                $shippingMinor - $pickupTarget
+            )
+        );
+    }
+
+    /**
+     * Line-haul driver gets the remaining shipping fee after:
+     * - pickup rider fixed share
+     * - final rider fixed share
+     * - logistics minimum reserve
+     *
+     * No line-haul rider means no line-haul earning.
+     */
+    public function calculateLinehaulEarningMinor(
+        Shipment $shipment
+    ): int {
+        if (empty($shipment->linehaul_rider_id)) {
+            return 0;
+        }
+
+        $sellerOrder =
+            $this->sellerOrderForShipment($shipment);
+
+        if (!$sellerOrder) {
+            return 0;
+        }
+
+        $shippingMinor = max(
+            0,
+            (int) ($sellerOrder->shipping_minor ?? 0)
+        );
+
+        $pickupTarget =
+            $this->calculatePickupEarningMinor($shipment);
+
+        $deliveryTarget =
+            $this->calculateDeliveryEarningMinor($shipment);
+
+        $logisticsReserve = min(
+            max(
+                0,
+                (int) config(
+                    'rider_wallet.logistics_earning_minor',
+                    500
+                )
+            ),
+            max(
+                0,
+                $shippingMinor
+                    - $pickupTarget
+                    - $deliveryTarget
+            )
+        );
+
+        return max(
+            0,
+            $shippingMinor
+                - $pickupTarget
+                - $deliveryTarget
+                - $logisticsReserve
         );
     }
 
     public function calculateTotalRiderEarningMinor(Shipment $shipment): int
     {
         return $this->calculatePickupEarningMinor($shipment)
+            + $this->calculateLinehaulEarningMinor($shipment)
             + $this->calculateDeliveryEarningMinor($shipment);
     }
 
@@ -161,6 +245,11 @@ class RiderWalletService
             ->where('type', self::TYPE_DELIVERY_CREDIT)
             ->first();
 
+        $linehaulTransaction = RiderWalletTransaction::query()
+            ->where('shipment_id', $shipment->id)
+            ->where('type', self::TYPE_LINEHAUL_CREDIT)
+            ->first();
+
         $pickupTransaction = RiderWalletTransaction::query()
             ->where('shipment_id', $shipment->id)
             ->where('type', self::TYPE_PICKUP_CREDIT)
@@ -170,7 +259,9 @@ class RiderWalletService
 
         // A legacy full delivery credit already consumed the rider pool.
         if ($alreadyFundedMinor >= $totalTargetMinor) {
-            return $deliveryTransaction ?? $pickupTransaction;
+            return $deliveryTransaction
+                ?? $linehaulTransaction
+                ?? $pickupTransaction;
         }
 
         if (!$pickupTransaction) {
@@ -197,6 +288,51 @@ class RiderWalletService
                     description: 'Pickup rider earning funded from shipping fee for shipment '
                         . ($shipment->tracking_number ?: ('#' . $shipment->id)) . '.'
                 );
+            }
+        }
+
+        if (!$linehaulTransaction) {
+            $linehaulRider =
+                $this->resolveLinehaulRiderUser($shipment);
+
+            $remainingMinor = max(
+                0,
+                $totalTargetMinor
+                    - $this->shippingFundedCreditsMinor(
+                        $shipment
+                    )
+            );
+
+            $linehaulAmountMinor = min(
+                $this->calculateLinehaulEarningMinor(
+                    $shipment
+                ),
+                $remainingMinor
+            );
+
+            if (
+                $linehaulRider
+                && $linehaulAmountMinor > 0
+            ) {
+                $linehaulTransaction =
+                    $this->creditRoleTransaction(
+                        shipment: $shipment,
+                        rider: $linehaulRider,
+                        sellerOrder: $sellerOrder,
+                        shippingMinor: $shippingMinor,
+                        amountMinor: $linehaulAmountMinor,
+                        type: self::TYPE_LINEHAUL_CREDIT,
+                        referencePrefix: 'LINEHAUL',
+                        role: 'linehaul',
+                        description:
+                            'Line-haul rider earning funded from '
+                            . 'shipping fee for shipment '
+                            . (
+                                $shipment->tracking_number
+                                ?: ('#' . $shipment->id)
+                            )
+                            . '.'
+                    );
             }
         }
 
@@ -227,7 +363,9 @@ class RiderWalletService
             }
         }
 
-        return $deliveryTransaction ?? $pickupTransaction;
+        return $deliveryTransaction
+            ?? $linehaulTransaction
+            ?? $pickupTransaction;
     }
 
     private function shippingFundedCreditsMinor(Shipment $shipment): int
@@ -236,6 +374,7 @@ class RiderWalletService
             ->where('shipment_id', $shipment->id)
             ->whereIn('type', [
                 self::TYPE_PICKUP_CREDIT,
+                self::TYPE_LINEHAUL_CREDIT,
                 self::TYPE_DELIVERY_CREDIT,
                 self::TYPE_DELIVERY_ADJUSTMENT,
             ])

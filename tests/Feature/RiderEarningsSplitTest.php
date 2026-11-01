@@ -189,13 +189,15 @@ class RiderEarningsSplitTest extends TestCase
             'type' => 'pickup_credit',
             'amount_minor' => 1500,
         ]);
+
         $this->assertDatabaseHas('rider_wallet_transactions', [
             'shipment_id' => $shipment->id,
             'type' => 'delivery_credit',
-            'amount_minor' => 500,
+            'amount_minor' => 1500,
         ]);
+
         $this->assertSame(
-            2000,
+            3000,
             (int) RiderWalletTransaction::where('shipment_id', $shipment->id)->sum('amount_minor')
         );
     }

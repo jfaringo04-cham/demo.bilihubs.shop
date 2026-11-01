@@ -63,6 +63,12 @@
           <span>Sorting Area</span>
         </a>
 
+        <a href="{{ route('logistic.linehaul-trips.index') }}"
+          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.linehaul-trips.*') ? 'active' : '' }}">
+          <span class="sidebar-icon"><i class="bi bi-truck"></i></span>
+          <span>Truck Manifests</span>
+        </a>
+
         <div class="sidebar-divider"></div>
 
         <div class="sidebar-label">FINANCE</div>
@@ -276,7 +282,7 @@
               <span class="text-muted">&copy; {{ date('Y') }} Speedy Express. All rights reserved.</span>
               <div class="d-flex gap-2">
                 <a href="#" class="footer-link-small text-muted">Privacy Policy</a>
-                <span class="text-muted">·</span>
+                <span class="text-muted">Â·</span>
                 <a href="#" class="footer-link-small text-muted">Terms & Conditions</a>
                 <span class="text-muted ms-2 d-none d-md-inline">Logistics Partner on BiliHub</span>
               </div>

@@ -17,10 +17,27 @@ class OrderReceiptObserver
             return;
         }
 
-        // This observer lets the existing manual "Confirm Received" action
-        // trigger rider wallet credit and seller settlement retry without
-        // requiring the old controller flow to know about the new wallet.
-        app(OrderReceiptFinalizationService::class)->creditRiders($order);
-        app(OrderReceiptFinalizationService::class)->retrySellerSettlements($order);
+        /*
+        |--------------------------------------------------------------------------
+        | RELEASE CONFIRMED-RECEIPT EARNINGS
+        |--------------------------------------------------------------------------
+        |
+        | Existing manual Confirm Received actions update the Order directly.
+        | This observer makes sure all shipping-fee funded earnings are released:
+        |
+        | 1. Pickup / linehaul / final-mile rider earnings
+        | 2. Logistics provider earning
+        | 3. Seller settlement retry
+        |
+        | Wallet services are idempotent, so saving the same confirmed order
+        | again will not create duplicate shipment credits.
+        |
+        */
+
+        $service = app(OrderReceiptFinalizationService::class);
+
+        $service->creditRiders($order);
+        $service->creditLogistics($order);
+        $service->retrySellerSettlements($order);
     }
 }

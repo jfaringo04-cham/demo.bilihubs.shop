@@ -47,28 +47,74 @@ class LogisticWalletService
         return $logisticId > 0 ? Logistic::find($logisticId) : null;
     }
 
-    public function calculateLogisticsEarningMinor(Shipment $shipment): int
-    {
-        $sellerOrder = $this->sellerOrderForShipment($shipment);
+    public function calculateLogisticsEarningMinor(
+        Shipment $shipment
+    ): int {
+        $sellerOrder =
+            $this->sellerOrderForShipment($shipment);
 
         if (!$sellerOrder) {
             return 0;
         }
 
-        $shippingMinor = max(0, (int) ($sellerOrder->shipping_minor ?? 0));
-        $pickupTarget = min(
-            max(0, (int) config('rider_wallet.pickup_earning_minor', 1500)),
-            $shippingMinor
-        );
-        $configuredLogisticsPay = max(
+        $shippingMinor = max(
             0,
-            (int) config('rider_wallet.logistics_earning_minor', 1000)
+            (int) ($sellerOrder->shipping_minor ?? 0)
         );
 
-        return min(
-            $configuredLogisticsPay,
-            max(0, $shippingMinor - $pickupTarget)
+        $pickupTarget = min(
+            max(
+                0,
+                (int) config(
+                    'rider_wallet.pickup_earning_minor',
+                    1500
+                )
+            ),
+            $shippingMinor
         );
+
+        $deliveryTarget = min(
+            max(
+                0,
+                (int) config(
+                    'rider_wallet.delivery_earning_minor',
+                    2500
+                )
+            ),
+            max(
+                0,
+                $shippingMinor - $pickupTarget
+            )
+        );
+
+        $remainingAfterLocalRiders = max(
+            0,
+            $shippingMinor
+                - $pickupTarget
+                - $deliveryTarget
+        );
+
+        /*
+         * With line-haul:
+         * logistics keeps only its configured minimum reserve.
+         *
+         * Without line-haul:
+         * logistics receives the whole remaining shipping fee.
+         */
+        if (!empty($shipment->linehaul_rider_id)) {
+            return min(
+                max(
+                    0,
+                    (int) config(
+                        'rider_wallet.logistics_earning_minor',
+                        500
+                    )
+                ),
+                $remainingAfterLocalRiders
+            );
+        }
+
+        return $remainingAfterLocalRiders;
     }
 
     public function creditConfirmedShipment(Shipment $shipment): ?LogisticWalletTransaction
@@ -109,6 +155,7 @@ class LogisticWalletService
             ->where('shipment_id', $shipment->id)
             ->whereIn('type', [
                 RiderWalletService::TYPE_PICKUP_CREDIT,
+                RiderWalletService::TYPE_LINEHAUL_CREDIT,
                 RiderWalletService::TYPE_DELIVERY_CREDIT,
                 RiderWalletService::TYPE_DELIVERY_ADJUSTMENT,
             ])

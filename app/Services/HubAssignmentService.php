@@ -455,9 +455,20 @@ class HubAssignmentService
     private static function destinationLocality(SellerOrder $sellerOrder): array
     {
         $order = $sellerOrder->order;
-        $shipping = is_array($order?->shipping_address)
-            ? $order->shipping_address
-            : [];
+
+        $shipping = $order?->shipping_address;
+
+        if (is_string($shipping)) {
+            $decoded = json_decode($shipping, true);
+
+            $shipping = is_array($decoded)
+                ? $decoded
+                : [];
+        } elseif (is_object($shipping)) {
+            $shipping = (array) $shipping;
+        } elseif (!is_array($shipping)) {
+            $shipping = [];
+        }
 
         $buyer = $order?->user;
 
@@ -465,18 +476,24 @@ class HubAssignmentService
             'barangay' => $shipping['barangay'] ?? null
                 ?: $buyer?->barangay_name
                 ?: $buyer?->barangay,
+
             'city' => $shipping['city'] ?? null
                 ?: $shipping['municipality'] ?? null
                 ?: $buyer?->municipality_name
                 ?: $buyer?->municipality,
+
             'province' => $shipping['province'] ?? null
                 ?: $buyer?->province_name
                 ?: $buyer?->province,
+
             'latitude' => self::floatOrNull(
-                $shipping['latitude'] ?? $order?->customer_latitude
+                $shipping['latitude']
+                    ?? $order?->customer_latitude
             ),
+
             'longitude' => self::floatOrNull(
-                $shipping['longitude'] ?? $order?->customer_longitude
+                $shipping['longitude']
+                    ?? $order?->customer_longitude
             ),
         ];
     }

@@ -2026,13 +2026,15 @@ class DashboardController extends Controller
                         ]);
                     }
 
-                    $shipment->update([
+                    $shipment->status = 'out_for_delivery';
 
-                        'status' => 'out_for_delivery',
+                    if ($shipment->out_for_delivery_at === null) {
+                        $shipment->out_for_delivery_at = now();
+                    }
 
-                        'notes' => $data['delivery_notes'] ?? null,
+                    $shipment->notes = $data['delivery_notes'] ?? null;
 
-                    ]);
+                    $shipment->save();
 
                     app(\App\Services\OrderFlowSyncService::class)
                         ->syncShipment($shipment);

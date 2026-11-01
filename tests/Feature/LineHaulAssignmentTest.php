@@ -9,6 +9,9 @@ use App\Models\Shipment;
 use App\Models\User;
 use App\Services\HubTransferService;
 use App\Services\LineHaulAssignmentService;
+use App\Models\LinehaulTrip;
+use App\Services\LinehaulTripService;
+use Illuminate\Support\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -624,4 +627,564 @@ class LineHaulAssignmentTest extends TestCase
             )
         );
     }
+
+    private function createManifestRoute(
+        int $shipmentCount = 1,
+        int $truckCapacity = 10
+    ): array {
+        $logistic = $this->createLogistic();
+
+        $origin = $this->createHub(
+            $logistic,
+            'Santa Cruz Hub',
+            14.2814,
+            121.4161
+        );
+
+        $destination = $this->createHub(
+            $logistic,
+            'Calamba Hub',
+            14.2117,
+            121.1653
+        );
+
+        $shipments = collect();
+
+        for ($i = 0; $i < $shipmentCount; $i++) {
+            $shipments->push(
+                $this->createTruckShipment(
+                    $logistic,
+                    $origin,
+                    $destination
+                )
+            );
+        }
+
+        $driver = $this->createRider(
+            $logistic,
+            $origin,
+            'truck',
+            0,
+            $truckCapacity
+        );
+
+        return [
+            $logistic,
+            $origin,
+            $destination,
+            $driver,
+            $shipments,
+        ];
+    }
+
+    public function test_manifest_groups_parcels_with_same_route(): void
+    {
+        [
+            $logistic,
+            $origin,
+            $destination,
+            $driver,
+            $shipments,
+        ] = $this->createManifestRoute(2);
+
+        $trip = LinehaulTripService::create(
+            $logistic->id,
+            $origin->id,
+            $destination->id,
+            $driver->id,
+            5,
+            now()->addHour()->toDateTimeString()
+        );
+
+        $this->assertSame(
+            LinehaulTrip::STATUS_LOADING,
+            $trip->status
+        );
+
+        $this->assertSame(
+            2,
+            $trip->shipments()->count()
+        );
+
+        foreach ($shipments as $shipment) {
+            $this->assertTrue(
+                $trip->shipments()
+                    ->whereKey($shipment->id)
+                    ->exists()
+            );
+        }
+    }
+
+    public function test_manifest_waits_before_minimum_load_and_schedule(): void
+    {
+        Carbon::setTestNow(
+            Carbon::parse('2026-11-01 08:00:00')
+        );
+
+        try {
+            [
+                $logistic,
+                $origin,
+                $destination,
+                $driver,
+            ] = $this->createManifestRoute(1);
+
+            $trip = LinehaulTripService::create(
+                $logistic->id,
+                $origin->id,
+                $destination->id,
+                $driver->id,
+                5,
+                '2026-11-01 10:00:00'
+            )->fresh();
+
+            $this->assertSame(
+                1,
+                $trip->shipments()->count()
+            );
+
+            $this->assertFalse(
+                $trip->canDispatch()
+            );
+
+            $this->assertSame(
+                'Waiting for more parcels or departure time',
+                $trip->readinessReason()
+            );
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_manifest_minimum_load_allows_early_dispatch(): void
+    {
+        Carbon::setTestNow(
+            Carbon::parse('2026-11-01 08:00:00')
+        );
+
+        try {
+            [
+                $logistic,
+                $origin,
+                $destination,
+                $driver,
+            ] = $this->createManifestRoute(2);
+
+            $trip = LinehaulTripService::create(
+                $logistic->id,
+                $origin->id,
+                $destination->id,
+                $driver->id,
+                2,
+                '2026-11-01 10:00:00'
+            )->fresh();
+
+            $this->assertSame(
+                2,
+                $trip->shipments()->count()
+            );
+
+            $this->assertTrue(
+                $trip->canDispatch()
+            );
+
+            $this->assertSame(
+                'Minimum load reached',
+                $trip->readinessReason()
+            );
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_manifest_schedule_allows_dispatch_below_minimum(): void
+    {
+        Carbon::setTestNow(
+            Carbon::parse('2026-11-01 10:00:00')
+        );
+
+        try {
+            [
+                $logistic,
+                $origin,
+                $destination,
+                $driver,
+            ] = $this->createManifestRoute(1);
+
+            $trip = LinehaulTripService::create(
+                $logistic->id,
+                $origin->id,
+                $destination->id,
+                $driver->id,
+                10,
+                '2026-11-01 10:00:00'
+            )->fresh();
+
+            $this->assertSame(
+                1,
+                $trip->shipments()->count()
+            );
+
+            $this->assertTrue(
+                $trip->canDispatch()
+            );
+
+            $this->assertSame(
+                'Scheduled departure reached',
+                $trip->readinessReason()
+            );
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_full_truck_is_ready_for_dispatch(): void
+    {
+        [
+            $logistic,
+            $origin,
+            $destination,
+            $driver,
+        ] = $this->createManifestRoute(
+            shipmentCount: 2,
+            truckCapacity: 2
+        );
+
+        $trip = LinehaulTripService::create(
+            $logistic->id,
+            $origin->id,
+            $destination->id,
+            $driver->id,
+            2,
+            now()->addHours(2)->toDateTimeString()
+        )->fresh();
+
+        $driver->refresh();
+
+        $this->assertSame(
+            2,
+            $trip->shipments()->count()
+        );
+
+        $this->assertSame(
+            2,
+            (int) $driver->current_load
+        );
+
+        $this->assertTrue(
+            $trip->isFull()
+        );
+
+        $this->assertTrue(
+            $trip->canDispatch()
+        );
+
+        $this->assertSame(
+            'Truck capacity reached',
+            $trip->readinessReason()
+        );
+    }
+
+    public function test_new_same_route_parcel_can_join_waiting_manifest(): void
+    {
+        [
+            $logistic,
+            $origin,
+            $destination,
+            $driver,
+        ] = $this->createManifestRoute(1);
+
+        $trip = LinehaulTripService::create(
+            $logistic->id,
+            $origin->id,
+            $destination->id,
+            $driver->id,
+            5,
+            now()->addHour()->toDateTimeString()
+        );
+
+        $this->assertSame(
+            1,
+            $trip->shipments()->count()
+        );
+
+        $newShipment = $this->createTruckShipment(
+            $logistic,
+            $origin,
+            $destination
+        );
+
+        $loaded =
+            LinehaulTripService::loadAvailableParcels(
+                $trip
+            );
+
+        $this->assertSame(
+            1,
+            $loaded
+        );
+
+        $this->assertSame(
+            2,
+            $trip->shipments()->count()
+        );
+
+        $this->assertTrue(
+            $trip->shipments()
+                ->whereKey($newShipment->id)
+                ->exists()
+        );
+    }
+
+    public function test_manifest_does_not_load_parcel_for_another_destination(): void
+    {
+        [
+            $logistic,
+            $origin,
+            $calamba,
+            $driver,
+            $shipments,
+        ] = $this->createManifestRoute(1);
+
+        $staRosa = $this->createHub(
+            $logistic,
+            'Santa Rosa Hub',
+            14.3122,
+            121.1114
+        );
+
+        $otherRouteShipment =
+            $this->createTruckShipment(
+                $logistic,
+                $origin,
+                $staRosa
+            );
+
+        $trip = LinehaulTripService::create(
+            $logistic->id,
+            $origin->id,
+            $calamba->id,
+            $driver->id,
+            1,
+            now()->addHour()->toDateTimeString()
+        );
+
+        $calambaShipment = $shipments->first();
+
+        $this->assertTrue(
+            $trip->shipments()
+                ->whereKey($calambaShipment->id)
+                ->exists()
+        );
+
+        $this->assertFalse(
+            $trip->shipments()
+                ->whereKey($otherRouteShipment->id)
+                ->exists()
+        );
+
+        $this->assertSame(
+            1,
+            $trip->shipments()->count()
+        );
+    }
+
+    public function test_manifest_cannot_dispatch_too_early(): void
+    {
+        Carbon::setTestNow(
+            Carbon::parse('2026-11-01 08:00:00')
+        );
+
+        try {
+            [
+                $logistic,
+                $origin,
+                $destination,
+                $driver,
+            ] = $this->createManifestRoute(1);
+
+            $trip = LinehaulTripService::create(
+                $logistic->id,
+                $origin->id,
+                $destination->id,
+                $driver->id,
+                5,
+                '2026-11-01 10:00:00'
+            );
+
+            $this->expectException(
+                RuntimeException::class
+            );
+
+            $this->expectExceptionMessage(
+                'Truck is still waiting.'
+            );
+
+            LinehaulTripService::dispatch(
+                $trip
+            );
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_manifest_dispatch_updates_every_loaded_parcel(): void
+    {
+        [
+            $logistic,
+            $origin,
+            $destination,
+            $driver,
+            $shipments,
+        ] = $this->createManifestRoute(2);
+
+        $trip = LinehaulTripService::create(
+            $logistic->id,
+            $origin->id,
+            $destination->id,
+            $driver->id,
+            2,
+            now()->addHour()->toDateTimeString()
+        );
+
+        LinehaulTripService::dispatch(
+            $trip
+        );
+
+        $trip->refresh();
+
+        $this->assertSame(
+            LinehaulTrip::STATUS_DISPATCHED,
+            $trip->status
+        );
+
+        $this->assertNotNull(
+            $trip->dispatched_at
+        );
+
+        foreach ($shipments as $shipment) {
+            $shipment->refresh();
+
+            $this->assertSame(
+                'in_hub_transfer',
+                $shipment->routing_status
+            );
+
+            $this->assertSame(
+                LineHaulAssignmentService::STATUS_IN_TRANSIT,
+                $shipment->linehaul_status
+            );
+
+            $this->assertSame(
+                'in_transit',
+                $shipment->status
+            );
+
+            $this->assertNotNull(
+                $shipment->transfer_dispatched_at
+            );
+
+            $this->assertNotNull(
+                $shipment->linehaul_started_at
+            );
+        }
+    }
+
+    public function test_manifest_receive_completes_every_parcel_and_releases_capacity(): void
+    {
+        [
+            $logistic,
+            $origin,
+            $destination,
+            $driver,
+            $shipments,
+        ] = $this->createManifestRoute(2);
+
+        $initialLoad =
+            (int) $driver->current_load;
+
+        $trip = LinehaulTripService::create(
+            $logistic->id,
+            $origin->id,
+            $destination->id,
+            $driver->id,
+            2,
+            now()->addHour()->toDateTimeString()
+        );
+
+        $driver->refresh();
+
+        $this->assertSame(
+            $initialLoad + 2,
+            (int) $driver->current_load
+        );
+
+        LinehaulTripService::dispatch(
+            $trip
+        );
+
+        LinehaulTripService::receive(
+            $trip
+        );
+
+        $trip->refresh();
+        $driver->refresh();
+
+        $this->assertSame(
+            LinehaulTrip::STATUS_ARRIVED,
+            $trip->status
+        );
+
+        $this->assertNotNull(
+            $trip->arrived_at
+        );
+
+        foreach ($shipments as $shipment) {
+            $shipment->refresh();
+
+            $this->assertSame(
+                $destination->id,
+                (int) $shipment->hub_id
+            );
+
+            $this->assertSame(
+                'at_destination_hub',
+                $shipment->routing_status
+            );
+
+            $this->assertSame(
+                LineHaulAssignmentService::STATUS_COMPLETED,
+                $shipment->linehaul_status
+            );
+
+            $this->assertSame(
+                'at_sorting_center',
+                $shipment->status
+            );
+
+            $this->assertSame(
+                'received',
+                $shipment->sorting_status
+            );
+
+            $this->assertNotNull(
+                $shipment->destination_hub_received_at
+            );
+
+            $this->assertNotNull(
+                $shipment->linehaul_completed_at
+            );
+        }
+
+        $this->assertSame(
+            $initialLoad,
+            (int) $driver->current_load
+        );
+
+        $this->assertSame(
+            'available',
+            $driver->availability_status
+        );
+    }
 }
+

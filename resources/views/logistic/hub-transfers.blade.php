@@ -6,7 +6,15 @@
         <h1 class="h2"><i class="bi bi-arrow-left-right"></i> Inter-Hub Transfers</h1>
         <p class="text-muted mb-0">Move parcels from their origin barangay hub to their destination barangay hub.</p>
     </div>
-    <a href="{{ route('logistic.sorting-area') }}" class="btn btn-outline-secondary">Back to Sorting Area</a>
+    <div class="d-flex gap-2">
+        <a href="{{ route('logistic.linehaul-trips.index') }}" class="btn btn-primary">
+            <i class="bi bi-truck"></i> Truck Manifests
+        </a>
+
+        <a href="{{ route('logistic.sorting-area') }}" class="btn btn-outline-secondary">
+            Back to Sorting Area
+        </a>
+    </div>
 </div>
 
 <div class="row g-4">
@@ -24,10 +32,11 @@
                             <td>{{ $shipment->destinationHub?->name ?? 'N/A' }}</td>
                             <td>{{ $shipment->sellerOrder?->order?->user?->name ?? 'N/A' }}</td>
                             <td>
-                                <form method="POST" action="{{ route('logistic.shipments.dispatch-transfer', $shipment) }}">
-                                    @csrf
-                                    <button class="btn btn-sm btn-primary" onclick="return confirm('Dispatch this parcel to its destination hub?')">Dispatch Transfer</button>
-                                </form>
+                                <a href="{{ route('logistic.linehaul-trips.index') }}"
+                                   class="btn btn-sm btn-primary">
+                                    <i class="bi bi-truck"></i>
+                                    Manage in Truck Manifest
+                                </a>
                             </td>
                         </tr>
                     @empty
@@ -53,10 +62,11 @@
                             <td>{{ $shipment->destinationHub?->name ?? 'N/A' }}</td>
                             <td>{{ optional($shipment->transfer_dispatched_at)->format('M d, Y h:i A') ?? 'N/A' }}</td>
                             <td>
-                                <form method="POST" action="{{ route('logistic.shipments.receive-destination', $shipment) }}">
-                                    @csrf
-                                    <button class="btn btn-sm btn-success" onclick="return confirm('Confirm this parcel arrived at the destination hub?')">Receive at Destination</button>
-                                </form>
+                                <a href="{{ route('logistic.linehaul-trips.index') }}"
+                                   class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-truck"></i>
+                                    View Truck Manifest
+                                </a>
                             </td>
                         </tr>
                     @empty
