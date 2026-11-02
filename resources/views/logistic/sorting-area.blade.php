@@ -328,7 +328,7 @@ $availableDeliveryRiders = $eligibleDeliveryRiders
 
                     </button>
 
-                    <div class="modal fade js-scan-tag-modal" id="scanModal{{ $shipment->id }}" tabindex="-1" data-tracking="{{ $shipment->tracking_number }}" data-destination="{{ $formatDeliveryAddress($shipment->delivery_address) }}">
+                    <div class="modal fade js-scan-tag-modal" id="scanModal{{ $shipment->id }}" tabindex="-1" data-tracking="{{ $shipment->tracking_number }}" data-destination="{{ $formatDeliveryAddress($shipment->delivery_address) }}" data-auto-zone="{{ $shipment->destinationHub?->barangay ?? $shipment->hub?->barangay ?? '' }}">
 
                       <div class="modal-dialog">
 
@@ -572,7 +572,10 @@ $availableDeliveryRiders = $eligibleDeliveryRiders
 
                         <div class="modal-content">
 
-                          <form action="{{ route('logistic.shipments.sort', $shipment) }}" method="POST">
+                          <form action="{{ route('logistic.shipments.sort', $shipment) }}" method="POST"
+  class="js-sort-package-form"
+  data-sort-zone="{{ $shipment->delivery_zone }}"
+  data-shipment-id="{{ $shipment->id }}">
 
                             @csrf
 
@@ -616,7 +619,15 @@ $availableDeliveryRiders = $eligibleDeliveryRiders
 
                                 <label class="form-label">Rack Number <span class="text-danger">*</span></label>
 
-                                <input type="text" name="rack_number" class="form-control" placeholder="e.g. R-01-A" required>
+                                <input type="text"
+  name="rack_number"
+  class="form-control js-auto-rack-number"
+  placeholder="Select a sorting area first"
+  readonly
+  tabindex="-1">
+<small class="text-muted">
+  Rack number is generated automatically from the delivery zone and sorting area.
+</small>
 
                               </div>
 

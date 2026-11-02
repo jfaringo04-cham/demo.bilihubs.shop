@@ -1177,13 +1177,22 @@ class LogisticController extends Controller
     {
         $logistic = Auth::user()->ownedLogistic;
 
-        if (!$logistic || (int) $shipment->logistic_id !== (int) $logistic->id) {
-            abort(403, 'Shipment does not belong to your logistics company.');
+        if (
+            !$logistic ||
+            (int) $shipment->logistic_id !== (int) $logistic->id
+        ) {
+            abort(
+                403,
+                'Shipment does not belong to your logistics company.'
+            );
         }
 
         $validated = $request->validate([
-            'sorting_area' => ['required', 'string', 'max:255'],
-            'rack_number' => ['required', 'string', 'max:50'],
+            'sorting_area' => [
+                'required',
+                'string',
+                'max:255',
+            ],
         ]);
 
         try {
@@ -1194,8 +1203,13 @@ class LogisticController extends Controller
                         ->lockForUpdate()
                         ->firstOrFail();
 
-                    if ((int) $lockedShipment->logistic_id !== (int) $logistic->id) {
-                        throw new \RuntimeException('Shipment ownership changed.');
+                    if (
+                        (int) $lockedShipment->logistic_id !==
+                        (int) $logistic->id
+                    ) {
+                        throw new \RuntimeException(
+                            'Shipment ownership changed.'
+                        );
                     }
 
                     \App\Services\HubTransferService::ensureAtDestinationForSorting(
@@ -1211,21 +1225,114 @@ class LogisticController extends Controller
                         );
                     }
 
+                    $sortingArea = trim(
+                        (string) $validated['sorting_area']
+                    );
+
+                    /*
+                     * Accept both:
+                     * Area A
+                     * Area A - Small Items
+                     *
+                     * Only A-E are valid physical sorting areas.
+                     */
+                    if (
+                        !preg_match(
+                            '/^Area\s+([A-E])(?:\b|\s*-)/i',
+                            $sortingArea,
+                            $areaMatch
+                        )
+                    ) {
+                        throw new \RuntimeException(
+                            'Invalid sorting area selected.'
+                        );
+                    }
+
+                    $areaCode = strtoupper($areaMatch[1]);
+
+                    /*
+                     * Delivery zone is already resolved during QR Scan & Tag.
+                     */
+                    $zone = trim(
+                        (string) $lockedShipment->delivery_zone
+                    );
+
+                    if ($zone === '') {
+                        throw new \RuntimeException(
+                            'Shipment has no delivery zone.'
+                        );
+                    }
+
+                    /*
+                     * Build a readable zone code.
+                     *
+                     * San Pablo Sur -> SPS
+                     * Santa Cruz    -> SC
+                     * Real          -> REAL
+                     * Bubukal       -> BUBU
+                     */
+                    $zoneWords = preg_split(
+                        '/[^A-Za-z0-9]+/',
+                        $zone,
+                        -1,
+                        PREG_SPLIT_NO_EMPTY
+                    );
+
+                    if (!$zoneWords) {
+                        throw new \RuntimeException(
+                            'Unable to generate rack code from delivery zone.'
+                        );
+                    }
+
+                    if (count($zoneWords) >= 2) {
+                        $zoneCode = '';
+
+                        foreach ($zoneWords as $word) {
+                            $zoneCode .= strtoupper(
+                                substr($word, 0, 1)
+                            );
+                        }
+                    } else {
+                        $zoneCode = strtoupper(
+                            substr($zoneWords[0], 0, 4)
+                        );
+                    }
+
+                    /*
+                     * Shipment ID is used as the unique rack-slot suffix.
+                     *
+                     * Examples:
+                     * SPS-A-0036
+                     * REAL-C-0042
+                     * BUBU-B-0051
+                     */
+                    $rackNumber = sprintf(
+                        '%s-%s-%04d',
+                        $zoneCode,
+                        $areaCode,
+                        (int) $lockedShipment->id
+                    );
+
                     $lockedShipment->update([
                         'sorting_status' => 'sorted',
-                        'sorting_area' => $validated['sorting_area'],
-                        'rack_number' => $validated['rack_number'],
+                        'sorting_area' => $sortingArea,
+                        'rack_number' => $rackNumber,
                         'sorted_at' => now(),
                     ]);
                 }
             );
         } catch (\RuntimeException $e) {
-            return back()->with('error', $e->getMessage());
+            return back()->with(
+                'error',
+                $e->getMessage()
+            );
         }
 
-        return back()->with('success', 'Shipment sorted successfully.');
+        return back()->with(
+            'success',
+            'Shipment sorted successfully. Rack number was assigned automatically.'
+        );
     }
-
     public function stageShipment(Shipment $shipment)
     {
         $logistic = Auth::user()->ownedLogistic;
@@ -1725,20 +1832,31 @@ class LogisticController extends Controller
     {
         $logistic = Auth::user()->ownedLogistic;
 
-        if (!$logistic || (int) $shipment->logistic_id !== (int) $logistic->id) {
-            return response()->json(['error' => 'Shipment not found'], 404);
+        if (
+            !$logistic ||
+            (int) $shipment->logistic_id !== (int) $logistic->id
+        ) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Shipment not found.',
+            ], 404);
         }
 
         try {
-            $zone = \Illuminate\Support\Facades\DB::transaction(
+            $result = \Illuminate\Support\Facades\DB::transaction(
                 function () use ($shipment, $logistic) {
                     $lockedShipment = Shipment::query()
                         ->whereKey($shipment->id)
                         ->lockForUpdate()
                         ->firstOrFail();
 
-                    if ((int) $lockedShipment->logistic_id !== (int) $logistic->id) {
-                        throw new \RuntimeException('Shipment ownership changed.');
+                    if (
+                        (int) $lockedShipment->logistic_id !==
+                        (int) $logistic->id
+                    ) {
+                        throw new \RuntimeException(
+                            'Shipment ownership changed.'
+                        );
                     }
 
                     if (
@@ -1752,46 +1870,51 @@ class LogisticController extends Controller
 
                     if ($lockedShipment->rider_id !== null) {
                         throw new \RuntimeException(
-                            'Shipment still has an assigned rider.'
+                            'Shipment still has an assigned delivery rider.'
                         );
                     }
 
-                    $deliveryAddress = strtolower(
-                        $lockedShipment->delivery_address ?? ''
-                    );
+                    $lockedShipment->loadMissing([
+                        'hub',
+                        'originHub',
+                        'destinationHub',
+                    ]);
 
-                    $zone = 'Zone B - Luzon';
+                    /*
+                     * Delivery zone follows the resolved destination hub.
+                     * Hub/barangay routing is the source of truth.
+                     */
+                    $destinationHub =
+                        $lockedShipment->destinationHub
+                        ?? $lockedShipment->hub;
+
+                    if (!$destinationHub) {
+                        throw new \RuntimeException(
+                            'Shipment has no resolved destination hub.'
+                        );
+                    }
 
                     if (
-                        str_contains($deliveryAddress, 'manila') ||
-                        str_contains($deliveryAddress, 'makati') ||
-                        str_contains($deliveryAddress, 'pasig') ||
-                        str_contains($deliveryAddress, 'taguig') ||
-                        str_contains($deliveryAddress, 'ncr')
+                        (int) $destinationHub->logistic_id !==
+                        (int) $logistic->id
                     ) {
-                        $zone = 'Zone A - Metro Manila';
-                    } elseif (
-                        str_contains($deliveryAddress, 'laguna') ||
-                        str_contains($deliveryAddress, 'cavite') ||
-                        str_contains($deliveryAddress, 'batangas') ||
-                        str_contains($deliveryAddress, 'pampanga') ||
-                        str_contains($deliveryAddress, 'bulacan') ||
-                        str_contains($deliveryAddress, 'rizal')
-                    ) {
-                        $zone = 'Zone A';
-                    } elseif (
-                        str_contains($deliveryAddress, 'cebu') ||
-                        str_contains($deliveryAddress, 'bohol') ||
-                        str_contains($deliveryAddress, 'iloilo') ||
-                        str_contains($deliveryAddress, 'bacolod')
-                    ) {
-                        $zone = 'Zone C - Visayas';
-                    } elseif (
-                        str_contains($deliveryAddress, 'davao') ||
-                        str_contains($deliveryAddress, 'cagayan de oro') ||
-                        str_contains($deliveryAddress, 'bukidnon')
-                    ) {
-                        $zone = 'Zone D - Mindanao';
+                        throw new \RuntimeException(
+                            'Shipment destination hub does not belong to this logistics company.'
+                        );
+                    }
+
+                    if ($destinationHub->status !== 'active') {
+                        throw new \RuntimeException(
+                            'Shipment destination hub is inactive.'
+                        );
+                    }
+
+                    $zone = trim((string) $destinationHub->barangay);
+
+                    if ($zone === '') {
+                        throw new \RuntimeException(
+                            'Destination hub has no barangay coverage configured.'
+                        );
                     }
 
                     $lockedShipment->update([
@@ -1800,21 +1923,28 @@ class LogisticController extends Controller
                         'delivery_zone' => $zone,
                     ]);
 
-                    return $zone;
+                    return [
+                        'zone' => $zone,
+                        'destination_hub_id' => $destinationHub->id,
+                        'destination_hub_name' => $destinationHub->name,
+                    ];
                 }
             );
         } catch (\RuntimeException $e) {
             return response()->json([
+                'success' => false,
                 'error' => $e->getMessage(),
             ], 422);
         }
 
         return response()->json([
             'success' => true,
-            'zone' => $zone,
+            'zone' => $result['zone'],
+            'destination_hub_id' => $result['destination_hub_id'],
+            'destination_hub_name' => $result['destination_hub_name'],
+            'message' => 'Delivery zone detected automatically.',
         ]);
     }
-
     public function showShipment(Shipment $shipment)
     {
         $logistic = Auth::user()->ownedLogistic;
