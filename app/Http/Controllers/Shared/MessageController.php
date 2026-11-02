@@ -10,6 +10,38 @@ use Illuminate\Support\Facades\Auth;
 
 class MessageController extends Controller
 {
+    private function authorizeConversation(User $user): void
+    {
+        $currentUser = Auth::user();
+
+        abort_if(!$currentUser, 403);
+
+        abort_if(
+            (int) $currentUser->id === (int) $user->id,
+            403,
+            'You cannot message yourself.'
+        );
+
+        if ($currentUser->isCustomer() && !$user->isSeller()) {
+            abort(403, 'Buyers can only message sellers.');
+        }
+    }
+
+    private function conversationLinkFor(User $recipient, User $sender): string
+    {
+        $prefix = match (true) {
+            $recipient->isSeller() => 'seller',
+            $recipient->isRider() => 'rider',
+            $recipient->isLogisticOwner() => 'logistic',
+            $recipient->isCustomer() => 'buyer',
+            default => null,
+        };
+
+        return $prefix
+            ? route($prefix . '.messages.show', $sender)
+            : '';
+    }
+
     public function index()
     {
         $userId = Auth::id();
@@ -46,6 +78,7 @@ class MessageController extends Controller
 
     public function show(User $user)
     {
+        $this->authorizeConversation($user);
         $userId = Auth::id();
 
         $messages = Message::where(function ($q) use ($userId, $user) {
@@ -68,6 +101,7 @@ class MessageController extends Controller
 
     public function poll(User $user)
     {
+        $this->authorizeConversation($user);
         $userId = Auth::id();
 
         Message::where('sender_id', $user->id)
@@ -107,6 +141,7 @@ class MessageController extends Controller
 
     public function reply(Request $request, User $user)
     {
+        $this->authorizeConversation($user);
         $request->validate([
             'message' => ['required', 'string', 'max:5000'],
         ]);
@@ -122,7 +157,7 @@ class MessageController extends Controller
             'title' => 'New Message',
             'message' => \Illuminate\Support\Str::limit($request->message, 120),
             'type' => 'message',
-            'link' => '',
+            'link' => $this->conversationLinkFor($user, Auth::user()),
         ]);
 
         if ($request->expectsJson()) {

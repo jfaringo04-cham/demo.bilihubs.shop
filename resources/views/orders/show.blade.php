@@ -233,11 +233,41 @@
       </form>
       @endif
 
+
+      {{-- MESSAGE_SELLER_FROM_ORDER --}}
+      @if($order->sellerOrders->isNotEmpty())
+      <div class="card mb-4">
+        <div class="card-body">
+          <h5 class="mb-3">
+            <i class="bi bi-chat-dots-fill me-1"></i>
+            Contact Seller
+          </h5>
+
+          <div class="d-flex flex-wrap gap-2">
+            @foreach($order->sellerOrders as $contactSellerOrder)
+              @php
+                $sellerOwner = $contactSellerOrder->seller?->owner;
+              @endphp
+
+              @if($sellerOwner && $sellerOwner->id !== auth()->id())
+                <a
+                  href="{{ route('buyer.messages.show', $sellerOwner) }}"
+                  class="btn btn-outline-primary btn-sm"
+                >
+                  <i class="bi bi-chat-dots me-1"></i>
+                  Message {{ $contactSellerOrder->seller?->name ?? $sellerOwner->name }}
+                </a>
+              @endif
+            @endforeach
+          </div>
+        </div>
+      </div>
+      @endif
       @foreach($order->sellerOrders as $sellerOrder)
       @if($sellerOrder->status === 'delivered')
       <div class="border rounded p-3 mb-3">
         <h6 class="mb-2">
-          Return Request — {{ $sellerOrder->seller?->name ?? 'Seller' }}
+          Return Request &mdash; {{ $sellerOrder->seller?->name ?? 'Seller' }}
         </h6>
 
         @if($sellerOrder->return_status === 'none')
@@ -278,7 +308,7 @@
       @foreach($order->sellerOrders as $sellerOrder)
       @if($sellerOrder->status === 'delivery_failed')
       <div class="alert alert-warning mt-3">
-        <strong>Delivery Failed — Seller Order #{{ $sellerOrder->id }}</strong>
+        <strong>Delivery Failed &mdash; Seller Order #{{ $sellerOrder->id }}</strong>
 
         @if(($sellerOrder->reschedule_status ?? 'none') === 'none')
         <p class="mt-2 mb-2">
