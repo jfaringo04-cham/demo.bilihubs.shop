@@ -23,6 +23,9 @@ class _ParcelInformationState extends State<ParcelInformation> {
   bool _isRefreshing = false;
   bool _isProcessing = false;
 
+  bool _isLoadingRiders = false;
+  bool _isAssigningRider = false;
+
   String? _errorMessage;
 
   @override
@@ -309,6 +312,25 @@ class _ParcelInformationState extends State<ParcelInformation> {
 
   bool get _isStaged {
     return _sortingStatus == 'staged' || _parcel.isStaged;
+  }
+
+  bool get _hasFinalMileRider {
+    if (_parcel.riderName.trim().isNotEmpty) {
+      return true;
+    }
+
+    final int riderId =
+        int.tryParse(_details['rider_id']?.toString() ?? '') ?? 0;
+
+    return riderId > 0;
+  }
+
+  bool get _canAssignFinalMileRider {
+    return !_isFinished &&
+        _isStaged &&
+        !_requiresLinehaul &&
+        _parcel.isAtDestinationHub &&
+        !_hasFinalMileRider;
   }
 
   bool get _requiresLinehaul {
@@ -625,9 +647,7 @@ class _ParcelInformationState extends State<ParcelInformation> {
                       icon: Icons.location_on_outlined,
                     ),
                   ),
-
                   const SizedBox(height: 14),
-
                   DropdownButtonFormField<String>(
                     initialValue: deliveryType,
                     decoration: LogisticsStyle.inputDecoration(
@@ -722,9 +742,7 @@ class _ParcelInformationState extends State<ParcelInformation> {
                   icon: Icons.warehouse_outlined,
                 ),
               ),
-
               const SizedBox(height: 14),
-
               TextField(
                 controller: rackController,
                 decoration: LogisticsStyle.inputDecoration(
@@ -767,6 +785,589 @@ class _ParcelInformationState extends State<ParcelInformation> {
     rackController.dispose();
 
     return result;
+  }
+
+  // ============================================================
+  // FINAL-MILE RIDER ASSIGNMENT
+  // ============================================================
+
+  Future<void> _showAvailableRiders() async {
+    if (_isLoadingRiders || _isAssigningRider || !_canAssignFinalMileRider) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingRiders = true;
+    });
+
+    try {
+      final Map<String, dynamic> result =
+          await ApiService.getLogisticsAvailableRiders(shipmentId: _parcel.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoadingRiders = false;
+      });
+
+      if (result['success'] != true) {
+        final String message = result['message']?.toString().trim() ?? '';
+
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: LogisticsColors.danger,
+              content: Text(
+                message.isNotEmpty
+                    ? message
+                    : 'Unable to load available riders.',
+              ),
+            ),
+          );
+
+        return;
+      }
+
+      final List<Map<String, dynamic>> riders = _extractAvailableRiders(result);
+
+      if (riders.isEmpty) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Text(
+                'No eligible online riders are available '
+                'for this destination right now.',
+              ),
+            ),
+          );
+
+        return;
+      }
+
+      await _showRiderPicker(riders);
+    } catch (error) {
+      debugPrint('Load available riders error: $error');
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoadingRiders = false;
+      });
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: LogisticsColors.danger,
+            content: Text(
+              'Unable to load available riders. '
+              'Please try again.',
+            ),
+          ),
+        );
+    }
+  }
+
+  List<Map<String, dynamic>> _extractAvailableRiders(
+    Map<String, dynamic> result,
+  ) {
+    dynamic raw = result['riders'] ?? result['data'];
+
+    if (raw is Map) {
+      raw =
+          raw['riders'] ??
+          raw['available_riders'] ??
+          raw['eligible_riders'] ??
+          raw['data'];
+    }
+
+    if (raw is! List) {
+      return <Map<String, dynamic>>[];
+    }
+
+    return raw
+        .whereType<Map>()
+        .map((Map item) => Map<String, dynamic>.from(item))
+        .where((Map<String, dynamic> rider) {
+          return _riderId(rider) > 0;
+        })
+        .toList();
+  }
+
+  Future<void> _showRiderPicker(List<Map<String, dynamic>> riders) async {
+    int? selectedRiderId;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext sheetContext) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setSheetState) {
+            return Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.82,
+              ),
+              decoration: const BoxDecoration(
+                color: LogisticsColors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 10),
+                    Container(
+                      height: 4,
+                      width: 44,
+                      decoration: BoxDecoration(
+                        color: LogisticsColors.border,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(18, 16, 18, 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Available Riders',
+                          style: LogisticsStyle.sectionTitle,
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '${riders.length} eligible rider'
+                          '${riders.length == 1 ? '' : 's'} '
+                          'for final-mile delivery',
+                          style: LogisticsStyle.small,
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    Flexible(
+                      child: ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                        itemCount: riders.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 10),
+                        itemBuilder: (BuildContext context, int index) {
+                          final Map<String, dynamic> rider = riders[index];
+
+                          final int riderId = _riderId(rider);
+
+                          final bool selected = selectedRiderId == riderId;
+
+                          return _riderSelectionCard(
+                            rider: rider,
+                            selected: selected,
+                            onTap: () {
+                              setSheetState(() {
+                                selectedRiderId = riderId;
+                              });
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: _isAssigningRider
+                                  ? null
+                                  : () {
+                                      Navigator.pop(sheetContext);
+                                    },
+                              child: const Text('Cancel'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            flex: 2,
+                            child: ElevatedButton.icon(
+                              onPressed:
+                                  selectedRiderId == null || _isAssigningRider
+                                  ? null
+                                  : () async {
+                                      final Map<String, dynamic> selected =
+                                          riders.firstWhere(
+                                            (Map<String, dynamic> rider) =>
+                                                _riderId(rider) ==
+                                                selectedRiderId,
+                                          );
+
+                                      final bool? confirmed =
+                                          await _confirmRiderAssignment(
+                                            selected,
+                                          );
+
+                                      if (confirmed != true || !mounted) {
+                                        return;
+                                      }
+
+                                      if (sheetContext.mounted) {
+                                        Navigator.pop(sheetContext);
+                                      }
+
+                                      await _assignFinalMileRider(selected);
+                                    },
+                              icon: const Icon(Icons.delivery_dining_rounded),
+                              label: const Text('Assign Rider'),
+                              style: LogisticsStyle.primaryButton,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _riderSelectionCard({
+    required Map<String, dynamic> rider,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final String name = _riderName(rider);
+
+    final String availability = _riderAvailability(rider);
+
+    final String distance = _riderDistance(rider);
+
+    final int currentLoad =
+        int.tryParse(rider['current_load']?.toString() ?? '') ?? 0;
+
+    final int maxCapacity =
+        int.tryParse(rider['max_capacity']?.toString() ?? '') ?? 0;
+
+    final String hubName = _display(
+      rider['hub_name'] ??
+          (rider['hub'] is Map ? (rider['hub'] as Map)['name'] : null),
+      fallback: _parcel.destinationHubName.trim().isNotEmpty
+          ? _parcel.destinationHubName
+          : 'Destination hub',
+    );
+
+    final bool online =
+        availability == 'online' ||
+        availability == 'available' ||
+        availability == 'active';
+
+    return Material(
+      color: selected
+          ? LogisticsColors.lightPurple
+          : LogisticsColors.background,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected
+                  ? LogisticsColors.primary
+                  : LogisticsColors.border,
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: 42,
+                width: 42,
+                decoration: BoxDecoration(
+                  color: online
+                      ? LogisticsColors.lightGreen
+                      : LogisticsColors.lightPurple,
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.person_rounded,
+                  color: online
+                      ? LogisticsColors.success
+                      : LogisticsColors.primary,
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(name, style: LogisticsStyle.cardTitle),
+                        ),
+                        if (selected)
+                          const Icon(
+                            Icons.check_circle_rounded,
+                            color: LogisticsColors.primary,
+                            size: 20,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Container(
+                          height: 8,
+                          width: 8,
+                          decoration: BoxDecoration(
+                            color: online
+                                ? LogisticsColors.success
+                                : LogisticsColors.textLight,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        Text(
+                          _formatStatus(availability),
+                          style: LogisticsStyle.small,
+                        ),
+                        if (distance.isNotEmpty)
+                          Text('• $distance away', style: LogisticsStyle.small),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      maxCapacity > 0
+                          ? 'Load: $currentLoad / $maxCapacity'
+                          : 'Load: $currentLoad',
+                      style: LogisticsStyle.small,
+                    ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.location_city_outlined,
+                          size: 15,
+                          color: LogisticsColors.success,
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            '$hubName ✓',
+                            style: LogisticsStyle.small,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<bool?> _confirmRiderAssignment(Map<String, dynamic> rider) {
+    final String name = _riderName(rider);
+
+    return showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Assign Final-Mile Rider'),
+          content: Text(
+            'Assign $name to parcel '
+            '${_display(_parcel.trackingNumber)} '
+            'for final-mile delivery?',
+            style: LogisticsStyle.small,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              style: LogisticsStyle.primaryButton,
+              child: const Text('Confirm'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _assignFinalMileRider(Map<String, dynamic> rider) async {
+    if (_isAssigningRider) {
+      return;
+    }
+
+    final int riderId = _riderId(rider);
+
+    if (riderId <= 0) {
+      return;
+    }
+
+    setState(() {
+      _isAssigningRider = true;
+    });
+
+    try {
+      final Map<String, dynamic> result =
+          await ApiService.assignLogisticsFinalMileRider(
+            shipmentId: _parcel.id,
+            riderId: riderId,
+          );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isAssigningRider = false;
+      });
+
+      final String message = result['message']?.toString().trim() ?? '';
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: result['success'] == true
+                ? LogisticsColors.success
+                : LogisticsColors.danger,
+            content: Text(
+              message.isNotEmpty
+                  ? message
+                  : result['success'] == true
+                  ? '${_riderName(rider)} assigned successfully.'
+                  : 'Unable to assign rider.',
+            ),
+          ),
+        );
+
+      if (result['success'] == true) {
+        await _loadDetails(showLoading: false);
+      }
+    } catch (error) {
+      debugPrint('Assign final-mile rider error: $error');
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isAssigningRider = false;
+      });
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: LogisticsColors.danger,
+            content: Text(
+              'Unable to assign rider. '
+              'Please try again.',
+            ),
+          ),
+        );
+    }
+  }
+
+  int _riderId(Map<String, dynamic> rider) {
+    return int.tryParse(
+          (rider['id'] ?? rider['rider_id'] ?? rider['user_id'])?.toString() ??
+              '',
+        ) ??
+        0;
+  }
+
+  String _riderName(Map<String, dynamic> rider) {
+    final dynamic user = rider['user'];
+
+    final String direct = _display(
+      rider['name'] ?? rider['full_name'] ?? rider['rider_name'],
+      fallback: '',
+    );
+
+    if (direct.isNotEmpty) {
+      return direct;
+    }
+
+    if (user is Map) {
+      final String userName = _display(
+        user['name'] ?? user['full_name'],
+        fallback: '',
+      );
+
+      if (userName.isNotEmpty) {
+        return userName;
+      }
+    }
+
+    final String firstName = _display(
+      rider['first_name'] ?? (user is Map ? user['first_name'] : null),
+      fallback: '',
+    );
+
+    final String lastName = _display(
+      rider['last_name'] ?? (user is Map ? user['last_name'] : null),
+      fallback: '',
+    );
+
+    final String combined = '$firstName $lastName'.trim();
+
+    return combined.isNotEmpty ? combined : 'Rider #${_riderId(rider)}';
+  }
+
+  String _riderAvailability(Map<String, dynamic> rider) {
+    return _display(
+      rider['availability_status'] ?? rider['status'] ?? rider['online_status'],
+      fallback: 'available',
+    ).toLowerCase();
+  }
+
+  String _riderDistance(Map<String, dynamic> rider) {
+    final dynamic rawDistance =
+        rider['distance_km'] ??
+        rider['distance'] ??
+        rider['estimated_distance_km'];
+
+    final double? value = double.tryParse(rawDistance?.toString() ?? '');
+
+    if (value == null) {
+      return '';
+    }
+
+    return '${value.toStringAsFixed(1)} km';
   }
 
   // ============================================================
@@ -1551,11 +2152,21 @@ class _ParcelInformationState extends State<ParcelInformation> {
 
       icon = Icons.multiple_stop_rounded;
     } else if (_parcel.isAtDestinationHub) {
-      title = 'Ready for Final-Mile Assignment';
+      if (_hasFinalMileRider) {
+        title = 'Final-Mile Rider Assigned';
 
-      description =
-          'Parcel has reached its destination hub '
-          'and can proceed to final-mile delivery.';
+        description =
+            '${_display(_parcel.riderName, fallback: 'A rider')} '
+            'is assigned to this parcel for final-mile delivery.';
+      } else {
+        title = 'Ready for Final-Mile Assignment';
+
+        description =
+            'Parcel has reached its destination hub. '
+            'Choose an eligible online rider near the '
+            'delivery area for final-mile delivery.';
+      }
+
       icon = Icons.delivery_dining_rounded;
     } else {
       title = 'Parcel Staged';
@@ -1564,39 +2175,111 @@ class _ParcelInformationState extends State<ParcelInformation> {
           'Parcel is fully sorted and staged. '
           'The backend routing workflow will '
           'determine its next assignment.';
+
       icon = Icons.inventory_2_outlined;
     }
 
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: LogisticsStyle.card,
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 44,
-            width: 44,
-            decoration: BoxDecoration(
-              color: LogisticsColors.lightGreen,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: LogisticsColors.success),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: 44,
+                width: 44,
+                decoration: BoxDecoration(
+                  color: LogisticsColors.lightGreen,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: LogisticsColors.success),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: LogisticsStyle.cardTitle),
+                    const SizedBox(height: 4),
+                    Text(description, style: LogisticsStyle.small),
+                  ],
+                ),
+              ),
+            ],
           ),
 
-          const SizedBox(width: 11),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: LogisticsStyle.cardTitle),
-
-                const SizedBox(height: 4),
-
-                Text(description, style: LogisticsStyle.small),
-              ],
+          if (_parcel.isAtDestinationHub && _hasFinalMileRider) ...[
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: LogisticsColors.background,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: LogisticsColors.border),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.person_pin_circle_outlined,
+                    color: LogisticsColors.primary,
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Assigned Rider',
+                          style: LogisticsStyle.small,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _display(
+                            _parcel.riderName,
+                            fallback: 'Assigned rider',
+                          ),
+                          style: LogisticsStyle.cardTitle,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
+          ],
+
+          if (_canAssignFinalMileRider) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                onPressed: _isLoadingRiders || _isAssigningRider
+                    ? null
+                    : _showAvailableRiders,
+                icon: _isLoadingRiders
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.person_search_rounded),
+                label: Text(
+                  _isLoadingRiders
+                      ? 'Finding Riders...'
+                      : 'Assign Final-Mile Rider',
+                ),
+                style: LogisticsStyle.primaryButton,
+              ),
+            ),
+          ],
         ],
       ),
     );

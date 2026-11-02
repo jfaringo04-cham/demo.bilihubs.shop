@@ -7,8 +7,9 @@ import '../../styles/rider_style.dart';
 
 class RiderScanner extends StatefulWidget {
   final ParcelModel? scannedParcel;
+  final VoidCallback? onOpenDeliveries;
 
-  const RiderScanner({super.key, this.scannedParcel});
+  const RiderScanner({super.key, this.scannedParcel, this.onOpenDeliveries});
 
   @override
   State<RiderScanner> createState() => _RiderScannerState();
@@ -303,6 +304,7 @@ class _RiderScannerState extends State<RiderScanner> {
 
         setState(() {
           _isProcessingScan = false;
+
           _foundParcel = null;
 
           _scanError = message.isNotEmpty
@@ -796,6 +798,27 @@ class _RiderScannerState extends State<RiderScanner> {
   }
 
   // ============================================================
+  // OPEN MY DELIVERIES
+  // ============================================================
+
+  void _openMyDeliveries() {
+    final ParcelModel? parcel = _foundParcel;
+
+    if (!_hasScanned || parcel == null) {
+      return;
+    }
+
+    final VoidCallback? onOpenDeliveries = widget.onOpenDeliveries;
+
+    if (onOpenDeliveries != null) {
+      onOpenDeliveries();
+      return;
+    }
+
+    Navigator.of(context).maybePop(parcel);
+  }
+
+  // ============================================================
   // BOTTOM PANEL
   // ============================================================
 
@@ -858,9 +881,7 @@ class _RiderScannerState extends State<RiderScanner> {
             borderRadius: BorderRadius.circular(10),
           ),
         ),
-
         const SizedBox(height: 14),
-
         Container(
           height: 48,
           width: 48,
@@ -878,16 +899,12 @@ class _RiderScannerState extends State<RiderScanner> {
             size: 27,
           ),
         ),
-
         const SizedBox(height: 9),
-
         Text(
           _scanError != null ? 'Unable to Scan' : 'Ready to Scan',
           style: RiderStyle.cardTitle,
         ),
-
         const SizedBox(height: 3),
-
         Text(
           _scanError ??
               'Point your camera at the '
@@ -895,10 +912,8 @@ class _RiderScannerState extends State<RiderScanner> {
           textAlign: TextAlign.center,
           style: RiderStyle.small,
         ),
-
         if (_scannedCode != null) ...[
           const SizedBox(height: 10),
-
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -921,10 +936,8 @@ class _RiderScannerState extends State<RiderScanner> {
             ),
           ),
         ],
-
         if (_scanError != null) ...[
           const SizedBox(height: 12),
-
           SizedBox(
             width: double.infinity,
             height: 48,
@@ -967,9 +980,7 @@ class _RiderScannerState extends State<RiderScanner> {
             ),
           ),
         ),
-
         const SizedBox(height: 14),
-
         const Row(
           children: [
             Icon(
@@ -997,7 +1008,6 @@ class _RiderScannerState extends State<RiderScanner> {
 
         if (_scanMessage != null) ...[
           const SizedBox(height: 12),
-
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(11),
@@ -1040,11 +1050,9 @@ class _RiderScannerState extends State<RiderScanner> {
 
         if (finalMile) ...[
           _infoRow('Customer', _displayValue(parcel.customerName)),
-
           _infoRow('Delivery Address', _displayValue(parcel.deliveryAddress)),
         ] else if (!linehaul) ...[
           _infoRow('Customer', _displayValue(parcel.customerName)),
-
           _infoRow('Address', _displayValue(parcel.deliveryAddress)),
         ],
 
@@ -1055,7 +1063,6 @@ class _RiderScannerState extends State<RiderScanner> {
 
         if (linehaul) ...[
           const SizedBox(height: 2),
-
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
@@ -1088,19 +1095,39 @@ class _RiderScannerState extends State<RiderScanner> {
 
         const SizedBox(height: 12),
 
+        // Only appears after an actual successful QR scan.
+        if (_hasScanned) ...[
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: _openMyDeliveries,
+              style: RiderStyle.primaryButton,
+              icon: const Icon(Icons.add_task_rounded, color: Colors.white),
+              label: const Text(
+                'Add to My Deliveries',
+                style: RiderStyle.buttonText,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+
         SizedBox(
           width: double.infinity,
           height: 50,
-          child: ElevatedButton.icon(
+          child: OutlinedButton.icon(
             onPressed: _resetScanner,
-            style: RiderStyle.primaryButton,
             icon: const Icon(
               Icons.qr_code_scanner_rounded,
-              color: Colors.white,
+              color: RiderColors.primary,
             ),
             label: const Text(
               'Scan Another Parcel',
-              style: RiderStyle.buttonText,
+              style: TextStyle(
+                color: RiderColors.primary,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ),

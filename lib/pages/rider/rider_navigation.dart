@@ -17,13 +17,15 @@ class RiderNavigation extends StatefulWidget {
 
 class _RiderNavigationState extends State<RiderNavigation> {
   static const int _homeIndex = 0;
+  static const int _deliveriesIndex = 1;
   static const int _profileIndex = 4;
 
   static const int _firstTabIndex = _homeIndex;
-
   static const int _lastTabIndex = _profileIndex;
 
   int _currentIndex = _homeIndex;
+
+  int _deliveriesRefreshVersion = 0;
 
   final List<BottomNavItem> _items = const <BottomNavItem>[
     BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
@@ -44,8 +46,8 @@ class _RiderNavigationState extends State<RiderNavigation> {
 
     _pages = <Widget>[
       RiderHome(onNavigateTab: _changeTab),
-      const RiderDeliveries(),
-      const RiderScanner(),
+      RiderDeliveries(key: ValueKey<int>(_deliveriesRefreshVersion)),
+      RiderScanner(onOpenDeliveries: _openDeliveriesAfterScan),
       const Earnings(),
       const RiderProfile(),
     ];
@@ -66,6 +68,26 @@ class _RiderNavigationState extends State<RiderNavigation> {
 
     setState(() {
       _currentIndex = index;
+    });
+  }
+
+  // ============================================================
+  // OPEN DELIVERIES AFTER QR SCAN
+  // ============================================================
+
+  void _openDeliveriesAfterScan() {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _deliveriesRefreshVersion++;
+
+      _pages[_deliveriesIndex] = RiderDeliveries(
+        key: ValueKey<int>(_deliveriesRefreshVersion),
+      );
+
+      _currentIndex = _deliveriesIndex;
     });
   }
 

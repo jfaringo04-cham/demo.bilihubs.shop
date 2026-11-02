@@ -2087,6 +2087,199 @@ class ApiService {
   }
 
   // ============================================================
+  // LOGISTICS AVAILABLE FINAL-MILE RIDERS
+  // GET /api/logistic/shipments/{shipment}/available-riders
+  // ============================================================
+
+  static Future<Map<String, dynamic>> getLogisticsAvailableRiders({
+    required int shipmentId,
+  }) async {
+    try {
+      if (shipmentId <= 0) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid shipment ID.',
+        };
+      }
+
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
+      }
+
+      final http.Response response = await http.get(
+        Uri.parse(
+          '$baseUrl/logistic/shipments/'
+          '$shipmentId/available-riders',
+        ),
+        headers: _authHeaders(token),
+      );
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200) {
+        final List<dynamic> riders = _extractList(
+          decoded,
+          keys: const <String>[
+            'data',
+            'riders',
+            'available_riders',
+            'eligible_riders',
+          ],
+        );
+
+        return {
+          'success': true,
+          'status_code': 200,
+          'data': riders,
+          'riders': riders,
+          'meta': _extractMeta(decoded),
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage:
+            'This Logistics account cannot view '
+            'available riders for this shipment.',
+        notFoundMessage:
+            'Available-riders API is not available yet. '
+            'Please add the Laravel endpoint for eligible '
+            'final-mile riders.',
+        fallback: 'Unable to load available final-mile riders.',
+      );
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Unable to load available final-mile riders: $e',
+      };
+    }
+  }
+
+  // ============================================================
+  // LOGISTICS ASSIGN FINAL-MILE RIDER
+  // POST /api/logistic/shipments/{shipment}/assign
+  // ============================================================
+
+  static Future<Map<String, dynamic>> assignLogisticsFinalMileRider({
+    required int shipmentId,
+    required int riderId,
+  }) async {
+    try {
+      if (shipmentId <= 0) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Invalid shipment ID.',
+        };
+      }
+
+      if (riderId <= 0) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'Please select a valid rider.',
+        };
+      }
+
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found.',
+        };
+      }
+
+      final http.Response response = await http.post(
+        Uri.parse(
+          '$baseUrl/logistic/shipments/'
+          '$shipmentId/assign',
+        ),
+        headers: _authHeaders(token, json: true),
+        body: jsonEncode(<String, dynamic>{'rider_id': riderId}),
+      );
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final Map<String, dynamic> root = decoded is Map<String, dynamic>
+            ? _extractMapRoot(decoded)
+            : <String, dynamic>{};
+
+        Map<String, dynamic> shipment = _extractMapByKeys(root, const <String>[
+          'shipment',
+          'parcel',
+          'order',
+        ]);
+
+        if (shipment.isEmpty &&
+            (root.containsKey('tracking_number') ||
+                root.containsKey('shipment_id') ||
+                root.containsKey('id'))) {
+          shipment = root;
+        }
+
+        final Map<String, dynamic> rider = _extractMapByKeys(
+          root,
+          const <String>['rider', 'assigned_rider', 'delivery_rider'],
+        );
+
+        return {
+          'success': true,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            decoded,
+            fallback: 'Final-mile rider assigned successfully.',
+          ),
+          'data': root,
+          'shipment': shipment,
+          'rider': rider,
+        };
+      }
+
+      if (response.statusCode == 422) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': _getMessage(
+            decoded,
+            fallback:
+                'This rider cannot be assigned '
+                'to the selected shipment.',
+          ),
+          'errors': decoded is Map<String, dynamic> ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage:
+            'This Logistics account cannot assign '
+            'a rider to this shipment.',
+        notFoundMessage:
+            'Final-mile rider assignment API was not found. '
+            'Please verify the latest Laravel routes.',
+        fallback: 'Unable to assign final-mile rider.',
+      );
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Unable to assign final-mile rider: $e',
+      };
+    }
+  }
+
+  // ============================================================
   // GET PRODUCTS
   // ============================================================
 

@@ -101,10 +101,8 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
         }
       }
 
-      // Latest activity / assignment first.
       parsedDeliveries.sort((ParcelModel a, ParcelModel b) {
         final DateTime? aDate = _shipmentActivityDate(a);
-
         final DateTime? bDate = _shipmentActivityDate(b);
 
         if (aDate != null && bDate != null) {
@@ -124,7 +122,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
       setState(() {
         _deliveries = parsedDeliveries;
-
         _isLoading = false;
         _isRefreshing = false;
         _errorMessage = null;
@@ -609,7 +606,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
     }
 
     final String linehaul = parcel.normalizedLinehaulStatus;
-
     final String routing = parcel.normalizedRoutingStatus;
 
     if (linehaul == 'awaiting_assignment') {
@@ -1097,11 +1093,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
               value: _displayValue(parcel.customerPhone),
             ),
 
-            _infoRow(
-              icon: Icons.location_on_outlined,
-              label: 'Delivery Address',
-              value: _displayValue(parcel.deliveryAddress),
-            ),
+            _deliveryAddressCard(parcel.deliveryAddress),
           ],
 
           if (formattedDate.isNotEmpty)
@@ -1350,6 +1342,72 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   }
 
   // ============================================================
+  // DELIVERY ADDRESS
+  // ============================================================
+
+  Widget _deliveryAddressCard(String address) {
+    final String formattedAddress = _cleanAddress(address);
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: RiderColors.background,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: RiderColors.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            height: 40,
+            width: 40,
+            decoration: BoxDecoration(
+              color: RiderColors.lightPurple,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(
+              Icons.location_on_rounded,
+              color: RiderColors.primary,
+              size: 21,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'DELIVERY ADDRESS',
+                  style: TextStyle(
+                    color: RiderColors.textGrey,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  formattedAddress,
+                  maxLines: 5,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: RiderColors.textDark,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    height: 1.45,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
   // INFO ROW
   // ============================================================
 
@@ -1562,7 +1620,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                   _detailTile(
                     'Delivery Address',
-                    _displayValue(parcel.deliveryAddress),
+                    _cleanAddress(parcel.deliveryAddress),
                   ),
 
                   if (parcel.riderName.trim().isNotEmpty)
@@ -2001,6 +2059,26 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   // ============================================================
   // HELPERS
   // ============================================================
+
+  String _cleanAddress(String value) {
+    String cleaned = value.trim();
+
+    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
+      return 'Delivery address not available';
+    }
+
+    cleaned = cleaned.replaceAll(RegExp(r'[\r\n]+'), ', ');
+
+    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ');
+
+    cleaned = cleaned.replaceAll(RegExp(r',\s*,+'), ',');
+
+    cleaned = cleaned.replaceAll(RegExp(r'\s*,\s*'), ', ');
+
+    cleaned = cleaned.replaceAll(RegExp(r'^,\s*|\s*,$'), '');
+
+    return cleaned;
+  }
 
   String _displayValue(String value, {String fallback = 'Not available'}) {
     final String cleaned = value.trim();
