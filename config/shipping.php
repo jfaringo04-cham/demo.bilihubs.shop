@@ -8,7 +8,7 @@ return [
     |
     | Base fee: PHP 50
     | First 3 km: included
-    | Additional distance: PHP 10 per started kilometer
+    | Additional distance: PHP 3 per started kilometer
     |
     */
 
@@ -16,5 +16,5 @@ return [
 
     'included_distance_km' => 3,
 
-    'additional_per_km_minor' => 1000,
+    'additional_per_km_minor' => 300,
 ];
