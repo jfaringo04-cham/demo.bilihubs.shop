@@ -332,6 +332,12 @@ class CheckoutController extends Controller
                 ]);
             }
 
+            if ($product->seller?->isOnVacation()) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'cart' => 'This seller is currently on vacation. The product is unavailable for checkout.',
+                ]);
+            }
+
             $size = null;
 
             if ($sizeId !== null) {
@@ -401,6 +407,12 @@ class CheckoutController extends Controller
         $request = request();
 
         $cartItems = $this->checkoutCartItems($request);
+
+        if ($cartItems->first(fn ($item) => $item->product?->seller?->isOnVacation())) {
+            return redirect()
+                ->route('cart.index')
+                ->with('error', 'A seller in your cart is on vacation. Remove their products before checkout.');
+        }
 
         if ($cartItems->isEmpty()) {
             return redirect()
@@ -615,6 +627,12 @@ class CheckoutController extends Controller
             return redirect()->route('cart.index')->with('error', 'Your cart is empty.');
         }
 
+        if ($cartItems->first(fn ($item) => $item->product?->seller?->isOnVacation())) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'cart' => 'A seller in your cart is currently on vacation. Please update your cart.',
+            ]);
+        }
+
         // Every product must already belong to the new sellers table.
 
         $missingSeller = $cartItems->first(function ($item) {
@@ -796,6 +814,33 @@ class CheckoutController extends Controller
 
         ) {
 
+            // Lock seller shops first, in ascending ID order.
+            // This serializes checkout with Vacation Mode changes.
+            $sellerIds = $cartItems
+                ->pluck('product.seller_id')
+                ->filter()
+                ->unique()
+                ->sort()
+                ->values()
+                ->all();
+
+            $lockedSellers = \App\Models\Seller::query()
+                ->whereIn('id', $sellerIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
+            foreach ($sellerIds as $sellerId) {
+                $lockedSeller = $lockedSellers->get($sellerId);
+
+                if (!$lockedSeller || $lockedSeller->isOnVacation()) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'cart' => 'A seller in your cart is on vacation or unavailable.',
+                    ]);
+                }
+            }
+
             // Acquire product locks in a consistent order to reduce deadlocks.
 
             // Keep these locks until the checkout transaction commits.
@@ -826,6 +871,14 @@ class CheckoutController extends Controller
                 ) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'cart' => "The product '{$lockedProduct->name}' is no longer available for checkout.",
+                    ]);
+                }
+
+                $lockedSeller = $lockedSellers->get($lockedProduct->seller_id);
+
+                if (!$lockedSeller || $lockedSeller->isOnVacation()) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'cart' => "The seller of '{$lockedProduct->name}' is on vacation. Checkout is unavailable.",
                     ]);
                 }
 

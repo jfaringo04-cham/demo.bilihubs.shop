@@ -105,6 +105,8 @@ class CheckoutStockTest extends TestCase
             $table->foreignId('user_id')->nullable();
 
             $table->string('name');
+            $table->boolean('is_on_vacation')->default(false);
+            $table->date('vacation_ends_on')->nullable();
 
             $table->timestamps();
         });
@@ -1282,5 +1284,241 @@ class CheckoutStockTest extends TestCase
         $this->assertDatabaseCount('shipments', 2);
         $this->assertSame($before, $after);
     }
+
+    public function test_vacation_blocks_existing_cart_checkout(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $sellerId = $this->seller('Vacation Shop');
+        $productId = $this->addProduct($sellerId, 'Vacation Shirt', 10, 2);
+
+        DB::table('sellers')->where('id', $sellerId)->update([
+            'is_on_vacation' => true,
+        ]);
+
+        $this->checkout()->assertSessionHasErrors('cart');
+
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('seller_orders', 0);
+        $this->assertDatabaseCount('order_items', 0);
+        $this->assertDatabaseCount('shipments', 0);
+
+        $this->assertDatabaseHas('products', [
+            'id' => $productId,
+            'stock' => 10,
+        ]);
+
+        $this->assertDatabaseHas('cart_items', [
+            'product_id' => $productId,
+            'quantity' => 2,
+        ]);
+    }
+
+    public function test_one_vacation_seller_blocks_mixed_seller_checkout(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $sellerA = $this->seller('Vacation Shop');
+        $sellerB = $this->seller('Active Shop');
+
+        $productA = $this->addProduct($sellerA, 'Shirt', 10, 1);
+        $productB = $this->addProduct($sellerB, 'Shoes', 10, 1);
+
+        DB::table('sellers')->where('id', $sellerA)->update([
+            'is_on_vacation' => true,
+        ]);
+
+        $this->checkout()->assertSessionHasErrors('cart');
+
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('seller_orders', 0);
+        $this->assertDatabaseCount('shipments', 0);
+
+        $this->assertDatabaseHas('products', [
+            'id' => $productA,
+            'stock' => 10,
+        ]);
+
+        $this->assertDatabaseHas('products', [
+            'id' => $productB,
+            'stock' => 10,
+        ]);
+    }
+
+    public function test_checkout_works_after_vacation_is_turned_off(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $sellerId = $this->seller('Vacation Shop');
+        $productId = $this->addProduct($sellerId, 'Available Shirt', 10, 2);
+
+        DB::table('sellers')->where('id', $sellerId)->update([
+            'is_on_vacation' => true,
+        ]);
+
+        $this->checkout()->assertSessionHasErrors('cart');
+        $this->assertDatabaseCount('orders', 0);
+
+        DB::table('sellers')->where('id', $sellerId)->update([
+            'is_on_vacation' => false,
+            'vacation_ends_on' => null,
+        ]);
+
+        $this->checkout()->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseHas('products', [
+            'id' => $productId,
+            'stock' => 8,
+        ]);
+    }
+
+    public function test_checkout_works_after_vacation_date_expires(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $sellerId = $this->seller('Vacation Shop');
+        $productId = $this->addProduct($sellerId, 'Returned Shirt', 10, 1);
+
+        DB::table('sellers')->where('id', $sellerId)->update([
+            'is_on_vacation' => true,
+            'vacation_ends_on' => now()->subDay()->toDateString(),
+        ]);
+
+        $this->checkout()->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseHas('products', [
+            'id' => $productId,
+            'stock' => 9,
+        ]);
+    }
+
+
+    private function vacationSellerUser(int $shopId): User
+    {
+        $user = new User();
+        $user->name = 'Vacation Test Seller';
+        $user->email = 'vacation-seller@example.test';
+        $user->password = bcrypt('password');
+        $user->status = User::STATUS_ACTIVE;
+        $user->approved_at = now();
+        $user->email_verified_at = now();
+        $user->save();
+
+        $roleId = DB::table('roles')->insertGetId([
+            'name' => 'seller',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('role_user')->insert([
+            'role_id' => $roleId,
+            'user_id' => $user->id,
+        ]);
+
+        DB::table('sellers')
+            ->where('id', $shopId)
+            ->update(['user_id' => $user->id]);
+
+        return $user->fresh();
+    }
+
+    public function test_buyer_cannot_update_seller_vacation(): void
+    {
+        $buyer = $this->buyer();
+        $shopId = $this->seller('Protected Shop');
+
+        $this->actingAs($buyer)
+            ->put(route('seller.account.vacation'), [
+                'vacation_enabled' => 1,
+            ])
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('sellers', [
+            'id' => $shopId,
+            'is_on_vacation' => false,
+        ]);
+    }
+
+    public function test_seller_can_enable_and_disable_own_vacation(): void
+    {
+        $shopId = $this->seller('My Shop');
+        $sellerUser = $this->vacationSellerUser($shopId);
+
+        $this->actingAs($sellerUser)
+            ->from('/seller/account')
+            ->put(route('seller.account.vacation'), [
+                'vacation_enabled' => 1,
+                'vacation_ends_on' => now()->addDays(3)->toDateString(),
+            ])
+            ->assertRedirect('/seller/account')
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('sellers', [
+            'id' => $shopId,
+            'is_on_vacation' => true,
+        ]);
+
+        $this->actingAs($sellerUser)
+            ->from('/seller/account')
+            ->put(route('seller.account.vacation'), [
+                'vacation_enabled' => 0,
+            ])
+            ->assertRedirect('/seller/account')
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('sellers', [
+            'id' => $shopId,
+            'is_on_vacation' => false,
+            'vacation_ends_on' => null,
+        ]);
+    }
+
+    public function test_seller_cannot_change_another_shops_vacation(): void
+    {
+        $ownShopId = $this->seller('My Shop');
+        $otherShopId = $this->seller('Other Shop');
+
+        $sellerUser = $this->vacationSellerUser($ownShopId);
+
+        $this->actingAs($sellerUser)
+            ->put(route('seller.account.vacation'), [
+                'vacation_enabled' => 1,
+                'seller_id' => $otherShopId,
+            ])
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('sellers', [
+            'id' => $ownShopId,
+            'is_on_vacation' => true,
+        ]);
+
+        $this->assertDatabaseHas('sellers', [
+            'id' => $otherShopId,
+            'is_on_vacation' => false,
+        ]);
+    }
+
+    public function test_seller_cannot_set_vacation_end_date_in_past(): void
+    {
+        $shopId = $this->seller('My Shop');
+        $sellerUser = $this->vacationSellerUser($shopId);
+
+        $this->actingAs($sellerUser)
+            ->from('/seller/account')
+            ->put(route('seller.account.vacation'), [
+                'vacation_enabled' => 1,
+                'vacation_ends_on' => now()->subDay()->toDateString(),
+            ])
+            ->assertSessionHasErrors('vacation_ends_on');
+
+        $this->assertDatabaseHas('sellers', [
+            'id' => $shopId,
+            'is_on_vacation' => false,
+            'vacation_ends_on' => null,
+        ]);
+    }
+
 }
 

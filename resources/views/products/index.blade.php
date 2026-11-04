@@ -393,6 +393,13 @@
             <a href="{{ route('products.show', $product) }}" class="text-decoration-none">
               <div class="card product-card h-100 border-0 shadow-sm">
                 <div class="position-relative">
+                  @if($product->seller?->isOnVacation())
+                    <span class="badge text-bg-warning position-absolute"
+                          style="top: 12px; right: 12px; z-index: 2;">
+                      <i class="bi bi-calendar-x me-1"></i>
+                      On Vacation
+                    </span>
+                  @endif
                   <img
                     src="{{ $product->image_url }}"
                     class="product-image"
@@ -434,7 +441,11 @@
                     </p>
                   @endif
 
-                  @if($product->stock > 0)
+                  @if($product->seller?->isOnVacation())
+                    <span class="badge text-bg-warning">
+                      Temporarily Unavailable
+                    </span>
+                  @elseif($product->stock > 0)
                     <small class="text-muted">
                       {{ $product->category->name ?? 'Uncategorized' }}
                     </small>

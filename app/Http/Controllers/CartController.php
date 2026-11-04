@@ -164,6 +164,10 @@ class CartController extends Controller
         ?int $variantId,
         ?int $sizeId
     ): ?string {
+        if ($product->seller?->isOnVacation()) {
+            return 'This seller is on vacation. The product is temporarily unavailable.';
+        }
+
         if (
             $product->status !== 'published' ||
             $product->compliance_status !== 'approved'

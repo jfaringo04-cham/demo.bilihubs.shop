@@ -19,11 +19,30 @@ class Seller extends Model
         'rejection_reason',
         'commission_bps',
         'pickup_address_id',
+        'is_on_vacation',
+        'vacation_ends_on',
     ];
 
     /**
      * User/account that owns this shop.
      */
+    protected $casts = [
+        'is_on_vacation' => 'boolean',
+        'vacation_ends_on' => 'date',
+    ];
+
+    public function isOnVacation(): bool
+    {
+        if (!$this->is_on_vacation) {
+            return false;
+        }
+
+        return $this->vacation_ends_on === null
+            || $this->vacation_ends_on->greaterThanOrEqualTo(
+                now()->startOfDay()
+            );
+    }
+
     public function owner(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');

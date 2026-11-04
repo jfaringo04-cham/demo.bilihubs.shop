@@ -937,6 +937,87 @@ $user->region_name,
 @endif
 
 
+{{-- SELLER VACATION MODE --}}
+@php
+    $shop = $user->seller;
+    $vacationActive = $shop?->isOnVacation() ?? false;
+@endphp
+
+<div class="card shadow-sm border-0 mb-4">
+    <div class="card-body p-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h5 class="mb-1">
+                    <i class="bi bi-calendar-heart me-1"></i>
+                    Seller Vacation Mode
+                </h5>
+                <p class="text-muted small mb-0">
+                    Temporarily stop accepting new orders without deleting your products.
+                </p>
+            </div>
+
+            <span class="badge {{ $vacationActive ? 'text-bg-warning' : 'text-bg-success' }}">
+                {{ $vacationActive ? 'On Vacation' : 'Accepting Orders' }}
+            </span>
+        </div>
+
+        @if($vacationActive)
+            <div class="alert alert-warning">
+                Your products are currently unavailable for purchase.
+                Existing orders must still be fulfilled.
+            </div>
+        @endif
+
+        <form method="POST" action="{{ route('seller.account.vacation') }}">
+            @csrf
+            @method('PUT')
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="vacation_enabled" class="form-label">
+                        Vacation Mode
+                    </label>
+                    <select name="vacation_enabled"
+                            id="vacation_enabled"
+                            class="form-select"
+                            required>
+                        <option value="0" @selected(!$vacationActive)>
+                            OFF - Accept Orders
+                        </option>
+                        <option value="1" @selected($vacationActive)>
+                            ON - Pause New Orders
+                        </option>
+                    </select>
+                </div>
+
+                <div class="col-md-6">
+                    <label for="vacation_ends_on" class="form-label">
+                        Last Vacation Day (Optional)
+                    </label>
+                    <input type="date"
+                           name="vacation_ends_on"
+                           id="vacation_ends_on"
+                           class="form-control"
+                           min="{{ now()->toDateString() }}"
+                           value="{{ $vacationActive ? $shop?->vacation_ends_on?->format('Y-m-d') : '' }}">
+
+                    <small class="text-muted">
+                        Leave blank to stay on vacation until manually disabled.
+                        Selling resumes the day after this date.
+                    </small>
+                </div>
+
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-save me-1"></i>
+                        Save Vacation Settings
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
 {{-- ACCOUNT FORM --}}
 
 <div class="card shadow-sm border-0 mb-4">

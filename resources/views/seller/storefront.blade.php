@@ -214,12 +214,24 @@
     @endif
 
     <main class="container py-4 py-lg-5">
+        @if($seller->seller?->isOnVacation())
+            <div class="alert alert-warning mb-4" role="status">
+                <div class="fw-bold mb-1">
+                    <i class="bi bi-calendar-x me-2"></i>
+                    This Seller Is On Vacation
+                </div>
+                <div>
+                    This shop is temporarily not accepting new orders.
+                    Products are available for viewing only.
+                </div>
+            </div>
+        @endif
         <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-4">
             <div>
                 <span class="products-kicker">{{ $selectedSubcategory?->name ?? $selectedCategory?->name ?? $categoryName }}</span>
                 <h2 class="products-heading mb-1">{{ $themeContent['section'] }}</h2>
                 <p class="text-muted mb-0">
-                    {{ $products->total() }} {{ \Illuminate\Support\Str::plural('product', $products->total()) }} available
+                    {{ $products->total() }} {{ \Illuminate\Support\Str::plural('product', $products->total()) }} listed
                 </p>
             </div>
         </div>
@@ -245,6 +257,13 @@
                                         {{ $product->category?->name ?? $categoryName }}
                                     </div>
                                     <h3 class="product-name">{{ $product->name }}</h3>
+                                    @if($product->seller?->isOnVacation())
+                                        <div class="mb-2">
+                                            <span class="badge text-bg-warning">
+                                                Seller on Vacation
+                                            </span>
+                                        </div>
+                                    @endif
                                     <div class="d-flex justify-content-between align-items-end gap-2 mt-auto">
                                         <div>
                                             <div class="product-price">&#8369;{{ number_format(($product->effective_price_minor / 100), 2) }}</div>

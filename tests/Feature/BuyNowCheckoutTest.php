@@ -105,6 +105,8 @@ class BuyNowCheckoutTest extends TestCase
             $table->foreignId('user_id')->nullable();
 
             $table->string('name');
+            $table->boolean('is_on_vacation')->default(false);
+            $table->date('vacation_ends_on')->nullable();
 
             $table->timestamps();
         });
@@ -600,5 +602,90 @@ class BuyNowCheckoutTest extends TestCase
         $this->assertDatabaseCount('orders', 0);
         $this->assertDatabaseCount('cart_items', 2);
     }
+
+    public function test_vacation_blocks_direct_buy_now_request(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $sellerId = $this->seller('Vacation Shop');
+        $productId = $this->addProduct(
+            $sellerId,
+            'Unavailable Shirt',
+            10,
+            1
+        );
+
+        DB::table('sellers')->where('id', $sellerId)->update([
+            'is_on_vacation' => true,
+        ]);
+
+        $this->post(route('buyNow', $productId), [
+            'quantity' => 1,
+        ])->assertSessionHas('error');
+
+        $this->assertFalse(session()->has('checkout.buy_now'));
+        $this->assertDatabaseCount('orders', 0);
+
+        $this->assertDatabaseHas('products', [
+            'id' => $productId,
+            'stock' => 10,
+        ]);
+    }
+
+    public function test_vacation_blocks_direct_add_to_cart_request(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $sellerId = $this->seller('Vacation Shop');
+        $productId = $this->addProduct(
+            $sellerId,
+            'Unavailable Shirt',
+            10,
+            1
+        );
+
+        DB::table('sellers')->where('id', $sellerId)->update([
+            'is_on_vacation' => true,
+        ]);
+
+        $this->post(route('cart.store', $productId), [
+            'quantity' => 2,
+        ])->assertSessionHas('error');
+
+        $this->assertDatabaseHas('cart_items', [
+            'product_id' => $productId,
+            'quantity' => 1,
+        ]);
+
+        $this->assertDatabaseCount('orders', 0);
+    }
+
+    public function test_vacation_blocks_previously_saved_buy_now_session(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $sellerId = $this->seller('Vacation Shop');
+        $productId = $this->addProduct(
+            $sellerId,
+            'Saved Buy Now Shirt',
+            10,
+            1
+        );
+
+        $this->selectBuyNow($productId, 2);
+
+        DB::table('sellers')->where('id', $sellerId)->update([
+            'is_on_vacation' => true,
+        ]);
+
+        $this->checkout()->assertSessionHasErrors('cart');
+
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseHas('products', [
+            'id' => $productId,
+            'stock' => 10,
+        ]);
+    }
+
 }
 

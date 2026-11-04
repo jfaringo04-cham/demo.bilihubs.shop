@@ -494,6 +494,8 @@ Route::middleware('auth')->group(function () {
 
         Route::post('/account/appeal', [SellerDashboardController::class, 'submitAppeal'])->name('account.appeal');
 
+        Route::put('/account/vacation', [SellerDashboardController::class, 'updateVacation'])->name('account.vacation');
+
         Route::get('/account', [SellerDashboardController::class, 'account'])->name('account');
 
         Route::put('/account', [SellerDashboardController::class, 'updateAccount'])->name('account.update');

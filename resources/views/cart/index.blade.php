@@ -1,8 +1,26 @@
 @extends('layouts.app')
 
 @section('content')
+@php
+    $hasVacationItems = $cartItems->contains(
+        fn ($item) => $item->product?->seller?->isOnVacation() ?? false
+    );
+@endphp
+
 <div class="container py-4">
   <h2 class="fw-bold text-slate-900 mb-4">Shopping Cart</h2>
+
+  @if($hasVacationItems)
+    <div class="alert alert-warning mb-4" role="status">
+      <i class="bi bi-calendar-x me-2"></i>
+      <strong>Seller on Vacation</strong>
+      <div class="mt-1">
+        Your cart contains products from a seller who is currently
+        on vacation. Remove those products to continue checkout,
+        or return when the seller is available.
+      </div>
+    </div>
+  @endif
 
   @if($cartItems->count() > 0)
   <div class="card border-0 shadow-sm rounded-2">
@@ -30,6 +48,11 @@
                 <img src="{{ $variantImg }}" class="rounded me-3" style="width: 64px; height: 64px; object-fit: cover;" alt="{{ $variantName }}">
                 <div>
                   <h6 class="mb-0 fw-semibold">{{ $item->product->name }}</h6>
+                  @if($item->product->seller?->isOnVacation())
+                    <span class="badge text-bg-warning mt-1">
+                      Seller on Vacation
+                    </span>
+                  @endif
                   <small class="text-muted d-block">{{ $variantName }}</small>
                   @if($item->product->stock == 0)
                   <span class="badge bg-danger rounded-pill">Sold Out</span>
@@ -45,6 +68,11 @@
                   alt="{{ $item->product->name }}">
                 <div>
                   <h6 class="mb-0 fw-semibold">{{ $item->product->name }}</h6>
+                  @if($item->product->seller?->isOnVacation())
+                    <span class="badge text-bg-warning mt-1">
+                      Seller on Vacation
+                    </span>
+                  @endif
                   @if($item->product->stock == 0)
                   <span class="badge bg-danger rounded-pill">Sold Out</span>
                   @endif
@@ -190,7 +218,20 @@
     <div class="card-footer bg-white border-0 py-3">
       <div class="d-flex justify-content-between align-items-center">
         <h4 class="mb-0 fw-bold">Total: <span class="text-sky-500">&#8369;{{ number_format($total, 2) }}</span></h4>
-        <a href="{{ route('checkout.index') }}" class="btn btn-primary rounded-xl px-4">Proceed to Checkout</a>
+        @if($hasVacationItems)
+          <button type="button"
+                  class="btn btn-secondary rounded-xl px-4"
+                  disabled
+                  title="Remove unavailable products before checkout">
+            <i class="bi bi-lock me-1"></i>
+            Checkout Unavailable
+          </button>
+        @else
+          <a href="{{ route('checkout.index') }}"
+             class="btn btn-primary rounded-xl px-4">
+            Proceed to Checkout
+          </a>
+        @endif
       </div>
     </div>
   </div>

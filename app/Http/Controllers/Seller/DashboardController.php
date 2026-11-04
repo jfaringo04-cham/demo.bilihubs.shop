@@ -1822,6 +1822,45 @@ class DashboardController extends Controller
         return view('seller.messages');
     }
 
+    public function updateVacation(Request $request)
+    {
+        $validated = $request->validate([
+            'vacation_enabled' => ['required', 'boolean'],
+            'vacation_ends_on' => [
+                'nullable',
+                'date',
+                'after_or_equal:today',
+            ],
+        ]);
+
+        $shop = Auth::user()?->seller;
+
+        abort_unless($shop, 403, 'Seller shop not found.');
+
+        $enabled = (bool) $validated['vacation_enabled'];
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($shop, $enabled, $validated) {
+            $lockedShop = \App\Models\Seller::query()
+                ->whereKey($shop->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $lockedShop->update([
+                'is_on_vacation' => $enabled,
+                'vacation_ends_on' => $enabled
+                    ? ($validated['vacation_ends_on'] ?? null)
+                    : null,
+            ]);
+        }, 3);
+
+        return back()->with(
+            'success',
+            $enabled
+                ? 'Vacation Mode activated. Your products are temporarily unavailable.'
+                : 'Vacation Mode disabled. Your shop is accepting orders again.'
+        );
+    }
+
     public function account()
     {
         $user = Auth::user();

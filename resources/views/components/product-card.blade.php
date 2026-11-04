@@ -8,6 +8,7 @@
     $reviewCount = $product->reviews_count ?? 0;
     $sold = $product->sold_count ?? 0;
     $stock = $product->stock ?? 0;
+    $sellerOnVacation = $product->seller?->isOnVacation() ?? false;
 
     $total = $sold + $stock;
     $progress = $total > 0 ? min(($sold / $total) * 100, 100) : 0;
@@ -51,6 +52,14 @@
     </div>
 
     <div class="product-info">
+        @if($sellerOnVacation)
+            <div class="mb-2">
+                <span class="badge text-bg-warning">
+                    <i class="bi bi-calendar-x me-1"></i>
+                    Seller on Vacation
+                </span>
+            </div>
+        @endif
         @if($product->category)
             <a href="{{ route('products.index', ['category' => $product->category->id]) }}"
                class="product-category text-muted text-decoration-none">
@@ -94,7 +103,11 @@
 
         <a href="{{ route('products.show', $product) }}"
            class="add-to-cart-btn w-100 mt-2 d-inline-flex align-items-center justify-content-center text-decoration-none">
-            <i class="bi bi-cart me-1"></i> View / Add to Cart
+            @if($sellerOnVacation)
+                <i class="bi bi-eye me-1"></i> View Product - Unavailable
+            @else
+                <i class="bi bi-cart me-1"></i> View / Add to Cart
+            @endif
         </a>
     </div>
 </div>

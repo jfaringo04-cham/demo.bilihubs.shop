@@ -196,7 +196,8 @@
       @php
         $hasAnySize = $product->sizes->count() > 0;
         $hasAvailableSize = !$hasAnySize || $product->sizes->contains(function($size) { return $size->pivot->stock > 0; });
-        $canPurchase = $product->stock > 0 && $hasAvailableSize;
+        $vacationActive = $product->seller?->isOnVacation() ?? false;
+        $canPurchase = !$vacationActive && $product->stock > 0 && $hasAvailableSize;
         $productMainImageUrl = $product->image_url;
       @endphp
 
@@ -247,7 +248,7 @@
                 </option>
               @else
                 <option value="{{ $size->id }}" data-stock="0" disabled>
-                  {{ $size->name }} — Sold Out
+                  {{ $size->name }} â€” Sold Out
                 </option>
               @endif
             @endforeach
@@ -255,7 +256,16 @@
         </div>
       @endif
 
-      @if($product->stock > 0)
+      @if($vacationActive)
+        <div class="alert alert-warning mt-4" role="status">
+          <i class="bi bi-calendar-x me-2"></i>
+          <strong>Seller on Vacation</strong>
+          <p class="mb-0 mt-2">
+            This shop is temporarily not accepting new orders.
+            You can still view this product and contact the seller.
+          </p>
+        </div>
+      @elseif($product->stock > 0)
         <div class="mt-4 pt-4 border-top">
           @auth
             @if(Auth::user()->isCustomer())
@@ -307,7 +317,7 @@
           <span class="badge bg-danger rounded-pill fs-6"><i class="bi bi-x-circle"></i> Sold Out</span>
         </div>
       @endif
-      @if(!$canPurchase)
+      @if(!$vacationActive && !$canPurchase)
         <p class="text-danger mt-2">This product is currently out of stock.</p>
       @endif
 
