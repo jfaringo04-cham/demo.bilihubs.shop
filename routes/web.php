@@ -662,6 +662,17 @@ Route::middleware('auth')->group(function () {
 
 
     Route::prefix('logistic')->name('logistic.')->middleware('logistic_owner')->group(function () {
+        // Pickup exception monitoring and safe rider offer retry.
+        Route::get(
+            '/pickup-exceptions',
+            [\App\Http\Controllers\Logistic\PickupExceptionController::class, 'index']
+        )->name('pickup-exceptions.index');
+
+        Route::post(
+            '/pickup-exceptions/{shipment}/retry',
+            [\App\Http\Controllers\Logistic\PickupExceptionController::class, 'retry']
+        )->name('pickup-exceptions.retry');
+
 
         Route::post(
 
