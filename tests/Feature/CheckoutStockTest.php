@@ -259,6 +259,7 @@ class CheckoutStockTest extends TestCase
             $table->id();
 
             $table->foreignId('seller_order_id')->nullable()->unique();
+            $table->timestamp('picked_up_at')->nullable();
 
             $table->foreignId('logistic_id')->nullable();
 
@@ -1517,6 +1518,123 @@ class CheckoutStockTest extends TestCase
             'id' => $shopId,
             'is_on_vacation' => false,
             'vacation_ends_on' => null,
+        ]);
+    }
+
+
+    public function test_seller_cannot_vacation_before_parcel_handover(): void
+    {
+        $buyer = $this->buyer();
+        $this->actingAs($buyer);
+
+        $shopId = $this->seller('Pickup Test Shop');
+        $productId = $this->addProduct($shopId, 'Test Shirt', 10, 1);
+
+        $this->checkout()->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseCount('seller_orders', 1);
+        $this->assertDatabaseCount('shipments', 1);
+
+        $seller = $this->vacationSellerUser($shopId);
+
+        $this->actingAs($seller)
+            ->from('/seller/account')
+            ->put(route('seller.account.vacation'), [
+                'vacation_enabled' => 1,
+            ])
+            ->assertSessionHasErrors('vacation_enabled');
+
+        $this->assertDatabaseHas('sellers', [
+            'id' => $shopId,
+            'is_on_vacation' => false,
+        ]);
+
+        $this->assertDatabaseHas('products', [
+            'id' => $productId,
+            'stock' => 9,
+        ]);
+    }
+
+    public function test_seller_can_vacation_after_confirmed_pickup(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $shopId = $this->seller('Pickup Test Shop');
+        $this->addProduct($shopId, 'Test Shirt', 10, 1);
+
+        $this->checkout()->assertSessionHasNoErrors();
+
+        $sellerOrderId = DB::table('seller_orders')
+            ->where('seller_id', $shopId)
+            ->value('id');
+
+        DB::table('seller_orders')
+            ->where('id', $sellerOrderId)
+            ->update([
+                'status' => 'ready_for_pickup',
+            ]);
+
+        $seller = $this->vacationSellerUser($shopId);
+
+        // Ready for pickup alone is not sufficient.
+        $this->actingAs($seller)
+            ->put(route('seller.account.vacation'), [
+                'vacation_enabled' => 1,
+            ])
+            ->assertSessionHasErrors('vacation_enabled');
+
+        // Record the initial rider pickup.
+        DB::table('shipments')
+            ->where('seller_order_id', $sellerOrderId)
+            ->update([
+                'picked_up_at' => now(),
+                'status' => 'picked_up',
+            ]);
+
+        $this->actingAs($seller)
+            ->from('/seller/account')
+            ->put(route('seller.account.vacation'), [
+                'vacation_enabled' => 1,
+            ])
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('sellers', [
+            'id' => $shopId,
+            'is_on_vacation' => true,
+        ]);
+    }
+
+    public function test_seller_can_disable_vacation_with_pending_orders(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $shopId = $this->seller('Pickup Test Shop');
+        $this->addProduct($shopId, 'Test Shirt', 10, 1);
+
+        $this->checkout()->assertSessionHasNoErrors();
+
+        // Simulate an already-active vacation on a legacy record.
+        DB::table('sellers')
+            ->where('id', $shopId)
+            ->update([
+                'is_on_vacation' => true,
+            ]);
+
+        $seller = $this->vacationSellerUser($shopId);
+
+        $this->actingAs($seller)
+            ->from('/seller/account')
+            ->put(route('seller.account.vacation'), [
+                'vacation_enabled' => 0,
+            ])
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('sellers', [
+            'id' => $shopId,
+            'is_on_vacation' => false,
         ]);
     }
 

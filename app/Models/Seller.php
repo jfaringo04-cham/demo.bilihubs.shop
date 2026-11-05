@@ -31,6 +31,27 @@ class Seller extends Model
         'vacation_ends_on' => 'date',
     ];
 
+    /**
+     * Orders that still require seller preparation or pickup.
+     *
+     * A ready-for-pickup parcel remains the seller's responsibility
+     * until the initial rider pickup is recorded.
+     */
+    public function ordersAwaitingHandover(): HasMany
+    {
+        return $this->orders()
+            ->whereIn('status', [
+                'pending',
+                'placed',
+                'confirmed',
+                'preparing',
+                'ready_for_pickup',
+            ])
+            ->whereDoesntHave('shipment', function ($query) {
+                $query->whereNotNull('picked_up_at');
+            });
+    }
+
     public function isOnVacation(): bool
     {
         if (!$this->is_on_vacation) {

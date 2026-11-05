@@ -1845,6 +1845,18 @@ class DashboardController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            if ($enabled) {
+                $awaitingHandover = $lockedShop
+                    ->ordersAwaitingHandover()
+                    ->count();
+
+                if ($awaitingHandover > 0) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'vacation_enabled' => "You cannot activate Vacation Mode while {$awaitingHandover} seller order(s) still require preparation or rider pickup. Complete the handover first.",
+                    ]);
+                }
+            }
+
             $lockedShop->update([
                 'is_on_vacation' => $enabled,
                 'vacation_ends_on' => $enabled

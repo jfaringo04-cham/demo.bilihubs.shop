@@ -941,6 +941,9 @@ $user->region_name,
 @php
     $shop = $user->seller;
     $vacationActive = $shop?->isOnVacation() ?? false;
+    $awaitingHandoverCount = $shop
+        ? $shop->ordersAwaitingHandover()->count()
+        : 0;
 @endphp
 
 <div class="card shadow-sm border-0 mb-4">
@@ -967,6 +970,45 @@ $user->region_name,
                 Existing orders must still be fulfilled.
             </div>
         @endif
+
+        @if($awaitingHandoverCount > 0)
+            <div class="alert alert-warning" role="alert">
+                <div class="fw-semibold mb-1">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    Vacation Mode cannot be activated yet.
+                </div>
+
+                <p class="mb-2">
+                    You have
+                    <strong>{{ $awaitingHandoverCount }}</strong>
+                    order(s) awaiting preparation or confirmed rider pickup.
+                </p>
+
+                <p class="small mb-2">
+                    Complete the preparation and handover of these parcels
+                    before activating Vacation Mode.
+                    You can still turn Vacation Mode OFF at any time.
+                </p>
+
+                <a href="{{ route('seller.orders') }}"
+                   class="btn btn-sm btn-outline-dark">
+                    <i class="bi bi-box-seam me-1"></i>
+                    View My Orders
+                </a>
+            </div>
+        @else
+            <div class="alert alert-success" role="status">
+                <i class="bi bi-check-circle me-1"></i>
+                No orders are awaiting seller preparation or pickup.
+                Your shop is eligible for Vacation Mode.
+            </div>
+        @endif
+
+        @error('vacation_enabled')
+            <div class="alert alert-danger" role="alert">
+                {{ $message }}
+            </div>
+        @enderror
 
         <form method="POST" action="{{ route('seller.account.vacation') }}">
             @csrf
