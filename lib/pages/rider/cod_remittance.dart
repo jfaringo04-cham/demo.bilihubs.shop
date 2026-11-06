@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../../sevices/api_services.dart';
+import '../../services/api_services.dart';
 import '../../styles/rider_style.dart';
+import '../../utils/date_formatter.dart';
+import '../../utils/money_formatter.dart';
+import '../../widgets/status_chip.dart';
 
 class CodRemittance extends StatefulWidget {
   const CodRemittance({super.key});
@@ -34,7 +37,9 @@ class _CodRemittanceState extends State<CodRemittance> {
   // ============================================================
 
   Future<void> _loadRemittanceData({bool refresh = false}) async {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     setState(() {
       if (refresh) {
@@ -49,7 +54,9 @@ class _CodRemittanceState extends State<CodRemittance> {
     try {
       final Map<String, dynamic> result = await ApiService.getRiderEarnings();
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       if (result['success'] != true) {
         setState(() {
@@ -95,7 +102,9 @@ class _CodRemittanceState extends State<CodRemittance> {
     } catch (error) {
       debugPrint('COD remittance load error: $error');
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setState(() {
         _availableCollections = <Map<String, dynamic>>[];
@@ -107,7 +116,9 @@ class _CodRemittanceState extends State<CodRemittance> {
         _isLoading = false;
         _isRefreshing = false;
 
-        _errorMessage = 'Unable to connect to the server. Please try again.';
+        _errorMessage =
+            'Unable to connect to the server. '
+            'Please try again.';
       });
     }
   }
@@ -260,14 +271,14 @@ class _CodRemittanceState extends State<CodRemittance> {
     double total = 0;
 
     for (final Map<String, dynamic> item in _availableCollections) {
-      final double? amount = _toDouble(item['amount']);
+      final double? amount = MoneyFormatter.value(item['amount']);
 
       if (amount != null) {
         total += amount;
       }
     }
 
-    return _money(total);
+    return MoneyFormatter.peso(total);
   }
 
   String get _availablePaymentsText {
@@ -305,37 +316,19 @@ class _CodRemittanceState extends State<CodRemittance> {
         continue;
       }
 
-      final double? amount = _toDouble(item['amount']);
+      final double? amount = MoneyFormatter.value(item['amount']);
 
       if (amount != null) {
         total += amount;
       }
     }
 
-    return _money(total);
+    return MoneyFormatter.peso(total);
   }
 
   // ============================================================
   // HELPERS
   // ============================================================
-
-  double? _toDouble(dynamic value) {
-    if (value is num) {
-      return value.toDouble();
-    }
-
-    if (value == null) {
-      return null;
-    }
-
-    final String cleaned = value
-        .toString()
-        .replaceAll(',', '')
-        .replaceAll('₱', '')
-        .trim();
-
-    return double.tryParse(cleaned);
-  }
 
   int? _toInt(dynamic value) {
     if (value is int) {
@@ -349,16 +342,6 @@ class _CodRemittanceState extends State<CodRemittance> {
     return int.tryParse(value?.toString() ?? '');
   }
 
-  String _money(dynamic value) {
-    final double? amount = _toDouble(value);
-
-    if (amount == null) {
-      return '₱0.00';
-    }
-
-    return '₱${amount.toStringAsFixed(2)}';
-  }
-
   String _displayValue(dynamic value, {String fallback = 'Not available'}) {
     final String text = value?.toString().trim() ?? '';
 
@@ -367,89 +350,6 @@ class _CodRemittanceState extends State<CodRemittance> {
     }
 
     return text;
-  }
-
-  String _formatStatus(dynamic value) {
-    final String text = value?.toString().trim() ?? '';
-
-    if (text.isEmpty) {
-      return 'Unknown';
-    }
-
-    final String cleaned = text.replaceAll('_', ' ').replaceAll('-', ' ');
-
-    return cleaned
-        .split(RegExp(r'\s+'))
-        .map((String word) {
-          if (word.isEmpty) {
-            return word;
-          }
-
-          return '${word[0].toUpperCase()}'
-              '${word.substring(1).toLowerCase()}';
-        })
-        .join(' ');
-  }
-
-  String _formatDate(dynamic value) {
-    final String raw = value?.toString().trim() ?? '';
-
-    if (raw.isEmpty) {
-      return 'Not available';
-    }
-
-    final DateTime? parsed = DateTime.tryParse(raw);
-
-    if (parsed == null) {
-      return raw;
-    }
-
-    final DateTime local = parsed.toLocal();
-
-    const List<String> months = <String>[
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-
-    final String month = months[local.month - 1];
-
-    return '$month ${local.day}, ${local.year}';
-  }
-
-  Color _statusColor(dynamic value) {
-    final String status =
-        value?.toString().trim().toLowerCase().replaceAll(' ', '_') ?? '';
-
-    switch (status) {
-      case 'confirmed':
-      case 'approved':
-      case 'completed':
-      case 'verified':
-        return RiderColors.success;
-
-      case 'rejected':
-      case 'failed':
-      case 'cancelled':
-        return RiderColors.danger;
-
-      case 'pending':
-      case 'submitted':
-      case 'for_verification':
-        return RiderColors.warning;
-
-      default:
-        return RiderColors.textGrey;
-    }
   }
 
   // ============================================================
@@ -464,46 +364,33 @@ class _CodRemittanceState extends State<CodRemittance> {
 
     return Scaffold(
       backgroundColor: RiderColors.background,
-
       appBar: AppBar(
         backgroundColor: RiderColors.white,
-
         elevation: 0,
-
         surfaceTintColor: Colors.transparent,
-
         iconTheme: const IconThemeData(color: RiderColors.textDark),
-
         titleSpacing: 18,
-
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-
           children: [
             Text('COD Cash Remittance', style: RiderStyle.title),
-
             SizedBox(height: 2),
-
             Text(
               'Submit collected cash for verification',
               style: RiderStyle.small,
             ),
           ],
         ),
-
         actions: [
           if (_isRefreshing)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16),
-
               child: Center(
                 child: SizedBox(
                   height: 19,
                   width: 19,
-
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-
                     color: RiderColors.primary,
                   ),
                 ),
@@ -512,47 +399,37 @@ class _CodRemittanceState extends State<CodRemittance> {
           else
             IconButton(
               tooltip: 'Refresh',
-
               onPressed: _isLoading
                   ? null
                   : () {
                       _loadRemittanceData(refresh: true);
                     },
-
               icon: const Icon(
                 Icons.refresh_rounded,
-
                 color: RiderColors.primary,
               ),
             ),
-
           const SizedBox(width: 5),
         ],
       ),
-
       body: SafeArea(
         top: false,
-
         child: RefreshIndicator(
           onRefresh: () {
             return _loadRemittanceData(refresh: true);
           },
-
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics(),
             ),
-
             padding: EdgeInsets.fromLTRB(
               horizontalPadding,
               14,
               horizontalPadding,
               30,
             ),
-
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
                 if (_isLoading) _loadingCard(),
 
@@ -589,40 +466,27 @@ class _CodRemittanceState extends State<CodRemittance> {
   Widget _securityBadge() {
     return Align(
       alignment: Alignment.centerRight,
-
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-
         decoration: BoxDecoration(
           color: RiderColors.white,
-
           borderRadius: BorderRadius.circular(20),
-
           border: Border.all(color: RiderColors.border),
         ),
-
         child: const Row(
           mainAxisSize: MainAxisSize.min,
-
           children: [
             Icon(
               Icons.verified_user_outlined,
-
               color: RiderColors.primary,
-
               size: 15,
             ),
-
             SizedBox(width: 5),
-
             Text(
               'Secure Cash Tracking',
-
               style: TextStyle(
                 color: RiderColors.textDark,
-
                 fontSize: 10,
-
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -639,7 +503,6 @@ class _CodRemittanceState extends State<CodRemittance> {
   Widget _summaryCards() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-
       children: [
         const Text('Remittance Summary', style: RiderStyle.sectionTitle),
 
@@ -650,15 +513,10 @@ class _CodRemittanceState extends State<CodRemittance> {
             Expanded(
               child: _summaryCard(
                 title: 'Available Cash',
-
                 value: _availableCashText,
-
                 subtitle: 'Eligible for remittance',
-
                 icon: Icons.payments_outlined,
-
                 background: RiderColors.lightGreen,
-
                 iconColor: RiderColors.success,
               ),
             ),
@@ -668,15 +526,10 @@ class _CodRemittanceState extends State<CodRemittance> {
             Expanded(
               child: _summaryCard(
                 title: 'Available Payments',
-
                 value: _availablePaymentsText,
-
                 subtitle: 'Delivered COD payments',
-
                 icon: Icons.receipt_long_outlined,
-
                 background: RiderColors.lightBlue,
-
                 iconColor: RiderColors.primary,
               ),
             ),
@@ -687,17 +540,11 @@ class _CodRemittanceState extends State<CodRemittance> {
 
         _summaryCard(
           title: 'Pending Remittances',
-
           value: _pendingRemittancesText,
-
           subtitle: 'Waiting for verification',
-
           icon: Icons.hourglass_top_rounded,
-
           background: RiderColors.lightOrange,
-
           iconColor: RiderColors.warning,
-
           wide: true,
         ),
       ],
@@ -715,58 +562,39 @@ class _CodRemittanceState extends State<CodRemittance> {
   }) {
     return Container(
       width: double.infinity,
-
       constraints: BoxConstraints(minHeight: wide ? 92 : 120),
-
       padding: const EdgeInsets.all(14),
-
       decoration: RiderStyle.card,
-
       child: wide
           ? Row(
               children: [
                 Container(
                   height: 42,
                   width: 42,
-
                   decoration: BoxDecoration(
                     color: background,
-
                     borderRadius: BorderRadius.circular(12),
                   ),
-
                   child: Icon(icon, color: iconColor, size: 21),
                 ),
-
                 const SizedBox(width: 12),
-
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-
                     children: [
                       Text(title, style: RiderStyle.small),
-
                       const SizedBox(height: 3),
-
                       Text(
                         value,
-
                         maxLines: 1,
-
                         overflow: TextOverflow.ellipsis,
-
                         style: const TextStyle(
                           color: RiderColors.textDark,
-
                           fontSize: 20,
-
                           fontWeight: FontWeight.w800,
                         ),
                       ),
-
                       const SizedBox(height: 2),
-
                       Text(subtitle, style: RiderStyle.small),
                     ],
                   ),
@@ -775,18 +603,14 @@ class _CodRemittanceState extends State<CodRemittance> {
             )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
                 Container(
                   height: 38,
                   width: 38,
-
                   decoration: BoxDecoration(
                     color: background,
-
                     borderRadius: BorderRadius.circular(11),
                   ),
-
                   child: Icon(icon, color: iconColor, size: 20),
                 ),
 
@@ -794,11 +618,8 @@ class _CodRemittanceState extends State<CodRemittance> {
 
                 Text(
                   title,
-
                   maxLines: 2,
-
                   overflow: TextOverflow.ellipsis,
-
                   style: RiderStyle.small,
                 ),
 
@@ -806,16 +627,11 @@ class _CodRemittanceState extends State<CodRemittance> {
 
                 Text(
                   value,
-
                   maxLines: 1,
-
                   overflow: TextOverflow.ellipsis,
-
                   style: const TextStyle(
                     color: RiderColors.textDark,
-
                     fontSize: 19,
-
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -824,11 +640,8 @@ class _CodRemittanceState extends State<CodRemittance> {
 
                 Text(
                   subtitle,
-
                   maxLines: 1,
-
                   overflow: TextOverflow.ellipsis,
-
                   style: RiderStyle.small,
                 ),
               ],
@@ -843,18 +656,13 @@ class _CodRemittanceState extends State<CodRemittance> {
   Widget _availableCollectionsSection() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(16),
-
       decoration: RiderStyle.card,
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           const Text(
             'Available COD Collections',
-
             style: RiderStyle.sectionTitle,
           ),
 
@@ -862,7 +670,6 @@ class _CodRemittanceState extends State<CodRemittance> {
 
           const Text(
             'Select delivered COD payments to prepare for remittance.',
-
             style: RiderStyle.small,
           ),
 
@@ -880,31 +687,22 @@ class _CodRemittanceState extends State<CodRemittance> {
 
             Container(
               width: double.infinity,
-
               padding: const EdgeInsets.all(13),
-
               decoration: BoxDecoration(
                 color: RiderColors.background,
-
                 borderRadius: BorderRadius.circular(13),
-
                 border: Border.all(color: RiderColors.border),
               ),
-
               child: Row(
                 children: [
                   const Expanded(
                     child: Text('Selected Amount', style: RiderStyle.cardTitle),
                   ),
-
                   Text(
                     _selectedAmountText,
-
                     style: const TextStyle(
                       color: RiderColors.primary,
-
                       fontSize: 17,
-
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -916,18 +714,13 @@ class _CodRemittanceState extends State<CodRemittance> {
 
             SizedBox(
               width: double.infinity,
-
               height: 48,
-
               child: ElevatedButton.icon(
                 onPressed: _selectedPaymentIds.isEmpty
                     ? null
                     : _submitRemittance,
-
                 icon: const Icon(Icons.send_rounded, size: 18),
-
                 label: const Text('Submit Remittance'),
-
                 style: RiderStyle.primaryButton,
               ),
             ),
@@ -940,34 +733,23 @@ class _CodRemittanceState extends State<CodRemittance> {
   Widget _emptyCollectionsState() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-
       decoration: BoxDecoration(
         color: RiderColors.background,
-
         borderRadius: BorderRadius.circular(15),
-
         border: Border.all(color: RiderColors.border),
       ),
-
       child: const Column(
         children: [
           Icon(
             Icons.check_circle_outline_rounded,
-
             color: RiderColors.textGrey,
-
             size: 38,
           ),
-
           SizedBox(height: 9),
-
           Text(
             'No COD collections available for remittance.',
-
             textAlign: TextAlign.center,
-
             style: RiderStyle.small,
           ),
         ],
@@ -982,28 +764,21 @@ class _CodRemittanceState extends State<CodRemittance> {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-
       padding: const EdgeInsets.all(13),
-
       decoration: BoxDecoration(
         color: selected ? RiderColors.lightPurple : RiderColors.background,
-
         borderRadius: BorderRadius.circular(14),
-
         border: Border.all(
           color: selected ? RiderColors.primary : RiderColors.border,
         ),
       ),
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           Row(
             children: [
               Checkbox(
                 value: selected,
-
                 onChanged: id <= 0
                     ? null
                     : (bool? value) {
@@ -1020,19 +795,14 @@ class _CodRemittanceState extends State<CodRemittance> {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     Text(
                       _displayValue(
                         item['tracking_number'],
-
                         fallback: 'Shipment unavailable',
                       ),
-
                       maxLines: 1,
-
                       overflow: TextOverflow.ellipsis,
-
                       style: RiderStyle.cardTitle,
                     ),
 
@@ -1041,10 +811,8 @@ class _CodRemittanceState extends State<CodRemittance> {
                     Text(
                       _displayValue(
                         item['payment_reference'],
-
                         fallback: 'Payment reference unavailable',
                       ),
-
                       style: RiderStyle.small,
                     ),
                   ],
@@ -1054,13 +822,10 @@ class _CodRemittanceState extends State<CodRemittance> {
               const SizedBox(width: 8),
 
               Text(
-                _money(item['amount']),
-
+                MoneyFormatter.peso(item['amount']),
                 style: const TextStyle(
                   color: RiderColors.primary,
-
                   fontSize: 16,
-
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -1071,7 +836,13 @@ class _CodRemittanceState extends State<CodRemittance> {
 
           _detailRow('Logistics', _displayValue(item['logistics_name'])),
 
-          _detailRow('Collected', _formatDate(item['collected_at'])),
+          _detailRow(
+            'Collected',
+            DateFormatter.dateOnly(
+              item['collected_at'],
+              fallback: 'Not available',
+            ),
+          ),
         ],
       ),
     );
@@ -1084,14 +855,10 @@ class _CodRemittanceState extends State<CodRemittance> {
   Widget _remittanceHistorySection() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(16),
-
       decoration: RiderStyle.card,
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           const Text('Remittance History', style: RiderStyle.sectionTitle),
 
@@ -1099,7 +866,6 @@ class _CodRemittanceState extends State<CodRemittance> {
 
           const Text(
             'Track submitted, confirmed, and rejected cash remittances.',
-
             style: RiderStyle.small,
           ),
 
@@ -1119,17 +885,12 @@ class _CodRemittanceState extends State<CodRemittance> {
   Widget _emptyHistoryState() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 16),
-
       decoration: BoxDecoration(
         color: RiderColors.background,
-
         borderRadius: BorderRadius.circular(15),
-
         border: Border.all(color: RiderColors.border),
       ),
-
       child: const Column(
         children: [
           Icon(Icons.history_rounded, color: RiderColors.textGrey, size: 38),
@@ -1138,9 +899,7 @@ class _CodRemittanceState extends State<CodRemittance> {
 
           Text(
             'No remittance history yet.',
-
             textAlign: TextAlign.center,
-
             style: RiderStyle.small,
           ),
         ],
@@ -1148,27 +907,23 @@ class _CodRemittanceState extends State<CodRemittance> {
     );
   }
 
-  Widget _historyCard(Map<String, dynamic> item) {
-    final String status = _formatStatus(item['status']);
+  // ============================================================
+  // REMITTANCE HISTORY CARD - SHARED STATUS CHIP
+  // ============================================================
 
-    final Color statusColor = _statusColor(item['status']);
+  Widget _historyCard(Map<String, dynamic> item) {
+    final String status = item['status']?.toString().trim() ?? '';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-
       padding: const EdgeInsets.all(13),
-
       decoration: BoxDecoration(
         color: RiderColors.background,
-
         borderRadius: BorderRadius.circular(14),
-
         border: Border.all(color: RiderColors.border),
       ),
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           Row(
             children: [
@@ -1176,54 +931,36 @@ class _CodRemittanceState extends State<CodRemittance> {
                 child: Text(
                   _displayValue(
                     item['reference'],
-
                     fallback: 'Reference unavailable',
                   ),
-
                   maxLines: 1,
-
                   overflow: TextOverflow.ellipsis,
-
                   style: RiderStyle.cardTitle,
                 ),
               ),
 
               const SizedBox(width: 8),
 
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.10),
-
-                  borderRadius: BorderRadius.circular(20),
-                ),
-
-                child: Text(
-                  status,
-
-                  style: TextStyle(
-                    color: statusColor,
-
-                    fontSize: 9,
-
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
+              StatusChip(status: status.isEmpty ? 'Unknown' : status),
             ],
           ),
 
           const SizedBox(height: 12),
 
-          _detailRow('Submitted', _formatDate(item['submitted_at'])),
+          _detailRow(
+            'Submitted',
+            DateFormatter.dateOnly(
+              item['submitted_at'],
+              fallback: 'Not available',
+            ),
+          ),
 
           _detailRow(
             'Payments',
             _displayValue(item['payments_count'], fallback: '0'),
           ),
 
-          _detailRow('Amount', _money(item['amount'])),
+          _detailRow('Amount', MoneyFormatter.peso(item['amount'])),
         ],
       ),
     );
@@ -1236,10 +973,8 @@ class _CodRemittanceState extends State<CodRemittance> {
   Widget _detailRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 7),
-
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           SizedBox(width: 82, child: Text(label, style: RiderStyle.small)),
 
@@ -1262,33 +997,27 @@ class _CodRemittanceState extends State<CodRemittance> {
 
     showDialog<void>(
       context: context,
-
       builder: (BuildContext dialogContext) {
         return AlertDialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
           ),
-
           title: const Text(
             'Submit Remittance',
-
             style: RiderStyle.sectionTitle,
           ),
-
           content: Text(
             'You selected ${_selectedPaymentIds.length} payment(s) '
             'with a total amount of $_selectedAmountText.\n\n'
-            'The final remittance submission will be enabled once the Laravel Rider remittance endpoint is connected.',
-
+            'The final remittance submission will be enabled once '
+            'the Laravel Rider remittance endpoint is connected.',
             style: RiderStyle.small,
           ),
-
           actions: [
             TextButton(
               onPressed: () {
                 Navigator.pop(dialogContext);
               },
-
               child: const Text('Close'),
             ),
           ],
@@ -1304,20 +1033,15 @@ class _CodRemittanceState extends State<CodRemittance> {
   Widget _loadingCard() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(16),
-
       decoration: RiderStyle.card,
-
       child: const Row(
         children: [
           SizedBox(
             height: 22,
             width: 22,
-
             child: CircularProgressIndicator(
               strokeWidth: 2.2,
-
               color: RiderColors.primary,
             ),
           ),
@@ -1327,7 +1051,6 @@ class _CodRemittanceState extends State<CodRemittance> {
           Expanded(
             child: Text(
               'Loading COD remittance data...',
-
               style: RiderStyle.small,
             ),
           ),
@@ -1343,14 +1066,10 @@ class _CodRemittanceState extends State<CodRemittance> {
   Widget _errorCard() {
     return Container(
       width: double.infinity,
-
       padding: const EdgeInsets.all(16),
-
       decoration: RiderStyle.card,
-
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           const Icon(Icons.info_outline_rounded, color: RiderColors.warning),
 
@@ -1359,7 +1078,6 @@ class _CodRemittanceState extends State<CodRemittance> {
           Expanded(
             child: Text(
               _errorMessage ?? 'Unable to load COD remittance data.',
-
               style: RiderStyle.small,
             ),
           ),
@@ -1368,7 +1086,6 @@ class _CodRemittanceState extends State<CodRemittance> {
             onPressed: () {
               _loadRemittanceData(refresh: true);
             },
-
             icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
           ),
         ],

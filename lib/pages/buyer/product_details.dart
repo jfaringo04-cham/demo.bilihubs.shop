@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../models/product_model.dart';
-import '../../sevices/api_services.dart';
-import '../../sevices/cart_service.dart';
+import '../../services/api_services.dart';
+import '../../services/cart_service.dart';
 import '../../styles/buyer_style.dart';
+import '../../utils/money_formatter.dart';
 
 import 'checkout.dart';
 
@@ -60,7 +61,7 @@ class _ProductDetailsState extends State<ProductDetails> {
         final dynamic rawData = result['data'];
 
         if (rawData is Map) {
-          final freshProduct = ProductModel.fromJson(
+          final ProductModel freshProduct = ProductModel.fromJson(
             Map<String, dynamic>.from(rawData),
           );
 
@@ -80,7 +81,7 @@ class _ProductDetailsState extends State<ProductDetails> {
             result['message']?.toString() ??
             'Unable to refresh product details.';
       });
-    } catch (e) {
+    } catch (error) {
       if (!mounted) {
         return;
       }
@@ -102,7 +103,7 @@ class _ProductDetailsState extends State<ProductDetails> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(
-            content: Text("This product is currently out of stock."),
+            content: Text('This product is currently out of stock.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -110,14 +111,14 @@ class _ProductDetailsState extends State<ProductDetails> {
       return;
     }
 
-    final currentQuantity = CartService.getQuantity(_product);
+    final int currentQuantity = CartService.getQuantity(_product);
 
     if (currentQuantity >= _product.stock) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(
-            content: Text("Maximum available stock reached."),
+            content: Text('Maximum available stock reached.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -127,7 +128,7 @@ class _ProductDetailsState extends State<ProductDetails> {
 
     CartService.addToCart(_product);
 
-    final updatedQuantity = CartService.getQuantity(_product);
+    final int updatedQuantity = CartService.getQuantity(_product);
 
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -147,8 +148,8 @@ class _ProductDetailsState extends State<ProductDetails> {
               Expanded(
                 child: Text(
                   updatedQuantity > 1
-                      ? "Cart quantity updated to $updatedQuantity"
-                      : "Added to cart",
+                      ? 'Cart quantity updated to $updatedQuantity'
+                      : 'Added to cart',
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w600,
@@ -171,7 +172,7 @@ class _ProductDetailsState extends State<ProductDetails> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(
-            content: Text("This product is currently out of stock."),
+            content: Text('This product is currently out of stock.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -179,11 +180,15 @@ class _ProductDetailsState extends State<ProductDetails> {
       return;
     }
 
-    final buyNowItem = CartItem(product: _product, quantity: 1);
+    final CartItem buyNowItem = CartItem(product: _product, quantity: 1);
 
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => Checkout(items: [buyNowItem])),
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) {
+          return Checkout(items: <CartItem>[buyNowItem]);
+        },
+      ),
     );
   }
 
@@ -193,10 +198,11 @@ class _ProductDetailsState extends State<ProductDetails> {
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final height = MediaQuery.of(context).size.height;
+    final double width = MediaQuery.of(context).size.width;
 
-    final product = _product;
+    final double height = MediaQuery.of(context).size.height;
+
+    final ProductModel product = _product;
 
     return Scaffold(
       backgroundColor: BuyerColors.background,
@@ -209,10 +215,10 @@ class _ProductDetailsState extends State<ProductDetails> {
         elevation: 0,
         centerTitle: false,
         iconTheme: const IconThemeData(color: BuyerColors.textDark),
-        title: const Text("Product Details", style: BuyerStyle.title),
+        title: const Text('Product Details', style: BuyerStyle.title),
         actions: [
           IconButton(
-            tooltip: "Refresh",
+            tooltip: 'Refresh',
             onPressed: _isLoadingProduct
                 ? null
                 : () {
@@ -251,6 +257,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                     backgroundColor: BuyerColors.lightPurple,
                     minHeight: 2,
                   ),
+
                   const SizedBox(height: 14),
                 ],
 
@@ -279,7 +286,7 @@ class _ProductDetailsState extends State<ProductDetails> {
 
                         Expanded(
                           child: Text(
-                            "$_loadError Showing the available product information.",
+                            '$_loadError Showing the available product information.',
                             style: const TextStyle(
                               color: BuyerColors.textDark,
                               fontSize: 12,
@@ -340,7 +347,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                             const SizedBox(height: 10),
 
                             const Text(
-                              "Product Image",
+                              'Product Image',
                               style: BuyerStyle.small,
                             ),
                           ],
@@ -351,33 +358,40 @@ class _ProductDetailsState extends State<ProductDetails> {
                             product.imageUrl,
                             fit: BoxFit.cover,
                             width: double.infinity,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Container(
-                                    height: 75,
-                                    width: 75,
-                                    decoration: BoxDecoration(
-                                      color: BuyerColors.softPurple,
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: const Icon(
-                                      Icons.broken_image_outlined,
-                                      size: 42,
-                                      color: BuyerColors.primary,
-                                    ),
-                                  ),
+                            errorBuilder:
+                                (
+                                  BuildContext context,
+                                  Object error,
+                                  StackTrace? stackTrace,
+                                ) {
+                                  return Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Container(
+                                        height: 75,
+                                        width: 75,
+                                        decoration: BoxDecoration(
+                                          color: BuyerColors.softPurple,
+                                          borderRadius: BorderRadius.circular(
+                                            20,
+                                          ),
+                                        ),
+                                        child: const Icon(
+                                          Icons.broken_image_outlined,
+                                          size: 42,
+                                          color: BuyerColors.primary,
+                                        ),
+                                      ),
 
-                                  const SizedBox(height: 10),
+                                      const SizedBox(height: 10),
 
-                                  const Text(
-                                    "Unable to load image",
-                                    style: BuyerStyle.small,
-                                  ),
-                                ],
-                              );
-                            },
+                                      const Text(
+                                        'Unable to load image',
+                                        style: BuyerStyle.small,
+                                      ),
+                                    ],
+                                  );
+                                },
                           ),
                         ),
                 ),
@@ -408,7 +422,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                 // PRODUCT NAME
                 // ========================================================
                 Text(
-                  product.name.isEmpty ? "Unnamed Product" : product.name,
+                  product.name.isEmpty ? 'Unnamed Product' : product.name,
                   style: BuyerStyle.largeTitle,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -423,7 +437,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      "₱${product.sellingPrice.toStringAsFixed(2)}",
+                      MoneyFormatter.peso(product.sellingPrice),
                       style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.w800,
@@ -437,7 +451,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 2),
                         child: Text(
-                          "₱${product.price.toStringAsFixed(2)}",
+                          MoneyFormatter.peso(product.price),
                           style: const TextStyle(
                             fontSize: 14,
                             color: BuyerColors.textGrey,
@@ -467,7 +481,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          "${product.discountPercent.toStringAsFixed(0)}% OFF",
+                          '${product.discountPercent.toStringAsFixed(0)}% OFF',
                           style: const TextStyle(
                             color: BuyerColors.primary,
                             fontSize: 11,
@@ -486,7 +500,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          "Save ₱${product.discountAmount.toStringAsFixed(2)}",
+                          'Save ${MoneyFormatter.peso(product.discountAmount)}',
                           style: const TextStyle(
                             color: BuyerColors.primary,
                             fontSize: 11,
@@ -537,7 +551,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                             const SizedBox(width: 4),
 
                             Text(
-                              "(${product.reviewsCount})",
+                              '(${product.reviewsCount})',
                               style: BuyerStyle.small,
                             ),
                           ],
@@ -551,7 +565,7 @@ class _ProductDetailsState extends State<ProductDetails> {
 
                     const SizedBox(width: 10),
 
-                    Text("${product.soldCount} sold", style: BuyerStyle.small),
+                    Text('${product.soldCount} sold', style: BuyerStyle.small),
                   ],
                 ),
 
@@ -619,7 +633,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              "Available Stock",
+                              'Available Stock',
                               style: TextStyle(
                                 fontSize: 11,
                                 color: BuyerColors.textGrey,
@@ -630,8 +644,8 @@ class _ProductDetailsState extends State<ProductDetails> {
 
                             Text(
                               isOutOfStock
-                                  ? "Out of stock"
-                                  : "${product.stock} items available",
+                                  ? 'Out of stock'
+                                  : '${product.stock} items available',
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w700,
@@ -688,7 +702,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                           const SizedBox(width: 10),
 
                           const Text(
-                            "Description",
+                            'Description',
                             style: BuyerStyle.sectionTitle,
                           ),
                         ],
@@ -698,7 +712,7 @@ class _ProductDetailsState extends State<ProductDetails> {
 
                       Text(
                         product.description.trim().isEmpty
-                            ? "No description available for this product."
+                            ? 'No description available for this product.'
                             : product.description,
                         style: const TextStyle(
                           fontSize: 13,
@@ -709,7 +723,6 @@ class _ProductDetailsState extends State<ProductDetails> {
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 22),
 
                 // ========================================================
@@ -723,7 +736,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        "Delivery Information",
+                        'Delivery Information',
                         style: BuyerStyle.sectionTitle,
                       ),
 
@@ -731,24 +744,24 @@ class _ProductDetailsState extends State<ProductDetails> {
 
                       _deliveryItem(
                         icon: Icons.local_shipping_outlined,
-                        title: "Fast Delivery",
-                        subtitle: "Get your order delivered to your address.",
+                        title: 'Fast Delivery',
+                        subtitle: 'Get your order delivered to your address.',
                       ),
 
                       const SizedBox(height: 14),
 
                       _deliveryItem(
                         icon: Icons.verified_outlined,
-                        title: "Verified Seller",
-                        subtitle: "Products are listed by verified sellers.",
+                        title: 'Verified Seller',
+                        subtitle: 'Products are listed by verified sellers.',
                       ),
 
                       const SizedBox(height: 14),
 
                       _deliveryItem(
                         icon: Icons.lock_outline,
-                        title: "Secure Checkout",
-                        subtitle: "Your checkout information is protected.",
+                        title: 'Secure Checkout',
+                        subtitle: 'Your checkout information is protected.',
                       ),
                     ],
                   ),
@@ -771,10 +784,10 @@ class _ProductDetailsState extends State<ProductDetails> {
                     icon: const Icon(Icons.shopping_cart_outlined, size: 20),
                     label: Text(
                       _isLoadingProduct
-                          ? "Updating Product..."
+                          ? 'Updating Product...'
                           : isOutOfStock
-                          ? "Out of Stock"
-                          : "Add to Cart",
+                          ? 'Out of Stock'
+                          : 'Add to Cart',
                     ),
                     style: BuyerStyle.primaryButton,
                   ),
@@ -795,7 +808,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                             _buyNow(context);
                           },
                     icon: const Icon(Icons.flash_on_outlined, size: 20),
-                    label: const Text("Buy Now"),
+                    label: const Text('Buy Now'),
                     style: BuyerStyle.outlinedButton,
                   ),
                 ),
@@ -832,12 +845,17 @@ class _ProductDetailsState extends State<ProductDetails> {
             : Image.network(
                 imageUrl,
                 fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return const Icon(
-                    Icons.broken_image_outlined,
-                    color: BuyerColors.primary,
-                  );
-                },
+                errorBuilder:
+                    (
+                      BuildContext context,
+                      Object error,
+                      StackTrace? stackTrace,
+                    ) {
+                      return const Icon(
+                        Icons.broken_image_outlined,
+                        color: BuyerColors.primary,
+                      );
+                    },
               ),
       ),
     );

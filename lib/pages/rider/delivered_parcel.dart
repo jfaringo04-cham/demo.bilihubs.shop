@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../models/parcel_model.dart';
-import '../../sevices/api_services.dart';
+import '../../services/api_services.dart';
 import '../../styles/rider_style.dart';
+import '../../utils/money_formatter.dart';
 
 class DeliveredParcels extends StatefulWidget {
   final List<ParcelModel>? parcels;
@@ -357,7 +358,6 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
           parcel.deliveryAddress.toLowerCase().contains(query);
     }).toList();
   }
-
   // ============================================================
   // BUILD
   // ============================================================
@@ -372,43 +372,30 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
     return Scaffold(
       backgroundColor: RiderColors.background,
-
       appBar: AppBar(
         backgroundColor: RiderColors.white,
-
         elevation: 0,
-
         surfaceTintColor: Colors.transparent,
-
         iconTheme: const IconThemeData(color: RiderColors.textDark),
-
         titleSpacing: 18,
-
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-
           children: [
             Text('Delivery History', style: RiderStyle.title),
-
             SizedBox(height: 2),
-
             Text('Your completed deliveries', style: RiderStyle.small),
           ],
         ),
-
         actions: [
           if (_isRefreshing)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16),
-
               child: Center(
                 child: SizedBox(
                   height: 19,
                   width: 19,
-
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-
                     color: RiderColors.primary,
                   ),
                 ),
@@ -417,16 +404,13 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
           else
             IconButton(
               tooltip: 'Refresh',
-
               onPressed: _isLoading
                   ? null
                   : () {
                       _loadDeliveredParcels(refresh: true);
                     },
-
               icon: const Icon(
                 Icons.refresh_rounded,
-
                 color: RiderColors.primary,
               ),
             ),
@@ -434,10 +418,8 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
           const SizedBox(width: 5),
         ],
       ),
-
       body: SafeArea(
         top: false,
-
         child: Column(
           children: [
             // ==================================================
@@ -446,16 +428,13 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
             Container(
               width: double.infinity,
-
               color: RiderColors.white,
-
               padding: EdgeInsets.fromLTRB(
                 horizontalPadding,
                 14,
                 horizontalPadding,
                 15,
               ),
-
               child: Column(
                 children: [
                   Row(
@@ -463,7 +442,6 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                       const Expanded(
                         child: Text(
                           'Completed Deliveries',
-
                           style: RiderStyle.sectionTitle,
                         ),
                       ),
@@ -474,21 +452,15 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                             horizontal: 10,
                             vertical: 5,
                           ),
-
                           decoration: BoxDecoration(
                             color: RiderColors.lightGreen,
-
                             borderRadius: BorderRadius.circular(20),
                           ),
-
                           child: Text(
                             '${parcels.length}',
-
                             style: const TextStyle(
                               color: RiderColors.success,
-
                               fontSize: 10,
-
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -500,28 +472,20 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
                   TextField(
                     controller: _searchController,
-
                     onChanged: (String value) {
                       setState(() {
                         _searchQuery = value;
                       });
                     },
-
                     textInputAction: TextInputAction.search,
-
                     decoration: InputDecoration(
                       hintText: 'Search tracking, customer, address...',
-
                       hintStyle: RiderStyle.small,
-
                       prefixIcon: const Icon(
                         Icons.search_rounded,
-
                         color: RiderColors.primary,
-
                         size: 21,
                       ),
-
                       suffixIcon: _searchQuery.isNotEmpty
                           ? IconButton(
                               onPressed: () {
@@ -531,44 +495,31 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                                   _searchQuery = '';
                                 });
                               },
-
                               icon: const Icon(
                                 Icons.close_rounded,
-
                                 size: 19,
-
                                 color: RiderColors.textGrey,
                               ),
                             )
                           : null,
-
                       filled: true,
-
                       fillColor: RiderColors.background,
-
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 13,
                         vertical: 13,
                       ),
-
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(13),
-
                         borderSide: BorderSide.none,
                       ),
-
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(13),
-
                         borderSide: const BorderSide(color: RiderColors.border),
                       ),
-
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(13),
-
                         borderSide: const BorderSide(
                           color: RiderColors.primary,
-
                           width: 1.3,
                         ),
                       ),
@@ -586,7 +537,6 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                 onRefresh: () {
                   return _loadDeliveredParcels(refresh: true);
                 },
-
                 child: _buildBody(horizontalPadding, parcels),
               ),
             ),
@@ -621,16 +571,13 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
       physics: const AlwaysScrollableScrollPhysics(
         parent: BouncingScrollPhysics(),
       ),
-
       padding: EdgeInsets.fromLTRB(
         horizontalPadding,
         16,
         horizontalPadding,
         28,
       ),
-
       itemCount: parcels.length,
-
       itemBuilder: (BuildContext context, int index) {
         return _historyCard(parcels[index]);
       },
@@ -646,34 +593,24 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
-
       padding: const EdgeInsets.all(16),
-
       decoration: RiderStyle.card,
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
-
             children: [
               Container(
                 height: 45,
                 width: 45,
-
                 decoration: BoxDecoration(
                   color: RiderColors.lightGreen,
-
                   borderRadius: BorderRadius.circular(13),
                 ),
-
                 child: const Icon(
                   Icons.check_circle_outline_rounded,
-
                   color: RiderColors.success,
-
                   size: 23,
                 ),
               ),
@@ -683,7 +620,6 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     const Text('Tracking #', style: RiderStyle.small),
 
@@ -692,14 +628,10 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                     Text(
                       _displayValue(
                         parcel.trackingNumber,
-
                         fallback: 'Tracking unavailable',
                       ),
-
                       maxLines: 1,
-
                       overflow: TextOverflow.ellipsis,
-
                       style: RiderStyle.cardTitle,
                     ),
                   ],
@@ -710,21 +642,15 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-
                 decoration: BoxDecoration(
                   color: RiderColors.success.withValues(alpha: 0.10),
-
                   borderRadius: BorderRadius.circular(20),
                 ),
-
                 child: Text(
                   _formatStatus(parcel.status),
-
                   style: const TextStyle(
                     color: RiderColors.success,
-
                     fontSize: 9,
-
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -736,34 +662,26 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
           _infoRow(
             icon: Icons.person_outline_rounded,
-
             label: 'Customer',
-
             value: _displayValue(parcel.customerName),
           ),
 
           _infoRow(
             icon: Icons.phone_outlined,
-
             label: 'Contact',
-
             value: _displayValue(parcel.customerPhone),
           ),
 
           _infoRow(
             icon: Icons.location_on_outlined,
-
             label: 'Address',
-
             value: _displayValue(parcel.deliveryAddress),
           ),
 
           if (formattedDate.isNotEmpty)
             _infoRow(
               icon: Icons.calendar_today_outlined,
-
               label: 'Delivery Date',
-
               value: formattedDate,
             ),
 
@@ -778,7 +696,6 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-
                   children: [
                     const Text('Delivery Earnings', style: RiderStyle.small),
 
@@ -786,14 +703,11 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
                     Text(
                       parcel.deliveryEarnings > 0
-                          ? '₱${parcel.deliveryEarnings.toStringAsFixed(2)}'
+                          ? MoneyFormatter.peso(parcel.deliveryEarnings)
                           : '—',
-
                       style: const TextStyle(
                         color: RiderColors.earnings,
-
                         fontSize: 17,
-
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -805,23 +719,16 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                 onPressed: () {
                   _showDeliveryDetails(parcel);
                 },
-
                 icon: const Icon(Icons.visibility_outlined, size: 16),
-
                 label: const Text('View'),
-
                 style: OutlinedButton.styleFrom(
                   foregroundColor: RiderColors.primary,
-
                   side: const BorderSide(color: RiderColors.primary),
-
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(11),
                   ),
-
                   textStyle: const TextStyle(
                     fontSize: 11,
-
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -844,21 +751,16 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 11),
-
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           Container(
             height: 34,
             width: 34,
-
             decoration: BoxDecoration(
               color: RiderColors.lightPurple,
-
               borderRadius: BorderRadius.circular(10),
             ),
-
             child: Icon(icon, color: RiderColors.primary, size: 17),
           ),
 
@@ -867,7 +769,6 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-
               children: [
                 Text(label, style: RiderStyle.small),
 
@@ -875,11 +776,8 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
                 Text(
                   value,
-
                   maxLines: label == 'Address' ? 3 : 2,
-
                   overflow: TextOverflow.ellipsis,
-
                   style: RiderStyle.cardTitle,
                 ),
               ],
@@ -897,11 +795,8 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   void _showDeliveryDetails(ParcelModel parcel) {
     showModalBottomSheet<void>(
       context: context,
-
       isScrollControlled: true,
-
       backgroundColor: Colors.transparent,
-
       builder: (BuildContext sheetContext) {
         final String formattedDate = _formatDate(parcel.orderDate);
 
@@ -910,30 +805,22 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
             constraints: BoxConstraints(
               maxHeight: MediaQuery.of(sheetContext).size.height * 0.82,
             ),
-
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
-
             decoration: const BoxDecoration(
               color: RiderColors.white,
-
               borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
             ),
-
             child: SingleChildScrollView(
               physics: const BouncingScrollPhysics(),
-
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-
                 children: [
                   Center(
                     child: Container(
                       height: 4,
                       width: 42,
-
                       decoration: BoxDecoration(
                         color: RiderColors.border,
-
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
@@ -946,18 +833,13 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                       Container(
                         height: 46,
                         width: 46,
-
                         decoration: BoxDecoration(
                           color: RiderColors.lightGreen,
-
                           borderRadius: BorderRadius.circular(13),
                         ),
-
                         child: const Icon(
                           Icons.check_circle_outline_rounded,
-
                           color: RiderColors.success,
-
                           size: 23,
                         ),
                       ),
@@ -967,11 +849,9 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-
                           children: [
                             const Text(
                               'Delivery Details',
-
                               style: RiderStyle.sectionTitle,
                             ),
 
@@ -979,7 +859,6 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
                             Text(
                               _displayValue(parcel.trackingNumber),
-
                               style: RiderStyle.small,
                             ),
                           ],
@@ -1014,7 +893,7 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                   _detailTile(
                     'Delivery Earnings',
                     parcel.deliveryEarnings > 0
-                        ? '₱${parcel.deliveryEarnings.toStringAsFixed(2)}'
+                        ? MoneyFormatter.peso(parcel.deliveryEarnings)
                         : 'Not available',
                   ),
 
@@ -1022,16 +901,12 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
                   SizedBox(
                     width: double.infinity,
-
                     height: 48,
-
                     child: ElevatedButton(
                       onPressed: () {
                         Navigator.pop(sheetContext);
                       },
-
                       style: RiderStyle.primaryButton,
-
                       child: const Text('Close', style: RiderStyle.buttonText),
                     ),
                   ),
@@ -1047,22 +922,15 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   Widget _detailTile(String title, String value) {
     return Container(
       width: double.infinity,
-
       margin: const EdgeInsets.only(bottom: 10),
-
       padding: const EdgeInsets.all(13),
-
       decoration: BoxDecoration(
         color: RiderColors.background,
-
         borderRadius: BorderRadius.circular(12),
-
         border: Border.all(color: RiderColors.border),
       ),
-
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
           Text(title, style: RiderStyle.small),
 
@@ -1077,11 +945,9 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   // ============================================================
   // LOADING
   // ============================================================
-
   Widget _loadingState() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-
       children: const [
         SizedBox(height: 120),
 
@@ -1107,17 +973,13 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   Widget _errorState() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-
       padding: const EdgeInsets.all(30),
-
       children: [
         const SizedBox(height: 100),
 
         const Icon(
           Icons.cloud_off_outlined,
-
           size: 65,
-
           color: RiderColors.textGrey,
         ),
 
@@ -1125,14 +987,10 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
         const Text(
           'Unable to Load Delivery History',
-
           textAlign: TextAlign.center,
-
           style: TextStyle(
             fontWeight: FontWeight.w800,
-
             fontSize: 17,
-
             color: RiderColors.textDark,
           ),
         ),
@@ -1141,9 +999,7 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
         Text(
           _errorMessage ?? 'Something went wrong.',
-
           textAlign: TextAlign.center,
-
           style: RiderStyle.small,
         ),
 
@@ -1154,11 +1010,8 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
             onPressed: () {
               _loadDeliveredParcels(refresh: true);
             },
-
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-
             label: const Text('Retry', style: TextStyle(color: Colors.white)),
-
             style: RiderStyle.primaryButton,
           ),
         ),
@@ -1173,9 +1026,7 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   Widget _emptyState() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-
       padding: const EdgeInsets.all(30),
-
       children: [
         const SizedBox(height: 100),
 
@@ -1183,18 +1034,13 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
           child: Container(
             height: 90,
             width: 90,
-
             decoration: const BoxDecoration(
               color: RiderColors.lightGreen,
-
               shape: BoxShape.circle,
             ),
-
             child: const Icon(
               Icons.history_rounded,
-
               size: 44,
-
               color: RiderColors.success,
             ),
           ),
@@ -1204,14 +1050,10 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
         const Text(
           'No Delivery History Yet',
-
           textAlign: TextAlign.center,
-
           style: TextStyle(
             fontWeight: FontWeight.w800,
-
             fontSize: 18,
-
             color: RiderColors.textDark,
           ),
         ),
@@ -1220,9 +1062,7 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
         const Text(
           'Completed deliveries will appear here.',
-
           textAlign: TextAlign.center,
-
           style: RiderStyle.small,
         ),
       ],
@@ -1236,17 +1076,13 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
   Widget _noSearchResults() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-
       padding: const EdgeInsets.all(30),
-
       children: [
         const SizedBox(height: 100),
 
         const Icon(
           Icons.search_off_rounded,
-
           size: 55,
-
           color: RiderColors.textGrey,
         ),
 
@@ -1254,14 +1090,10 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
         const Text(
           'No Delivery Found',
-
           textAlign: TextAlign.center,
-
           style: TextStyle(
             color: RiderColors.textDark,
-
             fontSize: 17,
-
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -1270,9 +1102,7 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
 
         Text(
           'No delivery matches "$_searchQuery".',
-
           textAlign: TextAlign.center,
-
           style: RiderStyle.small,
         ),
 
@@ -1287,7 +1117,6 @@ class _DeliveredParcelsState extends State<DeliveredParcels> {
                 _searchQuery = '';
               });
             },
-
             child: const Text('Clear Search'),
           ),
         ),

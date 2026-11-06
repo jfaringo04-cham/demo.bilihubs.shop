@@ -1,9 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/parcel_model.dart';
-import '../../sevices/api_services.dart';
-import '../../sevices/auth_storage.dart';
+import '../../services/api_services.dart';
+import '../../services/auth_storage.dart';
 import '../../styles/rider_style.dart';
+import '../../utils/address_formatter.dart';
+import '../../utils/date_formatter.dart';
+import '../../widgets/app_empty_state.dart';
+import '../../widgets/app_error_state.dart';
+import '../../widgets/app_info_row.dart';
+import '../../widgets/app_skeleton.dart';
+import '../../widgets/status_chip.dart';
+
+import 'available_pickups.dart';
 
 class RiderHome extends StatefulWidget {
   final ValueChanged<int>? onNavigateTab;
@@ -15,299 +26,294 @@ class RiderHome extends StatefulWidget {
 }
 
 class _RiderHomeState extends State<RiderHome> {
+  static const Duration _requestTimeout = Duration(seconds: 25);
+
   bool _isLoading = true;
   bool _isRefreshing = false;
+  bool _requestInProgress = false;
+
   bool _hasDashboardData = false;
+  bool _hasTaskData = false;
 
   bool? _localAvailabilityOverride;
 
   String? _errorMessage;
+  String? _taskErrorMessage;
 
   String _savedUserName = 'Rider';
 
-  Map<String, dynamic> _savedUser = <String, dynamic>{};
-  Map<String, dynamic> _rider = <String, dynamic>{};
-  Map<String, dynamic> _overview = <String, dynamic>{};
+  Map<String, dynamic> _savedUser = {};
+  Map<String, dynamic> _rider = {};
+  Map<String, dynamic> _overview = {};
 
-  List<Map<String, dynamic>> _tasks = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _tasks = [];
+
+  int _requestId = 0;
+
+  bool get _hasAnyData => _hasDashboardData || _hasTaskData;
 
   @override
   void initState() {
     super.initState();
-
     _loadDashboard();
   }
 
+  @override
+  void dispose() {
+    _requestId++;
+    super.dispose();
+  }
+
   // ============================================================
-  // LOAD DASHBOARD
+  // DASHBOARD API
   // ============================================================
 
   Future<void> _loadDashboard({bool refresh = false}) async {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted || _requestInProgress) return;
+
+    _requestInProgress = true;
+    final int requestId = ++_requestId;
 
     setState(() {
-      if (refresh) {
-        _isRefreshing = true;
-      } else {
-        _isLoading = true;
-      }
-
+      _isLoading = !_hasAnyData;
+      _isRefreshing = _hasAnyData;
       _errorMessage = null;
+      _taskErrorMessage = null;
     });
 
     try {
-      await _loadSavedUser();
+      final Future<Map<String, dynamic>?> userFuture = _fetchSavedUser();
 
-      final Map<String, dynamic> dashboardResult =
-          await ApiService.getRiderDashboard();
+      final Future<_RiderApiResult> dashboardFuture = _fetchDashboard();
 
-      final Map<String, dynamic> deliveryResult =
-          await ApiService.getRiderDeliveries();
+      final Future<_RiderApiResult> deliveriesFuture = _fetchDeliveries();
 
-      if (!mounted) {
-        return;
-      }
+      final List<_RiderApiResult> responses =
+          await Future.wait<_RiderApiResult>([
+            dashboardFuture,
+            deliveriesFuture,
+          ]);
 
-      final Map<String, dynamic> riderData = _extractRiderData(dashboardResult);
+      final Map<String, dynamic>? savedUser = await userFuture;
 
-      final Map<String, dynamic> overviewData = _extractOverviewData(
-        dashboardResult,
-      );
+      if (!mounted || requestId != _requestId) return;
 
-      final List<Map<String, dynamic>> dashboardTasks = _extractDashboardTasks(
-        dashboardResult,
-      );
+      final _RiderApiResult dashboardResponse = responses[0];
+      final _RiderApiResult deliveriesResponse = responses[1];
 
-      final List<Map<String, dynamic>> deliveryTasks = _extractDeliveryTasks(
-        deliveryResult,
-      );
+      final bool dashboardSuccess = dashboardResponse.data?['success'] == true;
 
-      /*
-       * Prefer /api/rider/orders when available because this
-       * contains the latest assignment_type, line-haul and
-       * hub-routing fields required by the mobile Rider UI.
-       */
-      final List<Map<String, dynamic>> finalTasks = deliveryTasks.isNotEmpty
+      final bool deliveriesSuccess =
+          deliveriesResponse.data?['success'] == true;
+
+      final Map<String, dynamic> riderData = dashboardSuccess
+          ? _extractRiderData(dashboardResponse.data!)
+          : {};
+
+      final Map<String, dynamic> overviewData = dashboardSuccess
+          ? _extractOverviewData(dashboardResponse.data!)
+          : {};
+
+      final List<Map<String, dynamic>> dashboardTasks = dashboardSuccess
+          ? _extractDashboardTasks(dashboardResponse.data!)
+          : [];
+
+      final List<Map<String, dynamic>> deliveryTasks = deliveriesSuccess
+          ? _extractDeliveryTasks(deliveriesResponse.data!)
+          : [];
+
+      // The delivery endpoint is the preferred source of
+      // currently assigned shipments.
+      final List<Map<String, dynamic>> finalTasks = deliveriesSuccess
           ? deliveryTasks
-          : dashboardTasks;
-
-      final Map<String, dynamic> finalRider = riderData.isNotEmpty
-          ? riderData
-          : _extractSavedRider();
-
-      /*
-       * Preserve dashboard statistics but add the statistics
-       * calculated from the current mobile assignment list.
-       */
-      final Map<String, dynamic> computedOverview = _buildOverviewFromTasks(
-        finalTasks,
-      );
-
-      final Map<String, dynamic> finalOverview = <String, dynamic>{
-        ...computedOverview,
-        ...overviewData,
-      };
-
-      /*
-       * Assignment counters should always come from the latest
-       * Rider shipment list because older dashboard responses
-       * may not know about line-haul assignments yet.
-       */
-      finalOverview.addAll({
-        'seller_pickup': computedOverview['seller_pickup'] ?? 0,
-        'linehaul': computedOverview['linehaul'] ?? 0,
-        'final_mile': computedOverview['final_mile'] ?? 0,
-        'active': computedOverview['active'] ?? 0,
-      });
-
-      final bool dashboardSuccess = dashboardResult['success'] == true;
-
-      final bool deliveriesSuccess = deliveryResult['success'] == true;
-
-      final bool hasUsefulData =
-          finalRider.isNotEmpty ||
-          finalOverview.isNotEmpty ||
-          finalTasks.isNotEmpty ||
-          dashboardSuccess ||
-          deliveriesSuccess;
-
-      String? errorMessage;
-
-      if (!dashboardSuccess && !deliveriesSuccess) {
-        errorMessage = dashboardResult['message']?.toString().trim();
-
-        if (errorMessage == null || errorMessage.isEmpty) {
-          errorMessage = deliveryResult['message']?.toString().trim();
-        }
-
-        if (errorMessage == null || errorMessage.isEmpty) {
-          errorMessage = 'Unable to load rider information.';
-        }
-      }
+          : dashboardSuccess
+          ? dashboardTasks
+          : _tasks;
 
       final List<Map<String, dynamic>> sortedTasks =
-          List<Map<String, dynamic>>.from(finalTasks);
+          List<Map<String, dynamic>>.from(finalTasks)..sort(_compareTasks);
 
-      sortedTasks.sort((Map<String, dynamic> a, Map<String, dynamic> b) {
-        final DateTime? aDate = _taskActivityDate(a);
+      final Map<String, dynamic> computedOverview = _buildOverviewFromTasks(
+        sortedTasks,
+      );
 
-        final DateTime? bDate = _taskActivityDate(b);
-
-        if (aDate != null && bDate != null) {
-          final int comparison = bDate.compareTo(aDate);
-
-          if (comparison != 0) {
-            return comparison;
-          }
-        } else if (aDate != null) {
-          return -1;
-        } else if (bDate != null) {
-          return 1;
-        }
-
-        final int aId = int.tryParse(a['id']?.toString() ?? '') ?? 0;
-
-        final int bId = int.tryParse(b['id']?.toString() ?? '') ?? 0;
-
-        return bId.compareTo(aId);
-      });
+      if (!mounted || requestId != _requestId) return;
 
       setState(() {
-        _rider = finalRider;
-        _overview = finalOverview;
-        _tasks = sortedTasks;
+        if (savedUser != null) {
+          _savedUser = savedUser;
 
-        _hasDashboardData = hasUsefulData;
+          final String name = savedUser['name']?.toString().trim() ?? '';
 
-        _errorMessage = hasUsefulData ? null : errorMessage;
+          if (name.isNotEmpty) {
+            _savedUserName = name;
+          }
+        }
+
+        if (dashboardSuccess) {
+          _hasDashboardData = true;
+
+          _overview = {
+            ...overviewData,
+            if (deliveriesSuccess || dashboardTasks.isNotEmpty)
+              ...computedOverview,
+          };
+        } else if (deliveriesSuccess) {
+          // These are counts from loaded assignments,
+          // not official full-database statistics.
+          _overview = computedOverview;
+        }
+
+        if (riderData.isNotEmpty) {
+          _rider = riderData;
+        } else if (_rider.isEmpty) {
+          _rider = _extractSavedRider();
+        }
+
+        if (dashboardSuccess || deliveriesSuccess) {
+          _tasks = sortedTasks;
+          _hasTaskData = true;
+        }
+
+        _errorMessage = dashboardSuccess
+            ? null
+            : dashboardResponse.error ??
+                  'Dashboard statistics are temporarily unavailable.';
+
+        _taskErrorMessage = deliveriesSuccess
+            ? null
+            : deliveriesResponse.error ??
+                  'Unable to refresh delivery assignments.';
 
         _isLoading = false;
         _isRefreshing = false;
       });
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      debugPrint('Rider dashboard load error: $error');
+
+      if (!mounted || requestId != _requestId) return;
 
       setState(() {
         _isLoading = false;
         _isRefreshing = false;
-        _hasDashboardData = false;
-
-        _errorMessage = 'Unable to load rider dashboard: $error';
+        _errorMessage = 'Unable to load rider dashboard. Please retry.';
       });
+    } finally {
+      _requestInProgress = false;
     }
   }
 
-  // ============================================================
-  // LOAD SAVED USER
-  // ============================================================
-
-  Future<void> _loadSavedUser() async {
-    final Map<String, dynamic>? saved = await AuthStorage.getUser();
-
-    if (saved == null) {
-      return;
-    }
-
-    _savedUser = Map<String, dynamic>.from(saved);
-
-    final String savedName = saved['name']?.toString().trim() ?? '';
-
-    if (savedName.isNotEmpty) {
-      _savedUserName = savedName;
+  Future<Map<String, dynamic>?> _fetchSavedUser() async {
+    try {
+      return await AuthStorage.getUser().timeout(_requestTimeout);
+    } catch (error) {
+      debugPrint('Rider saved user error: $error');
+      return null;
     }
   }
 
+  Future<_RiderApiResult> _fetchDashboard() async {
+    try {
+      final Map<String, dynamic> response = await ApiService.getRiderDashboard()
+          .timeout(_requestTimeout);
+
+      if (response['success'] == true) {
+        return _RiderApiResult(data: response);
+      }
+
+      return _RiderApiResult(
+        data: response,
+        error: _apiMessage(response, 'Unable to load rider dashboard.'),
+      );
+    } on TimeoutException {
+      return const _RiderApiResult(error: 'Dashboard request timed out.');
+    } catch (error) {
+      debugPrint('Rider dashboard API error: $error');
+
+      return const _RiderApiResult(
+        error: 'Unable to connect to the rider dashboard API.',
+      );
+    }
+  }
+
+  Future<_RiderApiResult> _fetchDeliveries() async {
+    try {
+      final Map<String, dynamic> response =
+          await ApiService.getRiderDeliveries().timeout(_requestTimeout);
+
+      if (response['success'] == true) {
+        return _RiderApiResult(data: response);
+      }
+
+      return _RiderApiResult(
+        data: response,
+        error: _apiMessage(response, 'Unable to load rider deliveries.'),
+      );
+    } on TimeoutException {
+      return const _RiderApiResult(
+        error: 'Delivery assignments request timed out.',
+      );
+    } catch (error) {
+      debugPrint('Rider deliveries API error: $error');
+
+      return const _RiderApiResult(
+        error: 'Unable to connect to the rider deliveries API.',
+      );
+    }
+  }
+
+  String _apiMessage(Map<String, dynamic> response, String fallback) {
+    final String message = response['message']?.toString().trim() ?? '';
+
+    return message.isEmpty ? fallback : message;
+  }
+
   // ============================================================
-  // EXTRACT RIDER DATA
+  // RIDER DATA PARSING
   // ============================================================
 
   Map<String, dynamic> _extractRiderData(Map<String, dynamic> result) {
-    final dynamic directRider = result['rider'];
-
-    if (directRider is Map) {
-      return Map<String, dynamic>.from(directRider);
+    if (result['rider'] is Map) {
+      return Map<String, dynamic>.from(result['rider']);
     }
 
-    final dynamic rawData = result['data'];
+    final dynamic data = result['data'];
 
-    if (rawData is Map) {
-      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
-
-      final dynamic nestedRider = data['rider'];
-
-      if (nestedRider is Map) {
-        return Map<String, dynamic>.from(nestedRider);
+    if (data is Map) {
+      if (data['rider'] is Map) {
+        return Map<String, dynamic>.from(data['rider']);
       }
 
-      if (_looksLikeRider(data)) {
-        return data;
+      final Map<String, dynamic> parsed = Map<String, dynamic>.from(data);
+
+      if (_looksLikeRider(parsed)) {
+        return parsed;
       }
     }
 
-    return <String, dynamic>{};
+    return {};
   }
 
-  // ============================================================
-  // SAVED RIDER
-  // ============================================================
-
   Map<String, dynamic> _extractSavedRider() {
-    final dynamic savedRider = _savedUser['rider'];
-
-    if (savedRider is Map) {
-      return Map<String, dynamic>.from(savedRider);
+    if (_savedUser['rider'] is Map) {
+      return Map<String, dynamic>.from(_savedUser['rider']);
     }
 
     final dynamic profile = _savedUser['profile'];
 
-    if (profile is Map) {
-      final Map<String, dynamic> profileMap = Map<String, dynamic>.from(
-        profile,
-      );
-
-      final dynamic profileRider = profileMap['rider'];
-
-      if (profileRider is Map) {
-        return Map<String, dynamic>.from(profileRider);
-      }
+    if (profile is Map && profile['rider'] is Map) {
+      return Map<String, dynamic>.from(profile['rider']);
     }
 
-    final Map<String, dynamic> fallback = <String, dynamic>{};
-
-    final dynamic name = _savedUser['name'];
-
-    final dynamic vehicleType = _savedUser['vehicle_type'];
-
-    final dynamic availabilityStatus = _savedUser['availability_status'];
-
-    final dynamic status = _savedUser['status'];
-
-    if (name != null) {
-      fallback['name'] = name;
-    }
-
-    if (vehicleType != null) {
-      fallback['vehicle_type'] = vehicleType;
-    }
-
-    if (availabilityStatus != null) {
-      fallback['availability_status'] = availabilityStatus;
-    }
-
-    if (status != null) {
-      fallback['status'] = status;
-    }
-
-    return fallback;
+    return {
+      if (_savedUser['name'] != null) 'name': _savedUser['name'],
+      if (_savedUser['vehicle_type'] != null)
+        'vehicle_type': _savedUser['vehicle_type'],
+      if (_savedUser['availability_status'] != null)
+        'availability_status': _savedUser['availability_status'],
+      if (_savedUser['status'] != null) 'status': _savedUser['status'],
+    };
   }
-
-  // ============================================================
-  // RIDER MAP CHECK
-  // ============================================================
 
   bool _looksLikeRider(Map<String, dynamic> data) {
     return data.containsKey('vehicle_type') ||
@@ -316,175 +322,104 @@ class _RiderHomeState extends State<RiderHome> {
         data.containsKey('driver_license_number');
   }
 
-  // ============================================================
-  // EXTRACT OVERVIEW
-  // ============================================================
-
   Map<String, dynamic> _extractOverviewData(Map<String, dynamic> result) {
-    final dynamic directOverview = result['overview'];
-
-    if (directOverview is Map) {
-      return Map<String, dynamic>.from(directOverview);
+    if (result['overview'] is Map) {
+      return Map<String, dynamic>.from(result['overview']);
     }
 
-    final dynamic rawData = result['data'];
+    final dynamic data = result['data'];
 
-    if (rawData is Map) {
-      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
-
-      final dynamic nestedOverview = data['overview'];
-
-      if (nestedOverview is Map) {
-        return Map<String, dynamic>.from(nestedOverview);
-      }
-
-      final dynamic statistics = data['statistics'];
-
-      if (statistics is Map) {
-        return Map<String, dynamic>.from(statistics);
-      }
-
-      final dynamic stats = data['stats'];
-
-      if (stats is Map) {
-        return Map<String, dynamic>.from(stats);
+    if (data is Map) {
+      for (final String key in ['overview', 'statistics', 'stats']) {
+        if (data[key] is Map) {
+          return Map<String, dynamic>.from(data[key]);
+        }
       }
     }
 
-    return <String, dynamic>{};
+    return {};
   }
 
   // ============================================================
-  // EXTRACT DASHBOARD TASKS
+  // ASSIGNMENT PARSING
   // ============================================================
 
   List<Map<String, dynamic>> _extractDashboardTasks(
     Map<String, dynamic> result,
   ) {
-    final List<Map<String, dynamic>> parsedDirect = _toMapList(result['tasks']);
-
-    if (parsedDirect.isNotEmpty) {
-      return parsedDirect;
+    if (result['tasks'] is List) {
+      return _toMapList(result['tasks']);
     }
 
-    final dynamic rawData = result['data'];
+    final dynamic data = result['data'];
 
-    if (rawData is Map) {
-      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
-
-      for (final String key in <String>[
+    if (data is Map) {
+      for (final String key in [
         'tasks',
         'deliveries',
         'orders',
         'shipments',
         'recent_tasks',
       ]) {
-        final List<Map<String, dynamic>> list = _toMapList(data[key]);
-
-        if (list.isNotEmpty) {
-          return list;
+        if (data[key] is List) {
+          return _toMapList(data[key]);
         }
       }
     }
 
-    return <Map<String, dynamic>>[];
+    return [];
   }
-
-  // ============================================================
-  // EXTRACT DELIVERIES
-  // ============================================================
 
   List<Map<String, dynamic>> _extractDeliveryTasks(
     Map<String, dynamic> result,
   ) {
-    if (result['success'] != true) {
-      return <Map<String, dynamic>>[];
-    }
-
-    for (final String key in <String>[
-      'data',
-      'deliveries',
-      'orders',
-      'shipments',
-    ]) {
-      final List<Map<String, dynamic>> list = _toMapList(result[key]);
-
-      if (list.isNotEmpty) {
-        return list;
+    for (final String key in ['data', 'deliveries', 'orders', 'shipments']) {
+      if (result[key] is List) {
+        return _toMapList(result[key]);
       }
     }
 
-    final dynamic rawData = result['data'];
+    final dynamic data = result['data'];
 
-    if (rawData is Map) {
-      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
-
-      for (final String key in <String>[
-        'data',
-        'deliveries',
-        'orders',
-        'shipments',
-      ]) {
-        final List<Map<String, dynamic>> list = _toMapList(data[key]);
-
-        if (list.isNotEmpty) {
-          return list;
+    if (data is Map) {
+      for (final String key in ['data', 'deliveries', 'orders', 'shipments']) {
+        if (data[key] is List) {
+          return _toMapList(data[key]);
         }
       }
     }
 
-    return <Map<String, dynamic>>[];
+    return [];
   }
-
-  // ============================================================
-  // CONVERT LIST
-  // ============================================================
 
   List<Map<String, dynamic>> _toMapList(dynamic value) {
-    if (value is! List) {
-      return <Map<String, dynamic>>[];
-    }
+    if (value is! List) return [];
 
-    final List<Map<String, dynamic>> result = <Map<String, dynamic>>[];
-
-    for (final dynamic item in value) {
-      if (item is Map<String, dynamic>) {
-        result.add(Map<String, dynamic>.from(item));
-      } else if (item is Map) {
-        result.add(Map<String, dynamic>.from(item));
-      }
-    }
-
-    return result;
+    return value
+        .whereType<Map>()
+        .map((Map item) => Map<String, dynamic>.from(item))
+        .toList();
   }
-
-  // ============================================================
-  // NORMALIZE TASK
-  // ============================================================
 
   Map<String, dynamic> _normalizeTask(Map<String, dynamic> raw) {
     final Map<String, dynamic> map = Map<String, dynamic>.from(raw);
 
-    final dynamic shipment = raw['shipment'];
-
-    if (shipment is Map) {
-      map.addAll(Map<String, dynamic>.from(shipment));
+    if (raw['shipment'] is Map) {
+      map.addAll(Map<String, dynamic>.from(raw['shipment']));
     }
 
-    final dynamic order = raw['order'];
+    if (raw['order'] is Map) {
+      final Map<String, dynamic> order = Map<String, dynamic>.from(
+        raw['order'],
+      );
 
-    if (order is Map) {
-      final Map<String, dynamic> orderMap = Map<String, dynamic>.from(order);
+      map['customer_name'] ??= order['customer_name'] ?? order['buyer_name'];
 
-      map['customer_name'] ??=
-          orderMap['customer_name'] ?? orderMap['buyer_name'];
+      map['customer_phone'] ??= order['customer_phone'] ?? order['phone'];
 
-      map['customer_phone'] ??= orderMap['customer_phone'] ?? orderMap['phone'];
+      map['delivery_address'] ??= order['delivery_address'] ?? order['address'];
 
-      map['delivery_address'] ??=
-          orderMap['delivery_address'] ?? orderMap['address'];
-
-      map['order_date'] ??= orderMap['created_at'];
+      map['order_date'] ??= order['created_at'];
     }
 
     map['id'] ??= map['shipment_id'] ?? map['order_id'] ?? 0;
@@ -503,7 +438,6 @@ class _RiderHomeState extends State<RiderHome> {
     map['pickup_address'] ??= map['seller_address'] ?? '';
 
     map['rider_name'] ??= map['driver_name'] ?? '';
-
     map['rider_id'] ??= map['driver_id'];
 
     map['status'] ??= map['shipment_status'] ?? map['delivery_status'] ?? '';
@@ -513,23 +447,18 @@ class _RiderHomeState extends State<RiderHome> {
     map['delivery_earnings'] ??= map['earnings'] ?? map['delivery_fee'] ?? 0;
 
     map['latitude'] ??= map['rider_latitude'];
-
     map['longitude'] ??= map['rider_longitude'];
 
     return map;
   }
 
-  // ============================================================
-  // BUILD OVERVIEW FROM TASKS
-  // ============================================================
-
   Map<String, dynamic> _buildOverviewFromTasks(
     List<Map<String, dynamic>> tasks,
   ) {
     int assigned = 0;
+    int active = 0;
     int completed = 0;
     int pending = 0;
-    int active = 0;
 
     int sellerPickup = 0;
     int linehaul = 0;
@@ -551,48 +480,35 @@ class _RiderHomeState extends State<RiderHome> {
           finalMile++;
         }
 
-        if (parcel.isDelivered || parcel.normalizedStatus == 'completed') {
-          completed++;
-          continue;
-        }
-
-        if (parcel.isFailed) {
-          continue;
-        }
-
-        active++;
-        assigned++;
-
         final String status = parcel.normalizedStatus;
 
-        if (status == 'pending' ||
-            status == 'assigned' ||
-            status == 'staged' ||
-            status == 'ready_for_pickup' ||
-            status == 'at_sorting_center') {
-          pending++;
-        }
-      } catch (_) {
-        final String status = _normalizeStatus(raw['status']?.toString() ?? '');
-
-        if (status == 'delivered' || status == 'completed') {
+        if (parcel.isDelivered || status == 'completed') {
           completed++;
           continue;
         }
 
-        if (status == 'cancelled' ||
-            status == 'failed' ||
-            status == 'delivery_failed') {
+        if (parcel.isFailed || status == 'cancelled' || status == 'canceled') {
           continue;
         }
 
         assigned++;
         active++;
+
+        if ({
+          'pending',
+          'assigned',
+          'ready_for_pickup',
+          'staged',
+          'at_sorting_center',
+        }.contains(status)) {
+          pending++;
+        }
+      } catch (error) {
+        debugPrint('Rider task stats parse error: $error');
       }
     }
 
-    return <String, dynamic>{
-      'today_delivery': assigned,
+    return {
       'assigned': assigned,
       'active': active,
       'completed': completed,
@@ -603,12 +519,8 @@ class _RiderHomeState extends State<RiderHome> {
     };
   }
 
-  // ============================================================
-  // TASK ACTIVITY DATE
-  // ============================================================
-
   DateTime? _taskActivityDate(Map<String, dynamic> task) {
-    final List<dynamic> candidates = <dynamic>[
+    for (final dynamic value in [
       task['updated_at'],
       task['linehaul_started_at'],
       task['linehaul_assigned_at'],
@@ -616,23 +528,158 @@ class _RiderHomeState extends State<RiderHome> {
       task['picked_up_at'],
       task['created_at'],
       task['order_date'],
-    ];
-
-    for (final dynamic value in candidates) {
+    ]) {
       final String text = value?.toString().trim() ?? '';
 
       if (text.isEmpty || text.toLowerCase() == 'null') {
         continue;
       }
 
-      final DateTime? parsed = DateTime.tryParse(text);
+      final DateTime? date = DateFormatter.value(text);
 
-      if (parsed != null) {
-        return parsed;
-      }
+      if (date != null) return date;
     }
 
     return null;
+  }
+
+  int _compareTasks(Map<String, dynamic> a, Map<String, dynamic> b) {
+    final DateTime? aDate = _taskActivityDate(a);
+    final DateTime? bDate = _taskActivityDate(b);
+
+    if (aDate != null && bDate != null) {
+      final int result = bDate.compareTo(aDate);
+
+      if (result != 0) return result;
+    } else if (aDate != null) {
+      return -1;
+    } else if (bDate != null) {
+      return 1;
+    }
+
+    final int aId = int.tryParse(a['id']?.toString() ?? '') ?? 0;
+    final int bId = int.tryParse(b['id']?.toString() ?? '') ?? 0;
+
+    return bId.compareTo(aId);
+  }
+
+  // ============================================================
+  // RIDER INFORMATION
+  // ============================================================
+
+  String get _riderName {
+    for (final dynamic value in [
+      _rider['name'],
+      _rider['full_name'],
+      _savedUser['name'],
+    ]) {
+      final String text = value?.toString().trim() ?? '';
+
+      if (text.isNotEmpty) return text;
+    }
+
+    final String firstName = _rider['first_name']?.toString().trim() ?? '';
+
+    final String lastName = _rider['last_name']?.toString().trim() ?? '';
+
+    final String combined = [
+      firstName,
+      lastName,
+    ].where((String name) => name.isNotEmpty).join(' ');
+
+    return combined.isNotEmpty ? combined : _savedUserName;
+  }
+
+  String get _firstName {
+    final String name = _riderName.trim();
+
+    return name.isEmpty ? 'Rider' : name.split(RegExp(r'\s+')).first;
+  }
+
+  String get _vehicleType {
+    for (final dynamic value in [
+      _rider['vehicle_type'],
+      _rider['vehicle'],
+      _savedUser['vehicle_type'],
+    ]) {
+      final String text = value?.toString().trim() ?? '';
+
+      if (text.isNotEmpty) {
+        return _formatStatus(text);
+      }
+    }
+
+    return 'Vehicle not specified';
+  }
+
+  bool? get _serverAvailability {
+    final dynamic raw = _rider['is_available'] ?? _rider['available'];
+
+    if (raw is bool) return raw;
+
+    if (raw != null) {
+      final String text = raw.toString().trim().toLowerCase();
+
+      if (['true', '1', 'yes'].contains(text)) {
+        return true;
+      }
+
+      if (['false', '0', 'no'].contains(text)) {
+        return false;
+      }
+    }
+
+    final String status =
+        (_rider['availability_status'] ??
+                _rider['availability'] ??
+                _savedUser['availability_status'] ??
+                '')
+            .toString()
+            .trim()
+            .toLowerCase();
+
+    if (['available', 'online', 'active'].contains(status)) {
+      return true;
+    }
+
+    if (['unavailable', 'offline', 'inactive'].contains(status)) {
+      return false;
+    }
+
+    return null;
+  }
+
+  bool get _isAvailable =>
+      _localAvailabilityOverride ?? _serverAvailability ?? false;
+
+  String get _availabilityStatus {
+    if (_localAvailabilityOverride != null) {
+      return _isAvailable ? 'Available (Local)' : 'Unavailable (Local)';
+    }
+
+    if (_serverAvailability == null) {
+      return 'Not available';
+    }
+
+    return _isAvailable ? 'Available' : 'Unavailable';
+  }
+
+  void _toggleAvailability() {
+    setState(() {
+      _localAvailabilityOverride = !_isAvailable;
+    });
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            'Availability was changed on this screen only. '
+            'It has not been saved to the BiliHub server.',
+          ),
+        ),
+      );
   }
 
   // ============================================================
@@ -643,145 +690,50 @@ class _RiderHomeState extends State<RiderHome> {
     widget.onNavigateTab?.call(index);
   }
 
-  // ============================================================
-  // RIDER NAME
-  // ============================================================
+  Future<void> _openPickupOffers() async {
+    if (!mounted) return;
 
-  String get _riderName {
-    final List<dynamic> candidates = <dynamic>[
-      _rider['name'],
-      _rider['full_name'],
-      _savedUser['name'],
-    ];
+    bool pickupAccepted = false;
 
-    for (final dynamic candidate in candidates) {
-      final String value = candidate?.toString().trim() ?? '';
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) {
+          return AvailablePickups(
+            onPickupAccepted: () {
+              pickupAccepted = true;
+            },
+          );
+        },
+      ),
+    );
 
-      if (value.isNotEmpty) {
-        return value;
-      }
-    }
+    if (!mounted) return;
 
-    final String firstName = _rider['first_name']?.toString().trim() ?? '';
+    // Reload after returning from the offer inbox so
+    // accepted pickups can appear in Latest Assignments.
+    await _loadDashboard(refresh: true);
 
-    final String lastName = _rider['last_name']?.toString().trim() ?? '';
-
-    final String completeName = <String>[
-      firstName,
-      lastName,
-    ].where((String part) => part.isNotEmpty).join(' ');
-
-    if (completeName.isNotEmpty) {
-      return completeName;
-    }
-
-    return _savedUserName;
-  }
-
-  String get _firstName {
-    final String name = _riderName.trim();
-
-    if (name.isEmpty) {
-      return 'Rider';
-    }
-
-    return name.split(RegExp(r'\s+')).first;
-  }
-
-  // ============================================================
-  // AVAILABILITY
-  // ============================================================
-
-  bool get _isAvailable {
-    final bool? override = _localAvailabilityOverride;
-
-    if (override != null) {
-      return override;
-    }
-
-    final dynamic boolAvailable = _rider['is_available'] ?? _rider['available'];
-
-    if (boolAvailable is bool) {
-      return boolAvailable;
-    }
-
-    if (boolAvailable != null) {
-      final String value = boolAvailable.toString().trim().toLowerCase();
-
-      if (value == '1' || value == 'true' || value == 'yes') {
-        return true;
-      }
-
-      if (value == '0' || value == 'false' || value == 'no') {
-        return false;
-      }
-    }
-
-    final String availability =
-        (_rider['availability_status'] ??
-                _rider['availability'] ??
-                _savedUser['availability_status'] ??
-                '')
-            .toString()
-            .trim()
-            .toLowerCase();
-
-    return availability == 'available' ||
-        availability == 'online' ||
-        availability == 'active';
-  }
-
-  String get _availabilityStatus {
-    return _isAvailable ? 'Available' : 'Unavailable';
-  }
-
-  void _toggleAvailability() {
-    final bool newValue = !_isAvailable;
-
-    setState(() {
-      _localAvailabilityOverride = newValue;
-    });
+    if (!mounted || !pickupAccepted) return;
 
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text(
-            newValue
-                ? 'You are now shown as Available '
-                      'on this device.'
-                : 'You are now shown as Unavailable '
-                      'on this device.',
+          content: const Text(
+            'Pickup accepted! Check My Deliveries '
+            'for your assigned parcel.',
+          ),
+          action: SnackBarAction(
+            label: 'DELIVERIES',
+            onPressed: () => _goToTab(1),
           ),
         ),
       );
   }
 
   // ============================================================
-  // VEHICLE TYPE
-  // ============================================================
-
-  String get _vehicleType {
-    final List<dynamic> candidates = <dynamic>[
-      _rider['vehicle_type'],
-      _rider['vehicle'],
-      _savedUser['vehicle_type'],
-    ];
-
-    for (final dynamic candidate in candidates) {
-      final String value = candidate?.toString().trim() ?? '';
-
-      if (value.isNotEmpty) {
-        return _formatStatus(value);
-      }
-    }
-
-    return 'Vehicle not specified';
-  }
-
-  // ============================================================
-  // OVERVIEW VALUE
+  // DISPLAY HELPERS
   // ============================================================
 
   String _overviewValue(List<String> keys) {
@@ -793,93 +745,69 @@ class _RiderHomeState extends State<RiderHome> {
       }
     }
 
-    return '0';
+    return '—';
   }
-
-  // ============================================================
-  // STATUS HELPERS
-  // ============================================================
 
   String _normalizeStatus(String value) {
     return value.trim().toLowerCase().replaceAll(' ', '_').replaceAll('-', '_');
   }
 
   String _formatStatus(String value) {
-    final String cleaned = value
+    final String normalized = value
         .trim()
         .replaceAll('_', ' ')
         .replaceAll('-', ' ');
 
-    if (cleaned.isEmpty) {
-      return 'Unknown';
-    }
+    if (normalized.isEmpty) return 'Unknown';
 
-    return cleaned
+    return normalized
         .split(RegExp(r'\s+'))
-        .map((String word) {
-          if (word.isEmpty) {
-            return word;
-          }
-
-          return '${word[0].toUpperCase()}'
-              '${word.substring(1).toLowerCase()}';
-        })
+        .where((String word) => word.isNotEmpty)
+        .map(
+          (String word) =>
+              '${word[0].toUpperCase()}'
+              '${word.substring(1).toLowerCase()}',
+        )
         .join(' ');
   }
 
-  Color _statusColor(String status) {
-    final String normalized = _normalizeStatus(status);
+  String _firstNonEmpty(List<dynamic> values, {String fallback = ''}) {
+    for (final dynamic value in values) {
+      final String text = value?.toString().trim() ?? '';
 
-    switch (normalized) {
-      case 'delivered':
-      case 'completed':
-        return RiderColors.success;
-
-      case 'cancelled':
-      case 'failed':
-      case 'delivery_failed':
-      case 'failed_return_at_sorting_center':
-        return RiderColors.danger;
-
-      case 'pending':
-      case 'assigned':
-      case 'staged':
-      case 'ready_for_pickup':
-      case 'awaiting_assignment':
-        return RiderColors.warning;
-
-      case 'picked_up':
-      case 'in_transit':
-      case 'out_for_delivery':
-      case 'at_sorting_center':
-      case 'sorted':
-      case 'at_origin_hub':
-      case 'in_hub_transfer':
-      case 'at_destination_hub':
-        return RiderColors.primary;
-
-      default:
-        return RiderColors.textGrey;
+      if (text.isNotEmpty && text.toLowerCase() != 'null') {
+        return text;
+      }
     }
+
+    return fallback;
+  }
+
+  String _displayValue(String value, {String fallback = 'Not available'}) {
+    final String cleaned = value.trim();
+
+    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
+      return fallback;
+    }
+
+    return cleaned;
   }
 
   // ============================================================
-  // BUILD
+  // MAIN UI
   // ============================================================
 
   @override
   Widget build(BuildContext context) {
-    final double screenWidth = MediaQuery.of(context).size.width;
-
+    final double screenWidth = MediaQuery.sizeOf(context).width;
     final double horizontalPadding = screenWidth < 380 ? 14 : 18;
 
     return Scaffold(
       backgroundColor: RiderColors.background,
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: () {
-            return _loadDashboard(refresh: true);
-          },
+          color: RiderColors.primary,
+          onRefresh: () => _loadDashboard(refresh: true),
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics(),
@@ -895,34 +823,176 @@ class _RiderHomeState extends State<RiderHome> {
 
               const SizedBox(height: 18),
 
-              if (_isLoading) ...[_loadingCard(), const SizedBox(height: 14)],
+              // Always accessible, even when dashboard
+              // statistics fail to load.
+              _pickupOffersShortcut(),
 
-              if (!_isLoading && _errorMessage != null) ...[
-                _errorCard(),
+              const SizedBox(height: 18),
+
+              if (_isLoading && !_hasAnyData)
+                _buildDashboardSkeleton()
+              else if (!_hasAnyData)
+                AppErrorState(
+                  title: 'Unable to Load Rider Dashboard',
+                  message:
+                      _errorMessage ??
+                      _taskErrorMessage ??
+                      'Please check your connection and retry.',
+                  color: RiderColors.primary,
+                  onRetry: () => _loadDashboard(),
+                )
+              else ...[
+                if (_isRefreshing) ...[
+                  const LinearProgressIndicator(
+                    color: RiderColors.primary,
+                    minHeight: 2,
+                  ),
+                  const SizedBox(height: 14),
+                ],
+
+                if (_errorMessage != null) ...[
+                  _errorBanner(_errorMessage!),
+                  const SizedBox(height: 14),
+                ],
+
+                _availabilityCard(),
+
                 const SizedBox(height: 14),
+
+                _riderInfoCard(),
+
+                const SizedBox(height: 20),
+
+                _deliveryOverview(screenWidth),
+
+                const SizedBox(height: 20),
+
+                _assignmentOverview(screenWidth),
+
+                const SizedBox(height: 20),
+
+                _assignedShipments(),
               ],
-
-              _availabilityCard(),
-
-              const SizedBox(height: 14),
-
-              _riderInfoCard(),
-
-              const SizedBox(height: 20),
-
-              _deliveryOverview(screenWidth),
-
-              const SizedBox(height: 20),
-
-              _assignmentOverview(screenWidth),
-
-              const SizedBox(height: 20),
-
-              _assignedShipments(),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  // ============================================================
+  // PICKUP OFFERS SHORTCUT
+  // ============================================================
+
+  Widget _pickupOffersShortcut() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _openPickupOffers,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          width: double.infinity,
+          padding: const EdgeInsets.all(17),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [RiderColors.primary, RiderColors.primaryDark],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Row(
+            children: [
+              Container(
+                height: 50,
+                width: 50,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.notifications_active_outlined,
+                  color: Colors.white,
+                  size: 27,
+                ),
+              ),
+
+              const SizedBox(width: 13),
+
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pickup Offers',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+
+                    SizedBox(height: 5),
+
+                    Text(
+                      'View, accept or decline new '
+                      'seller pickup requests.',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 8),
+
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.white,
+                size: 24,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // SKELETON LOADING
+  // ============================================================
+
+  Widget _buildDashboardSkeleton() {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Delivery Overview', style: RiderStyle.sectionTitle),
+        SizedBox(height: 12),
+        AppSkeleton(
+          type: AppSkeletonType.dashboard,
+          itemCount: 4,
+          color: RiderColors.primary,
+        ),
+        SizedBox(height: 24),
+        Text('Assignment Types', style: RiderStyle.sectionTitle),
+        SizedBox(height: 12),
+        AppSkeleton(
+          type: AppSkeletonType.dashboard,
+          itemCount: 2,
+          color: RiderColors.primary,
+        ),
+        SizedBox(height: 24),
+        Text('Latest Assignments', style: RiderStyle.sectionTitle),
+        SizedBox(height: 12),
+        AppSkeleton(
+          type: AppSkeletonType.parcel,
+          itemCount: 2,
+          color: RiderColors.primary,
+        ),
+      ],
     );
   }
 
@@ -932,7 +1002,6 @@ class _RiderHomeState extends State<RiderHome> {
 
   Widget _header() {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
           child: Column(
@@ -945,29 +1014,82 @@ class _RiderHomeState extends State<RiderHome> {
           ),
         ),
 
-        if (_isRefreshing)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 10),
-            child: SizedBox(
-              height: 19,
-              width: 19,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: RiderColors.primary,
-              ),
-            ),
-          )
-        else
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: () {
-              _loadDashboard(refresh: true);
-            },
-            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
-          ),
+        IconButton(
+          tooltip: 'Refresh dashboard',
+          onPressed: _requestInProgress
+              ? null
+              : () => _loadDashboard(refresh: true),
+          icon: _isRefreshing
+              ? const SizedBox(
+                  width: 19,
+                  height: 19,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: RiderColors.primary,
+                  ),
+                )
+              : const Icon(Icons.refresh_rounded, color: RiderColors.primary),
+        ),
 
         _notificationButton(),
       ],
+    );
+  }
+
+  Widget _notificationButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _openPickupOffers,
+        borderRadius: BorderRadius.circular(13),
+        child: Container(
+          height: 40,
+          width: 40,
+          decoration: BoxDecoration(
+            color: RiderColors.white,
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: RiderColors.border),
+          ),
+          child: const Icon(
+            Icons.notifications_none_rounded,
+            color: RiderColors.textDark,
+            size: 20,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // ERROR BANNER
+  // ============================================================
+
+  Widget _errorBanner(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: RiderColors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: RiderColors.border),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            color: RiderColors.warning,
+            size: 21,
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Text(message, style: RiderStyle.small)),
+          TextButton(
+            onPressed: _requestInProgress
+                ? null
+                : () => _loadDashboard(refresh: true),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -982,73 +1104,52 @@ class _RiderHomeState extends State<RiderHome> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: RiderStyle.card,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 46,
-            width: 46,
-            decoration: BoxDecoration(
-              color: available
-                  ? RiderColors.lightGreen
-                  : RiderColors.lightOrange,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            alignment: Alignment.center,
-            child: Icon(
-              available
-                  ? Icons.check_circle_outline_rounded
-                  : Icons.pause_circle_outline_rounded,
-              color: available ? RiderColors.success : RiderColors.warning,
-              size: 25,
-            ),
-          ),
-
-          const SizedBox(width: 12),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Availability', style: RiderStyle.cardTitle),
-                const SizedBox(height: 3),
-                Text(
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: available
+                      ? RiderColors.lightGreen
+                      : RiderColors.lightOrange,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
                   available
-                      ? 'You are available for new rider assignments.'
-                      : 'You are currently unavailable for new assignments.',
-                  style: RiderStyle.small,
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.pause_circle_outline_rounded,
+                  color: available ? RiderColors.success : RiderColors.warning,
+                  size: 25,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Availability', style: RiderStyle.cardTitle),
+                    const SizedBox(height: 3),
+                    Text(_availabilityStatus, style: RiderStyle.small),
+                  ],
+                ),
+              ),
+              Switch(
+                value: available,
+                activeThumbColor: RiderColors.success,
+                onChanged: (_) => _toggleAvailability(),
+              ),
+            ],
           ),
-
-          const SizedBox(width: 10),
-
-          GestureDetector(
-            onTap: _toggleAvailability,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              width: 54,
-              height: 30,
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                color: available ? RiderColors.success : RiderColors.border,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: AnimatedAlign(
-                duration: const Duration(milliseconds: 180),
-                alignment: available
-                    ? Alignment.centerRight
-                    : Alignment.centerLeft,
-                child: Container(
-                  height: 24,
-                  width: 24,
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ),
+          const SizedBox(height: 9),
+          const Text(
+            'Availability changes here are local only. '
+            'They do not change your actual rider status '
+            'on the Laravel server.',
+            style: RiderStyle.small,
           ),
         ],
       ),
@@ -1068,88 +1169,40 @@ class _RiderHomeState extends State<RiderHome> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('Rider Information', style: RiderStyle.sectionTitle),
-
           const SizedBox(height: 14),
-
           Row(
             children: [
               Container(
-                height: 50,
                 width: 50,
+                height: 50,
                 decoration: const BoxDecoration(
                   color: RiderColors.primary,
                   shape: BoxShape.circle,
                 ),
-                alignment: Alignment.center,
                 child: const Icon(
                   Icons.two_wheeler_rounded,
                   color: Colors.white,
                   size: 26,
                 ),
               ),
-
               const SizedBox(width: 13),
-
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       _riderName,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: RiderStyle.cardTitle,
                     ),
-
-                    const SizedBox(height: 5),
-
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.directions_bike_outlined,
-                          size: 14,
-                          color: RiderColors.textGrey,
-                        ),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            _vehicleType,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: RiderStyle.small,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 5),
-
-                    Row(
-                      children: [
-                        Container(
-                          height: 7,
-                          width: 7,
-                          decoration: BoxDecoration(
-                            color: _isAvailable
-                                ? RiderColors.success
-                                : RiderColors.warning,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-
-                        const SizedBox(width: 6),
-
-                        Text(
-                          _availabilityStatus,
-                          style: TextStyle(
-                            color: _isAvailable
-                                ? RiderColors.success
-                                : RiderColors.warning,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
+                    const SizedBox(height: 6),
+                    AppInfoRow(
+                      label: 'Vehicle Type',
+                      value: _vehicleType,
+                      icon: Icons.directions_bike_outlined,
+                      iconColor: RiderColors.primary,
+                      compact: true,
                     ),
                   ],
                 ),
@@ -1172,31 +1225,23 @@ class _RiderHomeState extends State<RiderHome> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Delivery Overview', style: RiderStyle.sectionTitle),
-
         const SizedBox(height: 12),
-
         Row(
           children: [
             Expanded(
               child: _overviewCard(
                 title: 'Active',
-                value: _overviewValue(<String>[
-                  'active',
-                  'assigned',
-                  'today_delivery',
-                ]),
+                value: _overviewValue(['active', 'assigned', 'today_delivery']),
                 icon: Icons.inventory_2_outlined,
                 background: RiderColors.lightBlue,
                 compact: compact,
               ),
             ),
-
             const SizedBox(width: 10),
-
             Expanded(
               child: _overviewCard(
                 title: 'Completed',
-                value: _overviewValue(<String>[
+                value: _overviewValue([
                   'completed',
                   'delivered',
                   'completed_delivery',
@@ -1208,12 +1253,10 @@ class _RiderHomeState extends State<RiderHome> {
             ),
           ],
         ),
-
         const SizedBox(height: 10),
-
         _wideOverviewCard(
           title: 'Pending Assignments',
-          value: _overviewValue(<String>[
+          value: _overviewValue([
             'pending',
             'pending_delivery',
             'pending_deliveries',
@@ -1226,7 +1269,7 @@ class _RiderHomeState extends State<RiderHome> {
   }
 
   // ============================================================
-  // ASSIGNMENT OVERVIEW
+  // ASSIGNMENT TYPES
   // ============================================================
 
   Widget _assignmentOverview(double screenWidth) {
@@ -1236,27 +1279,23 @@ class _RiderHomeState extends State<RiderHome> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Assignment Types', style: RiderStyle.sectionTitle),
-
         const SizedBox(height: 12),
-
         Row(
           children: [
             Expanded(
               child: _overviewCard(
                 title: 'Seller Pickup',
-                value: _overviewValue(const <String>['seller_pickup']),
+                value: _overviewValue(['seller_pickup']),
                 icon: Icons.inventory_2_outlined,
                 background: RiderColors.lightOrange,
                 compact: compact,
               ),
             ),
-
             const SizedBox(width: 10),
-
             Expanded(
               child: _overviewCard(
                 title: 'Line Haul',
-                value: _overviewValue(const <String>['linehaul']),
+                value: _overviewValue(['linehaul']),
                 icon: Icons.multiple_stop_rounded,
                 background: RiderColors.lightBlue,
                 compact: compact,
@@ -1264,18 +1303,20 @@ class _RiderHomeState extends State<RiderHome> {
             ),
           ],
         ),
-
         const SizedBox(height: 10),
-
         _wideOverviewCard(
           title: 'Final-Mile Delivery',
-          value: _overviewValue(const <String>['final_mile']),
+          value: _overviewValue(['final_mile']),
           icon: Icons.delivery_dining_rounded,
           background: RiderColors.lightGreen,
         ),
       ],
     );
   }
+
+  // ============================================================
+  // STAT CARDS
+  // ============================================================
 
   Widget _overviewCard({
     required String title,
@@ -1288,26 +1329,19 @@ class _RiderHomeState extends State<RiderHome> {
       padding: EdgeInsets.all(compact ? 12 : 14),
       decoration: RiderStyle.card,
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _statIcon(icon, background),
-
           const SizedBox(height: 12),
-
           Text(
             title,
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: RiderStyle.small,
           ),
-
           const SizedBox(height: 4),
-
           Text(
             value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: RiderColors.textDark,
               fontSize: 21,
@@ -1332,22 +1366,15 @@ class _RiderHomeState extends State<RiderHome> {
       child: Row(
         children: [
           _statIcon(icon, background),
-
           const SizedBox(width: 12),
-
           Expanded(
             child: Column(
-              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: RiderStyle.small),
-
                 const SizedBox(height: 4),
-
                 Text(
                   value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: RiderColors.textDark,
                     fontSize: 22,
@@ -1370,13 +1397,12 @@ class _RiderHomeState extends State<RiderHome> {
         color: background,
         borderRadius: BorderRadius.circular(11),
       ),
-      alignment: Alignment.center,
       child: Icon(icon, color: RiderColors.primary, size: 20),
     );
   }
 
   // ============================================================
-  // ASSIGNED SHIPMENTS
+  // LATEST ASSIGNMENTS
   // ============================================================
 
   Widget _assignedShipments() {
@@ -1395,35 +1421,63 @@ class _RiderHomeState extends State<RiderHome> {
                   style: RiderStyle.sectionTitle,
                 ),
               ),
-
               TextButton(
-                onPressed: () {
-                  _goToTab(1);
-                },
+                onPressed: widget.onNavigateTab == null
+                    ? null
+                    : () => _goToTab(1),
                 child: const Text('View All'),
               ),
             ],
           ),
-
           const SizedBox(height: 10),
 
-          if (_isLoading && !_hasDashboardData)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
-              child: Center(
-                child: CircularProgressIndicator(color: RiderColors.primary),
-              ),
+          if (_taskErrorMessage != null) ...[
+            Text(
+              _hasTaskData
+                  ? 'Showing available assignments. '
+                        'Latest refresh was unsuccessful.'
+                  : _taskErrorMessage!,
+              style: RiderStyle.small,
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          if (!_hasTaskData && _requestInProgress)
+            const AppSkeleton(
+              type: AppSkeletonType.parcel,
+              itemCount: 2,
+              color: RiderColors.primary,
+            )
+          else if (!_hasTaskData)
+            AppErrorState(
+              title: 'Assignments Unavailable',
+              message:
+                  _taskErrorMessage ??
+                  'Unable to confirm your latest assignments.',
+              color: RiderColors.primary,
+              compact: true,
+              onRetry: () => _loadDashboard(refresh: true),
             )
           else if (_tasks.isEmpty)
-            _emptyShipmentState('No assigned shipments.')
+            const AppEmptyState(
+              title: 'No Assigned Shipments',
+              message:
+                  'Your Seller Pickup, Line-Haul, and '
+                  'Final-Mile assignments will appear here.',
+              icon: Icons.inventory_2_outlined,
+              color: RiderColors.primary,
+              compact: true,
+            )
           else
-            ..._tasks.take(4).map((Map<String, dynamic> task) {
-              return _shipmentItem(task);
-            }),
+            ..._tasks.take(4).map(_shipmentItem),
         ],
       ),
     );
   }
+
+  // ============================================================
+  // ASSIGNMENT CARD
+  // ============================================================
 
   Widget _shipmentItem(Map<String, dynamic> raw) {
     final Map<String, dynamic> normalized = _normalizeTask(raw);
@@ -1433,12 +1487,12 @@ class _RiderHomeState extends State<RiderHome> {
     try {
       parcel = ParcelModel.fromJson(normalized);
     } catch (error) {
-      debugPrint('Rider dashboard parcel parse error: $error');
+      debugPrint('Rider dashboard parcel error: $error');
     }
 
     final String tracking = parcel != null
         ? _displayValue(parcel.trackingNumber, fallback: 'Tracking unavailable')
-        : _firstNonEmpty(<dynamic>[
+        : _firstNonEmpty([
             normalized['tracking_number'],
             normalized['tracking_code'],
             normalized['waybill_number'],
@@ -1446,10 +1500,6 @@ class _RiderHomeState extends State<RiderHome> {
 
     final String rawStatus =
         parcel?.status ?? normalized['status']?.toString() ?? '';
-
-    final String status = _formatStatus(rawStatus);
-
-    final Color statusColor = _statusColor(rawStatus);
 
     final String assignment =
         parcel?.assignmentLabel ??
@@ -1463,17 +1513,14 @@ class _RiderHomeState extends State<RiderHome> {
 
     String primaryLocation = '';
 
-    if (linehaul) {
-      final String origin = parcel?.originHubName.trim() ?? '';
-
-      final String destination = parcel?.destinationHubName.trim() ?? '';
+    if (linehaul && parcel != null) {
+      final String origin = parcel.originHubName.trim();
+      final String destination = parcel.destinationHubName.trim();
 
       if (origin.isNotEmpty && destination.isNotEmpty) {
         primaryLocation = '$origin → $destination';
-      } else if (origin.isNotEmpty) {
-        primaryLocation = origin;
-      } else if (destination.isNotEmpty) {
-        primaryLocation = destination;
+      } else {
+        primaryLocation = origin.isNotEmpty ? origin : destination;
       }
     }
 
@@ -1486,14 +1533,16 @@ class _RiderHomeState extends State<RiderHome> {
     }
 
     if (primaryLocation.isEmpty) {
-      primaryLocation = _firstNonEmpty(<dynamic>[
+      primaryLocation = _firstNonEmpty([
         normalized['delivery_address'],
         normalized['pickup_address'],
         normalized['address'],
       ], fallback: 'Location unavailable');
     }
 
-    final IconData assignmentIcon = linehaul
+    primaryLocation = AddressFormatter.clean(primaryLocation);
+
+    final IconData icon = linehaul
         ? Icons.multiple_stop_rounded
         : sellerPickup
         ? Icons.inventory_2_outlined
@@ -1521,56 +1570,25 @@ class _RiderHomeState extends State<RiderHome> {
                   color: RiderColors.lightPurple,
                   borderRadius: BorderRadius.circular(11),
                 ),
-                alignment: Alignment.center,
-                child: Icon(
-                  assignmentIcon,
-                  color: RiderColors.primary,
-                  size: 20,
-                ),
+                child: Icon(icon, color: RiderColors.primary, size: 20),
               ),
-
               const SizedBox(width: 10),
-
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       tracking,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: RiderStyle.cardTitle,
                     ),
-
-                    const SizedBox(height: 3),
-
+                    const SizedBox(height: 4),
                     Text(
                       assignment.isNotEmpty ? assignment : 'Rider Assignment',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: RiderStyle.small,
                     ),
                   ],
-                ),
-              ),
-
-              const SizedBox(width: 8),
-
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Text(
-                  status,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: statusColor,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                  ),
                 ),
               ),
             ],
@@ -1578,52 +1596,38 @@ class _RiderHomeState extends State<RiderHome> {
 
           const SizedBox(height: 10),
 
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                linehaul
-                    ? Icons.route_outlined
-                    : sellerPickup
-                    ? Icons.storefront_outlined
-                    : Icons.location_on_outlined,
-                color: RiderColors.textGrey,
-                size: 15,
-              ),
+          StatusChip(status: rawStatus),
 
-              const SizedBox(width: 5),
+          const SizedBox(height: 10),
 
-              Expanded(
-                child: Text(
-                  primaryLocation,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: RiderStyle.small,
-                ),
-              ),
-            ],
+          AppInfoRow(
+            label: linehaul
+                ? 'Hub Route'
+                : sellerPickup
+                ? 'Pickup Address'
+                : 'Delivery Address',
+            value: primaryLocation.isNotEmpty
+                ? primaryLocation
+                : 'Location unavailable',
+            icon: linehaul
+                ? Icons.route_outlined
+                : sellerPickup
+                ? Icons.storefront_outlined
+                : Icons.location_on_outlined,
+            iconColor: RiderColors.primary,
+            compact: true,
           ),
 
           if (linehaul &&
               parcel != null &&
               parcel.linehaulStatus.trim().isNotEmpty) ...[
             const SizedBox(height: 8),
-            Row(
-              children: [
-                const Icon(
-                  Icons.compare_arrows_rounded,
-                  color: RiderColors.primary,
-                  size: 15,
-                ),
-                const SizedBox(width: 5),
-                Expanded(
-                  child: Text(
-                    'Line Haul: '
-                    '${_formatStatus(parcel.linehaulStatus)}',
-                    style: RiderStyle.small,
-                  ),
-                ),
-              ],
+            AppInfoRow(
+              label: 'Line-Haul Status',
+              value: _formatStatus(parcel.linehaulStatus),
+              icon: Icons.compare_arrows_rounded,
+              iconColor: RiderColors.primary,
+              compact: true,
             ),
           ],
         ],
@@ -1635,192 +1639,27 @@ class _RiderHomeState extends State<RiderHome> {
     switch (_normalizeStatus(value)) {
       case 'seller_pickup':
         return 'Seller Pickup';
-
       case 'linehaul':
         return 'Line Haul';
-
       case 'final_mile':
         return 'Final-Mile Delivery';
-
       case 'pickup_and_delivery':
         return 'Pickup & Final-Mile';
-
       case 'pickup_and_linehaul':
         return 'Pickup & Line Haul';
-
       case 'linehaul_and_delivery':
         return 'Line Haul & Final-Mile';
-
       case 'pickup_linehaul_and_delivery':
         return 'Pickup / Line Haul / Final-Mile';
-
       default:
         return '';
     }
   }
+}
 
-  String _firstNonEmpty(List<dynamic> values, {required String fallback}) {
-    for (final dynamic value in values) {
-      final String cleaned = value?.toString().trim() ?? '';
+class _RiderApiResult {
+  final Map<String, dynamic>? data;
+  final String? error;
 
-      if (cleaned.isNotEmpty && cleaned.toLowerCase() != 'null') {
-        return cleaned;
-      }
-    }
-
-    return fallback;
-  }
-
-  String _displayValue(String value, {required String fallback}) {
-    final String cleaned = value.trim();
-
-    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
-      return fallback;
-    }
-
-    return cleaned;
-  }
-
-  Widget _emptyShipmentState(String message) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 22),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.inventory_2_outlined,
-              color: RiderColors.textGrey,
-              size: 34,
-            ),
-
-            const SizedBox(height: 8),
-
-            Text(message, textAlign: TextAlign.center, style: RiderStyle.small),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // LOADING
-  // ============================================================
-
-  Widget _loadingCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(15),
-      decoration: RiderStyle.card,
-      child: const Row(
-        children: [
-          SizedBox(
-            height: 21,
-            width: 21,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.2,
-              color: RiderColors.primary,
-            ),
-          ),
-
-          SizedBox(width: 11),
-
-          Expanded(
-            child: Text('Loading rider dashboard...', style: RiderStyle.small),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // ERROR
-  // ============================================================
-
-  Widget _errorCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(15),
-      decoration: RiderStyle.card,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(
-            Icons.info_outline_rounded,
-            color: RiderColors.warning,
-            size: 21,
-          ),
-
-          const SizedBox(width: 10),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Unable to load rider data',
-                  style: RiderStyle.cardTitle,
-                ),
-
-                const SizedBox(height: 4),
-
-                Text(
-                  _errorMessage ?? 'Unable to load rider dashboard.',
-                  style: RiderStyle.small,
-                ),
-              ],
-            ),
-          ),
-
-          IconButton(
-            onPressed: () {
-              _loadDashboard(refresh: true);
-            },
-            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // NOTIFICATION
-  // ============================================================
-
-  Widget _notificationButton() {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          ScaffoldMessenger.of(context)
-            ..hideCurrentSnackBar()
-            ..showSnackBar(
-              const SnackBar(
-                behavior: SnackBarBehavior.floating,
-                content: Text(
-                  'Open the Notifications tab '
-                  'to view rider updates.',
-                ),
-              ),
-            );
-        },
-        borderRadius: BorderRadius.circular(13),
-        child: Container(
-          height: 40,
-          width: 40,
-          decoration: BoxDecoration(
-            color: RiderColors.white,
-            borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: RiderColors.border),
-          ),
-          alignment: Alignment.center,
-          child: const Icon(
-            Icons.notifications_none_rounded,
-            color: RiderColors.textDark,
-            size: 20,
-          ),
-        ),
-      ),
-    );
-  }
+  const _RiderApiResult({this.data, this.error});
 }

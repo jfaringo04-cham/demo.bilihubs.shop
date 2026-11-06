@@ -1,9 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/parcel_model.dart';
-import '../../sevices/api_services.dart';
+import '../../services/api_services.dart';
 import '../../styles/rider_style.dart';
+import '../../utils/address_formatter.dart';
+import '../../utils/date_formatter.dart';
+import '../../widgets/app_address_card.dart';
+import '../../widgets/app_empty_state.dart';
+import '../../widgets/app_error_state.dart';
+import '../../widgets/app_info_row.dart';
+import '../../widgets/app_skeleton.dart';
+import '../../widgets/status_chip.dart';
+
 import 'delivery_confirmation.dart';
+import 'rider_scanner.dart';
 
 class RiderDeliveries extends StatefulWidget {
   const RiderDeliveries({super.key});
@@ -13,28 +25,34 @@ class RiderDeliveries extends StatefulWidget {
 }
 
 class _RiderDeliveriesState extends State<RiderDeliveries> {
-  bool _isLoading = true;
-  bool _isRefreshing = false;
+  static const Duration _requestTimeout = Duration(seconds: 30);
 
-  String? _errorMessage;
-
-  List<ParcelModel> _deliveries = <ParcelModel>[];
-
-  final Set<int> _processingPickupIds = <int>{};
-
-  String _selectedStatus = 'all';
-
-  final List<Map<String, String>> _statusOptions = const <Map<String, String>>[
+  static const List<Map<String, String>> _statusOptions = [
     {'value': 'all', 'label': 'All Statuses'},
-    {'value': 'pending', 'label': 'Pending'},
     {'value': 'assigned', 'label': 'Assigned'},
     {'value': 'in_transit', 'label': 'In Transit'},
     {'value': 'at_sorting_center', 'label': 'At Sorting Center'},
     {'value': 'staged', 'label': 'Staged'},
+    {'value': 'picked_up', 'label': 'Picked Up'},
     {'value': 'out_for_delivery', 'label': 'Out for Delivery'},
     {'value': 'delivered', 'label': 'Delivered'},
     {'value': 'delivery_failed', 'label': 'Delivery Failed'},
   ];
+
+  bool _isLoading = true;
+  bool _isRefreshing = false;
+  bool _isFetching = false;
+  bool _hasLoaded = false;
+
+  int _requestId = 0;
+
+  String? _errorMessage;
+  String _selectedStatus = 'all';
+
+  List<ParcelModel> _deliveries = [];
+
+  final Set<int> _processingIds = {};
+  final Set<int> _openingScannerIds = {};
 
   @override
   void initState() {
@@ -42,272 +60,205 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
     _loadDeliveries();
   }
 
+  @override
+  void dispose() {
+    _requestId++;
+    super.dispose();
+  }
+
   // ============================================================
-  // LOAD DELIVERIES
+  // API - LOAD ASSIGNED SHIPMENTS
   // ============================================================
 
-  Future<void> _loadDeliveries({bool refresh = false}) async {
-    if (!mounted) {
-      return;
-    }
+  Future<void> _loadDeliveries() async {
+    if (!mounted || _isFetching) return;
+
+    final int requestId = ++_requestId;
+
+    _isFetching = true;
 
     setState(() {
-      if (refresh) {
-        _isRefreshing = true;
-      } else {
-        _isLoading = true;
-      }
-
+      _isLoading = !_hasLoaded;
+      _isRefreshing = _hasLoaded;
       _errorMessage = null;
     });
 
     try {
-      final Map<String, dynamic> result = await ApiService.getRiderDeliveries();
+      final Map<String, dynamic> response =
+          await ApiService.getRiderDeliveries().timeout(_requestTimeout);
 
-      if (!mounted) {
+      if (!mounted || requestId != _requestId) return;
+
+      if (response['success'] != true) {
+        _setLoadError(
+          requestId,
+          _responseMessage(response, 'Unable to load assigned shipments.'),
+        );
         return;
       }
 
-      if (result['success'] != true) {
-        final String message = result['message']?.toString().trim() ?? '';
+      final List<Map<String, dynamic>> raw = _extractShipmentList(response);
 
-        setState(() {
-          _isLoading = false;
-          _isRefreshing = false;
+      final List<ParcelModel> parsed = [];
 
-          _errorMessage = message.isNotEmpty
-              ? message
-              : 'Unable to load your assigned shipments.';
-        });
-
-        return;
-      }
-
-      final List<Map<String, dynamic>> rawDeliveries = _extractDeliveryMaps(
-        result,
-      );
-
-      final List<ParcelModel> parsedDeliveries = <ParcelModel>[];
-
-      for (final Map<String, dynamic> raw in rawDeliveries) {
+      for (final Map<String, dynamic> item in raw) {
         try {
-          final Map<String, dynamic> normalized = _normalizeShipment(raw);
+          final ParcelModel parcel = ParcelModel.fromJson(
+            _normalizeShipment(item),
+          );
 
-          final ParcelModel parcel = ParcelModel.fromJson(normalized);
-
-          parsedDeliveries.add(parcel);
+          if (parcel.id > 0) {
+            parsed.add(parcel);
+          }
         } catch (error) {
-          debugPrint('Failed to parse rider shipment: $error');
+          debugPrint('Shipment parsing error: $error');
         }
       }
 
-      parsedDeliveries.sort((ParcelModel a, ParcelModel b) {
-        final DateTime? aDate = _shipmentActivityDate(a);
-        final DateTime? bDate = _shipmentActivityDate(b);
+      parsed.sort(_compareShipments);
 
-        if (aDate != null && bDate != null) {
-          final int comparison = bDate.compareTo(aDate);
-
-          if (comparison != 0) {
-            return comparison;
-          }
-        } else if (aDate != null) {
-          return -1;
-        } else if (bDate != null) {
-          return 1;
-        }
-
-        return b.id.compareTo(a.id);
-      });
+      if (!mounted || requestId != _requestId) return;
 
       setState(() {
-        _deliveries = parsedDeliveries;
+        _deliveries = parsed;
+        _hasLoaded = true;
         _isLoading = false;
         _isRefreshing = false;
         _errorMessage = null;
       });
+    } on TimeoutException {
+      _setLoadError(
+        requestId,
+        'The request timed out. Please refresh and try again.',
+      );
     } catch (error) {
       debugPrint('Rider deliveries error: $error');
 
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isLoading = false;
-        _isRefreshing = false;
-
-        _errorMessage =
-            'Unable to connect to the server. '
-            'Please check your internet connection '
-            'and try again.';
-      });
+      _setLoadError(
+        requestId,
+        'Unable to connect to BiliHub. Check your internet connection.',
+      );
+    } finally {
+      _isFetching = false;
     }
   }
 
+  void _setLoadError(int requestId, String message) {
+    if (!mounted || requestId != _requestId) return;
+
+    setState(() {
+      _isLoading = false;
+      _isRefreshing = false;
+      _errorMessage = message;
+    });
+  }
+
   // ============================================================
-  // EXTRACT API DATA
+  // RESPONSE NORMALIZATION
   // ============================================================
 
-  List<Map<String, dynamic>> _extractDeliveryMaps(Map<String, dynamic> result) {
-    final List<Map<String, dynamic>> direct = _toMapList(result['data']);
-
-    if (direct.isNotEmpty) {
-      return direct;
+  List<Map<String, dynamic>> _extractShipmentList(Map<String, dynamic> result) {
+    for (final String key in ['data', 'shipments', 'deliveries', 'orders']) {
+      if (result[key] is List) {
+        return _toMapList(result[key]);
+      }
     }
 
-    final List<Map<String, dynamic>> deliveries = _toMapList(
-      result['deliveries'],
-    );
+    final dynamic data = result['data'];
 
-    if (deliveries.isNotEmpty) {
-      return deliveries;
-    }
-
-    final List<Map<String, dynamic>> orders = _toMapList(result['orders']);
-
-    if (orders.isNotEmpty) {
-      return orders;
-    }
-
-    final List<Map<String, dynamic>> shipments = _toMapList(
-      result['shipments'],
-    );
-
-    if (shipments.isNotEmpty) {
-      return shipments;
-    }
-
-    final dynamic rawData = result['data'];
-
-    if (rawData is Map) {
-      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
-
-      for (final String key in <String>[
-        'data',
-        'deliveries',
-        'orders',
-        'shipments',
-      ]) {
-        final List<Map<String, dynamic>> list = _toMapList(data[key]);
-
-        if (list.isNotEmpty) {
-          return list;
+    if (data is Map) {
+      for (final String key in ['data', 'shipments', 'deliveries', 'orders']) {
+        if (data[key] is List) {
+          return _toMapList(data[key]);
         }
       }
     }
 
-    return <Map<String, dynamic>>[];
+    return [];
   }
 
   List<Map<String, dynamic>> _toMapList(dynamic value) {
-    if (value is! List) {
-      return <Map<String, dynamic>>[];
-    }
+    if (value is! List) return [];
 
-    final List<Map<String, dynamic>> list = <Map<String, dynamic>>[];
-
-    for (final dynamic item in value) {
-      if (item is Map<String, dynamic>) {
-        list.add(Map<String, dynamic>.from(item));
-      } else if (item is Map) {
-        list.add(Map<String, dynamic>.from(item));
-      }
-    }
-
-    return list;
+    return value
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
   }
-
-  // ============================================================
-  // NORMALIZE SHIPMENT
-  // ============================================================
 
   Map<String, dynamic> _normalizeShipment(Map<String, dynamic> raw) {
     final Map<String, dynamic> map = Map<String, dynamic>.from(raw);
 
-    final dynamic nestedShipment = raw['shipment'];
-
-    if (nestedShipment is Map) {
-      map.addAll(Map<String, dynamic>.from(nestedShipment));
+    if (raw['shipment'] is Map) {
+      map.addAll(Map<String, dynamic>.from(raw['shipment']));
     }
 
-    final dynamic nestedOrder = raw['order'];
+    final Map<String, dynamic> order = map['order'] is Map
+        ? Map<String, dynamic>.from(map['order'])
+        : <String, dynamic>{};
 
-    if (nestedOrder is Map) {
-      final Map<String, dynamic> order = Map<String, dynamic>.from(nestedOrder);
-
-      map['order_number'] ??= order['order_number'] ?? order['number'];
-
-      map['created_at'] ??= order['created_at'];
-
-      map['customer_name'] ??= order['customer_name'];
-
-      map['customer_phone'] ??= order['customer_phone'];
-
-      map['delivery_address'] ??= order['delivery_address'];
-    }
-
-    map['id'] ??= map['shipment_id'] ?? map['order_id'] ?? 0;
-
+    map['id'] ??= map['shipment_id'] ?? 0;
     map['shipment_id'] ??= map['id'];
 
     map['tracking_number'] ??=
         map['tracking_code'] ?? map['waybill_number'] ?? '';
 
-    map['customer_name'] ??= map['recipient_name'] ?? map['buyer_name'] ?? '';
+    map['customer_name'] ??=
+        order['customer_name'] ??
+        map['recipient_name'] ??
+        map['buyer_name'] ??
+        '';
 
-    map['customer_phone'] ??= map['phone'] ?? map['recipient_phone'] ?? '';
+    map['customer_phone'] ??=
+        order['customer_phone'] ?? map['recipient_phone'] ?? map['phone'] ?? '';
 
-    map['delivery_address'] ??= map['address'] ?? map['shipping_address'] ?? '';
+    map['delivery_address'] = _resolveDeliveryAddress(
+      raw: raw,
+      shipment: map,
+      order: order,
+    );
 
-    map['pickup_address'] ??= map['seller_address'] ?? '';
-
-    map['rider_name'] ??= map['driver_name'] ?? '';
-
-    map['rider_id'] ??= map['driver_id'];
+    map['pickup_address'] = AddressFormatter.clean(
+      map['pickup_address'] ?? map['seller_address'],
+    );
 
     map['status'] ??=
         map['shipment_status'] ?? map['delivery_status'] ?? 'pending';
 
-    map['order_date'] ??= map['created_at'] ?? map['assigned_at'] ?? '';
+    map['rider_name'] ??= map['driver_name'] ?? '';
+    map['rider_id'] ??= map['driver_id'];
+
+    map['order_date'] ??= order['created_at'] ?? map['created_at'] ?? '';
 
     map['delivery_earnings'] ??= map['earnings'] ?? map['delivery_fee'] ?? 0;
-
-    map['latitude'] ??= map['rider_latitude'];
-
-    map['longitude'] ??= map['rider_longitude'];
 
     return map;
   }
 
-  // ============================================================
-  // ACTIVITY DATE
-  // ============================================================
+  int _compareShipments(ParcelModel a, ParcelModel b) {
+    final DateTime? dateA = _activityDate(a);
+    final DateTime? dateB = _activityDate(b);
 
-  DateTime? _shipmentActivityDate(ParcelModel parcel) {
-    final List<String> candidates = <String>[
+    if (dateA != null && dateB != null) {
+      final int result = dateB.compareTo(dateA);
+      if (result != 0) return result;
+    }
+
+    if (dateA != null && dateB == null) return -1;
+    if (dateB != null && dateA == null) return 1;
+
+    return b.id.compareTo(a.id);
+  }
+
+  DateTime? _activityDate(ParcelModel parcel) {
+    for (final String value in [
       parcel.updatedAt,
-      parcel.linehaulAssignedAt,
-      parcel.linehaulStartedAt,
-      parcel.destinationHubReceivedAt,
-      parcel.originHubReceivedAt,
       parcel.pickedUpAt,
       parcel.createdAt,
       parcel.orderDate,
-    ];
-
-    for (final String value in candidates) {
-      final String text = value.trim();
-
-      if (text.isEmpty || text.toLowerCase() == 'null') {
-        continue;
-      }
-
-      final DateTime? parsed = DateTime.tryParse(text);
-
-      if (parsed != null) {
-        return parsed;
-      }
+    ]) {
+      final DateTime? parsed = DateFormatter.value(value);
+      if (parsed != null) return parsed;
     }
 
     return null;
@@ -322,18 +273,15 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
       return _deliveries;
     }
 
-    return _deliveries.where((ParcelModel parcel) {
+    return _deliveries.where((parcel) {
       final String status = parcel.normalizedStatus;
 
-      if (_selectedStatus == 'pending') {
-        return status == 'pending' || status == 'ready_for_pickup';
-      }
-
       if (_selectedStatus == 'delivery_failed') {
-        return status == 'delivery_failed' ||
-            status == 'failed' ||
-            status == 'cancelled' ||
-            status == 'failed_return_at_sorting_center';
+        return const <String>{
+          'delivery_failed',
+          'failed',
+          'failed_return_at_sorting_center',
+        }.contains(status);
       }
 
       return status == _selectedStatus;
@@ -341,252 +289,289 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   }
 
   // ============================================================
-  // ASSIGNMENT
+  // ASSIGNMENT RULES
   // ============================================================
 
-  bool _isSellerPickupShipment(ParcelModel parcel) {
+  bool _isFinalized(ParcelModel parcel) {
+    return const <String>{
+      'delivered',
+      'completed',
+      'delivery_failed',
+      'failed',
+      'cancelled',
+      'canceled',
+      'failed_return_at_sorting_center',
+    }.contains(parcel.normalizedStatus);
+  }
+
+  bool _isSellerPickup(ParcelModel parcel) {
     return parcel.isSellerPickupAssignment;
   }
 
-  bool _isLinehaulShipment(ParcelModel parcel) {
-    return parcel.isLinehaulAssignment;
-  }
-
-  bool _isFinalMileShipment(ParcelModel parcel) {
+  bool _isFinalMile(ParcelModel parcel) {
     return parcel.isFinalMileAssignment;
   }
 
-  bool _isFinalized(ParcelModel parcel) {
-    final String status = parcel.normalizedStatus;
-
-    return status == 'delivered' ||
-        status == 'completed' ||
-        status == 'delivery_failed' ||
-        status == 'failed' ||
-        status == 'cancelled' ||
-        status == 'failed_return_at_sorting_center';
+  bool _isLinehaul(ParcelModel parcel) {
+    return parcel.isLinehaulAssignment;
   }
 
+  bool _isBusy(ParcelModel parcel) {
+    return _processingIds.contains(parcel.id) ||
+        _openingScannerIds.contains(parcel.id);
+  }
+
+  // Seller pickup must be assigned and not yet
+  // received by Logistics.
+  //
+  // The Laravel QR scan endpoint performs the
+  // actual authorization and status update.
+  bool _canScanSellerQr(ParcelModel parcel) {
+    if (parcel.id <= 0 ||
+        !_isSellerPickup(parcel) ||
+        _isFinalized(parcel) ||
+        parcel.receivedBySortingCenter) {
+      return false;
+    }
+
+    return parcel.normalizedStatus == 'assigned';
+  }
+
+  // After successful seller QR scan, Laravel
+  // sets status = in_transit.
+  //
+  // Only then can the rider declare that the
+  // parcel has arrived at the sorting center.
+  bool _canDeliverToSortingCenter(ParcelModel parcel) {
+    if (parcel.id <= 0 ||
+        !_isSellerPickup(parcel) ||
+        _isFinalized(parcel) ||
+        parcel.receivedBySortingCenter) {
+      return false;
+    }
+
+    return parcel.normalizedStatus == 'in_transit';
+  }
+
+  // Final-mile hub scan must happen after Logistics
+  // receiving, staging and rider assignment.
+  bool _canScanHubQr(ParcelModel parcel) {
+    if (parcel.id <= 0 || !_isFinalMile(parcel) || _isFinalized(parcel)) {
+      return false;
+    }
+
+    if (!parcel.receivedBySortingCenter || !parcel.isStaged) {
+      return false;
+    }
+
+    return const <String>{
+      'assigned',
+      'staged',
+      'at_sorting_center',
+    }.contains(parcel.normalizedStatus);
+  }
+
+  // The revised Laravel OrderController requires
+  // a confirmed hub QR pickup before allowing
+  // out_for_delivery.
+  //
+  // The DeliveryConfirmation page fetches the
+  // latest shipment and rechecks permissions.
   bool _canManageDelivery(ParcelModel parcel) {
-    if (parcel.id <= 0) {
+    if (parcel.id <= 0 || !_isFinalMile(parcel) || _isFinalized(parcel)) {
       return false;
     }
 
-    if (_isFinalized(parcel)) {
-      return false;
-    }
-
-    if (!_isFinalMileShipment(parcel)) {
-      return false;
-    }
-
-    /*
-     * A rider can have multiple assignment roles on one
-     * shipment. Only expose final-mile management once
-     * hub transfer is no longer blocking final delivery.
-     */
-    if (_isLinehaulShipment(parcel) &&
-        !parcel.isLinehaulCompleted &&
-        !parcel.isLinehaulNotRequired &&
-        parcel.linehaulStatus.trim().isNotEmpty) {
-      return false;
-    }
-
-    return true;
+    return const <String>{
+      'picked_up',
+      'out_for_delivery',
+    }.contains(parcel.normalizedStatus);
   }
 
   // ============================================================
-  // SELLER PICKUP
+  // OPEN QR SCANNER
   // ============================================================
 
-  bool _isSellerPickupBusy(ParcelModel parcel) {
-    return _processingPickupIds.contains(parcel.id);
-  }
-
-  bool _canUpdateSellerPickup(ParcelModel parcel) {
-    if (!_isSellerPickupShipment(parcel) || parcel.id <= 0) {
-      return false;
-    }
-
-    final String status = parcel.normalizedStatus;
-
-    return status == 'assigned' ||
-        status == 'ready_for_pickup' ||
-        status == 'picked_up' ||
-        status == 'in_transit';
-  }
-
-  String _sellerPickupActionLabel(ParcelModel parcel) {
-    final String status = parcel.normalizedStatus;
-
-    if (status == 'assigned' || status == 'ready_for_pickup') {
-      return 'MARK PICKED UP';
-    }
-
-    if (status == 'picked_up' || status == 'in_transit') {
-      return 'ARRIVED AT SORTING CENTER';
-    }
-
-    return '';
-  }
-
-  IconData _sellerPickupActionIcon(ParcelModel parcel) {
-    final String status = parcel.normalizedStatus;
-
-    if (status == 'assigned' || status == 'ready_for_pickup') {
-      return Icons.inventory_2_outlined;
-    }
-
-    return Icons.warehouse_outlined;
-  }
-
-  String _sellerPickupProgressText(ParcelModel parcel) {
-    final String status = parcel.normalizedStatus;
-
-    if (status == 'assigned' || status == 'ready_for_pickup') {
-      return 'Seller pickup assigned. '
-          'Collect this parcel from the seller.';
-    }
-
-    if (status == 'picked_up' || status == 'in_transit') {
-      return 'Parcel collected from the seller. '
-          'Bring it to the assigned sorting center.';
-    }
-
-    if (status == 'at_sorting_center') {
-      if (parcel.receivedBySortingCenter) {
-        return 'Sorting center confirmed receipt '
-            'of this parcel.';
-      }
-
-      return 'Parcel arrived at the sorting center. '
-          'Waiting for Logistics confirmation.';
-    }
-
-    if (status == 'staged') {
-      return 'Parcel has been received and staged '
-          'at the sorting center.';
-    }
-
-    return '';
-  }
-
-  Future<void> _handleSellerPickup(ParcelModel parcel) async {
-    if (_isSellerPickupBusy(parcel) || !_canUpdateSellerPickup(parcel)) {
+  Future<void> _openScanner(ParcelModel parcel) async {
+    if (!mounted || parcel.id <= 0 || _isBusy(parcel)) {
       return;
     }
 
-    final String status = parcel.normalizedStatus;
+    final bool seller = _canScanSellerQr(parcel);
+    final bool hub = _canScanHubQr(parcel);
 
-    final bool markPickedUp =
-        status == 'assigned' || status == 'ready_for_pickup';
-
-    final bool confirmed = await _showPickupConfirmation(
-      title: markPickedUp
-          ? 'Confirm Seller Pickup'
-          : 'Arrived at Sorting Center',
-      message: markPickedUp
-          ? 'Confirm that you picked up this parcel '
-                'from the seller?'
-          : 'Confirm that this parcel has arrived '
-                'at the sorting center?',
-    );
-
-    if (!confirmed || !mounted) {
-      return;
-    }
+    if (!seller && !hub) return;
 
     setState(() {
-      _processingPickupIds.add(parcel.id);
+      _openingScannerIds.add(parcel.id);
     });
 
     try {
-      final Map<String, dynamic> result;
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute<void>(
+          builder: (BuildContext scannerContext) {
+            return RiderScanner(
+              scannedParcel: parcel,
+              onOpenDeliveries: () {
+                Navigator.of(scannerContext).pop();
+              },
+            );
+          },
+        ),
+      );
 
-      if (markPickedUp) {
-        result = await ApiService.markRiderSellerPickupInTransit(
-          shipmentId: parcel.id,
-        );
-      } else {
-        result = await ApiService.deliverRiderPickupToSortingCenter(
-          shipmentId: parcel.id,
-        );
-      }
+      if (!mounted) return;
 
-      if (!mounted) {
-        return;
-      }
-
-      final bool success = result['success'] == true;
-
-      final String message = result['message']?.toString().trim() ?? '';
-
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text(
-              message.isNotEmpty
-                  ? message
-                  : success
-                  ? 'Seller pickup updated successfully.'
-                  : 'Unable to update seller pickup.',
-            ),
-          ),
-        );
-
-      if (success) {
-        await _loadDeliveries(refresh: true);
-      }
+      // A successful scan updates Laravel immediately.
+      // Always reload assignments after returning.
+      await _loadDeliveries();
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      debugPrint('Open rider scanner error: $error');
 
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text(
-              'Unable to update seller pickup: '
-              '$error',
-            ),
-          ),
-        );
+      if (!mounted) return;
+
+      _showMessage('Unable to open the QR scanner.', isError: true);
     } finally {
       if (mounted) {
         setState(() {
-          _processingPickupIds.remove(parcel.id);
+          _openingScannerIds.remove(parcel.id);
         });
       }
     }
   }
 
-  Future<bool> _showPickupConfirmation({
+  // ============================================================
+  // SORTING CENTER HANDOFF
+  // ============================================================
+
+  Future<void> _deliverToSortingCenter(ParcelModel parcel) async {
+    if (!mounted || !_canDeliverToSortingCenter(parcel) || _isBusy(parcel)) {
+      return;
+    }
+
+    final bool confirmed = await _confirmAction(
+      title: 'Confirm Sorting Center Arrival',
+      message:
+          'Tracking: ${_displayValue(parcel.trackingNumber)}\n\n'
+          'Have you physically delivered this parcel '
+          'to the assigned sorting center?\n\n'
+          'This action records the rider handoff only. '
+          'Logistics must separately confirm physical '
+          'receipt and scan the parcel.',
+      confirmLabel: 'CONFIRM ARRIVAL',
+    );
+
+    if (!mounted || !confirmed) return;
+
+    if (_isBusy(parcel) || !_canDeliverToSortingCenter(parcel)) {
+      return;
+    }
+
+    setState(() {
+      _processingIds.add(parcel.id);
+    });
+
+    try {
+      final Map<String, dynamic> result =
+          await ApiService.deliverRiderPickupToSortingCenter(
+            shipmentId: parcel.id,
+          ).timeout(_requestTimeout);
+
+      if (!mounted) return;
+
+      if (result['success'] == true) {
+        _showMessage(
+          _responseMessage(
+            result,
+            'Arrival recorded. Awaiting Logistics receipt.',
+          ),
+        );
+      } else {
+        _showMessage(
+          _responseMessage(result, 'Unable to record sorting center arrival.'),
+          isError: true,
+        );
+      }
+    } on TimeoutException {
+      if (!mounted) return;
+
+      _showMessage(
+        'The request timed out. The arrival may already '
+        'have been recorded. Check the latest status.',
+        isError: true,
+      );
+    } catch (error) {
+      debugPrint('Sorting handoff error: $error');
+
+      if (!mounted) return;
+
+      _showMessage(
+        'Unable to confirm arrival. Refresh before retrying.',
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _processingIds.remove(parcel.id);
+        });
+
+        await _loadDeliveries();
+      }
+    }
+  }
+
+  // ============================================================
+  // FINAL-MILE DELIVERY
+  // ============================================================
+
+  Future<void> _openDeliveryManagement(ParcelModel parcel) async {
+    if (!mounted || !_canManageDelivery(parcel)) return;
+
+    final bool? changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute<bool>(
+        builder: (_) => DeliveryConfirmation(parcel: parcel),
+      ),
+    );
+
+    if (!mounted) return;
+
+    // Reload even when changed == false, because
+    // the server might have updated the shipment
+    // after the screen was opened.
+    if (changed == true || mounted) {
+      await _loadDeliveries();
+    }
+  }
+
+  // ============================================================
+  // CONFIRMATION DIALOG
+  // ============================================================
+
+  Future<bool> _confirmAction({
     required String title,
     required String message,
+    required String confirmLabel,
   }) async {
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
           title: Text(title),
           content: Text(message),
-          actions: <Widget>[
+          actions: [
             TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, false);
-              },
-              child: const Text('Cancel'),
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('CANCEL'),
             ),
             ElevatedButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, true);
-              },
               style: RiderStyle.primaryButton,
-              child: const Text('CONFIRM', style: RiderStyle.buttonText),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(confirmLabel, style: RiderStyle.buttonText),
             ),
           ],
         );
@@ -597,123 +582,138 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   }
 
   // ============================================================
-  // LINE HAUL
+  // STATUS MESSAGES
   // ============================================================
 
-  String _linehaulProgressText(ParcelModel parcel) {
-    if (!_isLinehaulShipment(parcel)) {
-      return '';
+  String _pickupProgress(ParcelModel parcel) {
+    final String status = parcel.normalizedStatus;
+
+    if (parcel.receivedBySortingCenter) {
+      return 'Parcel received and confirmed by Logistics.';
     }
 
-    final String linehaul = parcel.normalizedLinehaulStatus;
+    if (status == 'assigned' || status == 'ready_for_pickup') {
+      return 'Pickup assigned. Go to the seller, '
+          'collect the parcel, and scan its original '
+          'BiliHub waybill QR to confirm pickup.';
+    }
+
+    if (status == 'in_transit') {
+      return 'Seller QR pickup confirmed. '
+          'Deliver this parcel to the sorting center.';
+    }
+
+    if (status == 'at_sorting_center') {
+      return 'Parcel arrived at the sorting center. '
+          'Waiting for Logistics to receive it.';
+    }
+
+    if (status == 'staged') {
+      return 'Parcel has been processed and staged.';
+    }
+
+    return '';
+  }
+
+  String _finalMileProgress(ParcelModel parcel) {
+    final String status = parcel.normalizedStatus;
+
+    if (_canScanHubQr(parcel)) {
+      return 'Final-mile assignment is ready. '
+          'Scan the original waybill QR when '
+          'collecting the parcel from the hub.';
+    }
+
+    if (status == 'picked_up') {
+      return 'Hub QR pickup confirmed. '
+          'Open Manage Delivery to mark the parcel '
+          'as Out for Delivery.';
+    }
+
+    if (status == 'out_for_delivery') {
+      return 'Parcel is out for delivery. '
+          'Complete the handoff, record any required '
+          'COD payment, and upload delivery proof.';
+    }
+
+    if (status == 'delivered') {
+      return 'Delivery completed successfully.';
+    }
+
+    if (parcel.receivedBySortingCenter && !parcel.isStaged) {
+      return 'Waiting for Logistics sorting and staging.';
+    }
+
+    return '';
+  }
+
+  String _linehaulProgress(ParcelModel parcel) {
+    if (!_isLinehaul(parcel)) return '';
+
+    final String status = parcel.normalizedLinehaulStatus;
     final String routing = parcel.normalizedRoutingStatus;
 
-    if (linehaul == 'awaiting_assignment') {
-      return 'This parcel requires an inter-hub '
-          'transfer and is waiting for a line-haul '
-          'rider assignment.';
+    if (status == 'awaiting_assignment') {
+      return 'Waiting for a line-haul assignment.';
     }
 
-    if (linehaul == 'assigned') {
+    if (status == 'assigned') {
       final String route = parcel.routeLabel.trim();
 
-      if (route.isNotEmpty) {
-        return 'Line-haul assignment received. '
-            'Route: $route. Waiting for Logistics '
-            'to dispatch the transfer.';
-      }
-
-      return 'Line-haul assignment received. '
-          'Waiting for Logistics to dispatch '
-          'the inter-hub transfer.';
+      return route.isEmpty
+          ? 'Line-haul assigned. Waiting for dispatch.'
+          : 'Line-haul route: $route. Waiting for dispatch.';
     }
 
-    if (linehaul == 'in_transit' || routing == 'in_hub_transfer') {
-      final String destination = parcel.destinationHubName.trim();
-
-      if (destination.isNotEmpty) {
-        return 'Inter-hub transfer is in transit '
-            'to $destination.';
-      }
-
-      return 'Inter-hub transfer is currently '
-          'in transit.';
+    if (status == 'in_transit' || routing == 'in_hub_transfer') {
+      return 'Parcel is in inter-hub transit.';
     }
 
-    if (linehaul == 'completed' || routing == 'at_destination_hub') {
-      final String destination = parcel.destinationHubName.trim();
-
-      if (destination.isNotEmpty) {
-        return 'Line-haul transfer completed. '
-            'Parcel has reached $destination.';
-      }
-
-      return 'Line-haul transfer completed. '
-          'Parcel reached the destination hub.';
+    if (status == 'completed' || routing == 'at_destination_hub') {
+      return 'Line-haul transfer completed.';
     }
 
-    if (linehaul == 'not_required') {
-      return 'No inter-hub line-haul transfer '
-          'is required for this parcel.';
+    if (status == 'not_required') {
+      return 'No line-haul transfer required.';
     }
 
-    if (routing == 'at_origin_hub') {
-      return 'Parcel is currently at the origin hub.';
-    }
-
-    return 'Line-haul shipment assigned to your '
-        'rider account.';
-  }
-
-  String _linehaulStatusLabel(ParcelModel parcel) {
-    final String status = parcel.normalizedLinehaulStatus;
-
-    if (status.isEmpty) {
-      return '';
-    }
-
-    switch (status) {
-      case 'awaiting_assignment':
-        return 'Awaiting Assignment';
-
-      case 'assigned':
-        return 'Assigned';
-
-      case 'in_transit':
-        return 'In Transit';
-
-      case 'completed':
-        return 'Completed';
-
-      case 'not_required':
-        return 'Not Required';
-
-      default:
-        return _titleCase(status);
-    }
+    return 'Line-haul processing is managed by Logistics.';
   }
 
   // ============================================================
-  // FINAL-MILE DELIVERY
+  // FEEDBACK
   // ============================================================
 
-  Future<void> _openDeliveryManagement(ParcelModel parcel) async {
-    final bool? changed = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute<bool>(
-        builder: (BuildContext context) {
-          return DeliveryConfirmation(parcel: parcel);
-        },
-      ),
-    );
+  String _responseMessage(Map<String, dynamic> response, String fallback) {
+    final String message = response['message']?.toString().trim() ?? '';
 
-    if (!mounted) {
-      return;
+    if (message.isNotEmpty) return message;
+
+    final dynamic errors = response['errors'];
+
+    if (errors is Map) {
+      for (final dynamic entry in errors.values) {
+        if (entry is List && entry.isNotEmpty) {
+          return entry.first.toString();
+        }
+      }
     }
 
-    if (changed == true) {
-      await _loadDeliveries(refresh: true);
-    }
+    return fallback;
+  }
+
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: isError ? RiderColors.danger : RiderColors.success,
+          content: Text(message),
+        ),
+      );
   }
 
   // ============================================================
@@ -722,73 +722,60 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
   @override
   Widget build(BuildContext context) {
-    final double screenWidth = MediaQuery.of(context).size.width;
+    final double screenWidth = MediaQuery.sizeOf(context).width;
 
     final double horizontalPadding = screenWidth < 380 ? 14 : 18;
 
-    final List<ParcelModel> deliveries = _filteredDeliveries;
+    final List<ParcelModel> filtered = _filteredDeliveries;
 
     return Scaffold(
       backgroundColor: RiderColors.background,
       appBar: AppBar(
         backgroundColor: RiderColors.white,
-        elevation: 0,
         surfaceTintColor: Colors.transparent,
+        elevation: 0,
         automaticallyImplyLeading: false,
         titleSpacing: 18,
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('My Deliveries', style: RiderStyle.title),
-            SizedBox(height: 2),
+            SizedBox(height: 3),
             Text(
-              'Manage pickup, line-haul, and delivery assignments',
+              'Seller pickups and final-mile assignments',
               style: RiderStyle.small,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
         actions: [
-          if (_isRefreshing)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Center(
-                child: SizedBox(
-                  height: 19,
-                  width: 19,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: RiderColors.primary,
-                  ),
-                ),
-              ),
-            )
-          else
-            IconButton(
-              tooltip: 'Refresh shipments',
-              onPressed: _isLoading
-                  ? null
-                  : () {
-                      _loadDeliveries(refresh: true);
-                    },
-              icon: const Icon(
-                Icons.refresh_rounded,
-                color: RiderColors.primary,
-              ),
-            ),
-          const SizedBox(width: 6),
+          IconButton(
+            tooltip: 'Refresh assignments',
+            onPressed: _isFetching ? null : _loadDeliveries,
+            icon: _isRefreshing
+                ? const SizedBox(
+                    width: 19,
+                    height: 19,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: RiderColors.primary,
+                    ),
+                  )
+                : const Icon(Icons.refresh_rounded, color: RiderColors.primary),
+          ),
         ],
       ),
       body: SafeArea(
         top: false,
         child: Column(
           children: [
-            _filterHeader(horizontalPadding, deliveries),
+            _filterHeader(horizontalPadding, filtered),
             Expanded(
               child: RefreshIndicator(
-                onRefresh: () {
-                  return _loadDeliveries(refresh: true);
-                },
-                child: _buildBody(horizontalPadding, deliveries),
+                color: RiderColors.primary,
+                onRefresh: _loadDeliveries,
+                child: _buildBody(horizontalPadding, filtered),
               ),
             ),
           ],
@@ -801,7 +788,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   // FILTER HEADER
   // ============================================================
 
-  Widget _filterHeader(double horizontalPadding, List<ParcelModel> deliveries) {
+  Widget _filterHeader(double horizontalPadding, List<ParcelModel> filtered) {
     return Container(
       width: double.infinity,
       color: RiderColors.white,
@@ -822,22 +809,21 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                   style: RiderStyle.sectionTitle,
                 ),
               ),
-              if (!_isLoading)
+              if (_hasLoaded)
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
-                    vertical: 5,
+                    vertical: 6,
                   ),
                   decoration: BoxDecoration(
                     color: RiderColors.lightPurple,
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
-                    '${deliveries.length} '
-                    '${deliveries.length == 1 ? 'shipment' : 'shipments'}',
+                    '${filtered.length} shipments',
                     style: const TextStyle(
                       color: RiderColors.primary,
-                      fontSize: 10,
+                      fontSize: 11,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -846,6 +832,7 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey<String>(_selectedStatus),
             initialValue: _selectedStatus,
             isExpanded: true,
             decoration: InputDecoration(
@@ -854,11 +841,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
               prefixIcon: const Icon(
                 Icons.filter_list_rounded,
                 color: RiderColors.primary,
-                size: 20,
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 12,
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(13),
@@ -868,24 +850,15 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                 borderRadius: BorderRadius.circular(13),
                 borderSide: const BorderSide(color: RiderColors.border),
               ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(13),
-                borderSide: const BorderSide(
-                  color: RiderColors.primary,
-                  width: 1.3,
-                ),
-              ),
             ),
-            items: _statusOptions.map((Map<String, String> option) {
+            items: _statusOptions.map((option) {
               return DropdownMenuItem<String>(
                 value: option['value'],
                 child: Text(option['label'] ?? ''),
               );
             }).toList(),
             onChanged: (String? value) {
-              if (value == null) {
-                return;
-              }
+              if (value == null) return;
 
               setState(() {
                 _selectedStatus = value;
@@ -901,21 +874,81 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   // BODY
   // ============================================================
 
-  Widget _buildBody(double horizontalPadding, List<ParcelModel> deliveries) {
-    if (_isLoading) {
-      return _loadingState();
+  Widget _buildBody(double horizontalPadding, List<ParcelModel> filtered) {
+    if (_isLoading && !_hasLoaded) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(
+          horizontalPadding,
+          16,
+          horizontalPadding,
+          28,
+        ),
+        children: const [
+          AppSkeleton(
+            type: AppSkeletonType.parcel,
+            itemCount: 4,
+            color: RiderColors.primary,
+          ),
+        ],
+      );
     }
 
-    if (_errorMessage != null) {
-      return _errorState();
+    if (_errorMessage != null && !_hasLoaded) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
+          const SizedBox(height: 60),
+          AppErrorState(
+            title: 'Unable to Load Shipments',
+            message: _errorMessage!,
+            color: RiderColors.primary,
+            onRetry: _loadDeliveries,
+          ),
+        ],
+      );
     }
 
     if (_deliveries.isEmpty) {
-      return _emptyState();
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
+          if (_errorMessage != null) _refreshWarning(_errorMessage!),
+          const SizedBox(height: 60),
+          const AppEmptyState(
+            title: 'No Shipments Assigned',
+            message:
+                'Accepted seller pickups and assigned '
+                'final-mile deliveries will appear here.',
+            icon: Icons.local_shipping_outlined,
+            color: RiderColors.primary,
+          ),
+        ],
+      );
     }
 
-    if (deliveries.isEmpty) {
-      return _noFilteredDeliveries();
+    if (filtered.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
+          const SizedBox(height: 60),
+          AppEmptyState(
+            title: 'No Shipments Found',
+            message: 'No shipments match the selected status.',
+            icon: Icons.filter_alt_off_outlined,
+            color: RiderColors.primary,
+            actionLabel: 'Show All Shipments',
+            onAction: () {
+              setState(() {
+                _selectedStatus = 'all';
+              });
+            },
+          ),
+        ],
+      );
     }
 
     return ListView.builder(
@@ -928,39 +961,84 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
         horizontalPadding,
         28,
       ),
-      itemCount: deliveries.length,
-      itemBuilder: (BuildContext context, int index) {
-        final ParcelModel parcel = deliveries[index];
+      itemCount:
+          filtered.length +
+          (_isRefreshing ? 1 : 0) +
+          (_errorMessage != null ? 1 : 0),
+      itemBuilder: (context, index) {
+        int adjusted = index;
 
-        return _deliveryCard(parcel);
+        if (_isRefreshing) {
+          if (adjusted == 0) {
+            return const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: LinearProgressIndicator(color: RiderColors.primary),
+            );
+          }
+          adjusted--;
+        }
+
+        if (_errorMessage != null) {
+          if (adjusted == 0) {
+            return _refreshWarning(_errorMessage!);
+          }
+          adjusted--;
+        }
+
+        return _deliveryCard(filtered[adjusted]);
       },
     );
   }
 
+  Widget _refreshWarning(String message) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: RiderColors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: RiderColors.border),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.wifi_off_rounded, color: RiderColors.warning),
+          const SizedBox(width: 8),
+          Expanded(child: Text(message, style: RiderStyle.small)),
+          TextButton(
+            onPressed: _isFetching ? null : _loadDeliveries,
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ============================================================
-  // DELIVERY CARD
+  // SHIPMENT CARD
   // ============================================================
 
   Widget _deliveryCard(ParcelModel parcel) {
-    final String status = _formatStatus(parcel.status);
+    final bool sellerPickup = _isSellerPickup(parcel);
+    final bool finalMile = _isFinalMile(parcel);
+    final bool linehaul = _isLinehaul(parcel);
 
-    final Color statusColor = _statusColor(parcel.status);
+    final bool scanSeller = _canScanSellerQr(parcel);
+    final bool handoff = _canDeliverToSortingCenter(parcel);
+    final bool scanHub = _canScanHubQr(parcel);
+    final bool manage = _canManageDelivery(parcel);
 
-    final bool sellerPickup = _isSellerPickupShipment(parcel);
+    final bool busy = _isBusy(parcel);
 
-    final bool linehaul = _isLinehaulShipment(parcel);
+    final String pickupProgress = _pickupProgress(parcel);
 
-    final bool canManageDelivery = _canManageDelivery(parcel);
+    final String finalMileProgress = _finalMileProgress(parcel);
 
-    final bool canUpdatePickup = _canUpdateSellerPickup(parcel);
+    final String linehaulProgress = _linehaulProgress(parcel);
 
-    final bool pickupBusy = _isSellerPickupBusy(parcel);
-
-    final String pickupProgress = _sellerPickupProgressText(parcel);
-
-    final String linehaulProgress = _linehaulProgressText(parcel);
-
-    final String formattedDate = _formatDate(parcel.orderDate);
+    final String orderDate = DateFormatter.dateTime(
+      parcel.orderDate,
+      fallback: '',
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -973,20 +1051,19 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                height: 45,
-                width: 45,
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
                   color: RiderColors.lightPurple,
-                  borderRadius: BorderRadius.circular(13),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  linehaul
+                  sellerPickup
+                      ? Icons.storefront_outlined
+                      : linehaul
                       ? Icons.multiple_stop_rounded
-                      : sellerPickup
-                      ? Icons.inventory_2_outlined
                       : Icons.local_shipping_outlined,
                   color: RiderColors.primary,
-                  size: 22,
                 ),
               ),
               const SizedBox(width: 12),
@@ -995,36 +1072,13 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('Tracking Number', style: RiderStyle.small),
-                    const SizedBox(height: 3),
-                    Text(
-                      _displayValue(
-                        parcel.trackingNumber,
-                        fallback: 'Tracking unavailable',
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    const SizedBox(height: 4),
+                    SelectableText(
+                      _displayValue(parcel.trackingNumber),
+                      maxLines: 2,
                       style: RiderStyle.cardTitle,
                     ),
                   ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                constraints: const BoxConstraints(maxWidth: 125),
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  status,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: statusColor,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                  ),
                 ),
               ),
             ],
@@ -1032,79 +1086,84 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
           const SizedBox(height: 12),
 
+          StatusChip(status: parcel.status),
+
+          const SizedBox(height: 12),
+
           _assignmentBadge(parcel),
 
-          const SizedBox(height: 17),
-
-          if (sellerPickup && parcel.pickupAddress.trim().isNotEmpty)
-            _infoRow(
+          if (sellerPickup && parcel.pickupAddress.trim().isNotEmpty) ...[
+            const SizedBox(height: 14),
+            AppInfoRow(
+              label: 'Seller Pickup Address',
+              value: parcel.pickupAddress,
               icon: Icons.storefront_outlined,
-              label: 'Pickup Address',
-              value: _displayValue(parcel.pickupAddress),
+              iconColor: RiderColors.primary,
             ),
+          ],
 
           if (linehaul) ...[
+            const SizedBox(height: 12),
             if (parcel.originHubName.trim().isNotEmpty)
-              _infoRow(
-                icon: Icons.warehouse_outlined,
+              AppInfoRow(
                 label: 'Origin Hub',
                 value: parcel.originHubName,
+                icon: Icons.warehouse_outlined,
+                iconColor: RiderColors.primary,
               ),
-
             if (parcel.destinationHubName.trim().isNotEmpty)
-              _infoRow(
-                icon: Icons.location_city_outlined,
+              AppInfoRow(
                 label: 'Destination Hub',
                 value: parcel.destinationHubName,
+                icon: Icons.location_city_outlined,
+                iconColor: RiderColors.primary,
               ),
-
             if (parcel.requiredVehicleType.trim().isNotEmpty)
-              _infoRow(
-                icon: Icons.local_shipping_outlined,
+              AppInfoRow(
                 label: 'Required Vehicle',
                 value: _titleCase(parcel.requiredVehicleType),
+                icon: Icons.local_shipping_outlined,
+                iconColor: RiderColors.primary,
               ),
-
             if (parcel.estimatedDistanceKm > 0)
-              _infoRow(
-                icon: Icons.route_outlined,
+              AppInfoRow(
                 label: 'Estimated Distance',
                 value: '${parcel.estimatedDistanceKm.toStringAsFixed(1)} km',
-              ),
-
-            if (parcel.parcelWeightKg > 0)
-              _infoRow(
-                icon: Icons.scale_outlined,
-                label: 'Parcel Weight',
-                value: '${parcel.parcelWeightKg.toStringAsFixed(2)} kg',
+                icon: Icons.route_outlined,
+                iconColor: RiderColors.primary,
               ),
           ],
 
-          if (!linehaul || _isFinalMileShipment(parcel)) ...[
-            _infoRow(
-              icon: Icons.person_outline_rounded,
-              label: 'Customer',
-              value: _displayValue(parcel.customerName),
-            ),
+          const SizedBox(height: 12),
 
-            _infoRow(
-              icon: Icons.phone_outlined,
-              label: 'Contact',
-              value: _displayValue(parcel.customerPhone),
-            ),
+          AppAddressCard(
+            title: 'Delivery Address',
+            recipientName: parcel.customerName,
+            phoneNumber: parcel.customerPhone,
+            address: parcel.deliveryAddress,
+            accentColor: RiderColors.primary,
+            compact: true,
+          ),
 
-            _deliveryAddressCard(parcel.deliveryAddress),
-          ],
-
-          if (formattedDate.isNotEmpty)
-            _infoRow(
-              icon: Icons.calendar_today_outlined,
+          if (orderDate.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            AppInfoRow(
               label: 'Order Date',
-              value: formattedDate,
+              value: orderDate,
+              icon: Icons.calendar_today_outlined,
+              iconColor: RiderColors.primary,
+              compact: true,
             ),
+          ],
 
           if (sellerPickup && pickupProgress.isNotEmpty)
             _progressBox(icon: Icons.route_outlined, text: pickupProgress),
+
+          if (finalMile && finalMileProgress.isNotEmpty)
+            _progressBox(
+              icon: Icons.delivery_dining_outlined,
+              text: finalMileProgress,
+            ),
 
           if (linehaul && linehaulProgress.isNotEmpty)
             _progressBox(
@@ -1112,124 +1171,65 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
               text: linehaulProgress,
             ),
 
-          if (linehaul && parcel.linehaulStatus.trim().isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _statusSummary(
-              title: 'Line-Haul Status',
-              value: _linehaulStatusLabel(parcel),
-              icon: Icons.compare_arrows_rounded,
+          const SizedBox(height: 14),
+          const Divider(color: RiderColors.border),
+          const SizedBox(height: 10),
+
+          if (scanSeller)
+            _primaryAction(
+              label: busy ? 'OPENING SCANNER...' : 'SCAN SELLER QR',
+              icon: Icons.qr_code_scanner_rounded,
+              enabled: !busy,
+              onPressed: () => _openScanner(parcel),
             ),
-          ],
 
-          const SizedBox(height: 12),
-
-          Divider(color: RiderColors.border.withValues(alpha: 0.8)),
-
-          const SizedBox(height: 8),
-
-          if (canUpdatePickup) ...[
-            SizedBox(
-              width: double.infinity,
-              height: 47,
-              child: ElevatedButton.icon(
-                onPressed: pickupBusy
-                    ? null
-                    : () {
-                        _handleSellerPickup(parcel);
-                      },
-                icon: pickupBusy
-                    ? const SizedBox(
-                        height: 17,
-                        width: 17,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : Icon(
-                        _sellerPickupActionIcon(parcel),
-                        size: 19,
-                        color: Colors.white,
-                      ),
-                label: Text(
-                  pickupBusy ? 'UPDATING...' : _sellerPickupActionLabel(parcel),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                style: RiderStyle.primaryButton,
-              ),
+          if (handoff)
+            _primaryAction(
+              label: busy ? 'UPDATING...' : 'ARRIVED AT SORTING CENTER',
+              icon: Icons.warehouse_outlined,
+              enabled: !busy,
+              onPressed: () => _deliverToSortingCenter(parcel),
             ),
-            const SizedBox(height: 10),
-          ],
 
-          if (linehaul && !canManageDelivery) ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: RiderColors.background,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: RiderColors.border),
-              ),
-              child: const Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.info_outline_rounded,
-                    size: 18,
-                    color: RiderColors.primary,
-                  ),
-                  SizedBox(width: 9),
-                  Expanded(
-                    child: Text(
-                      'Line-haul dispatch and destination-hub '
-                      'receipt are controlled by Logistics.',
-                      style: RiderStyle.small,
-                    ),
-                  ),
-                ],
-              ),
+          if (scanHub)
+            _primaryAction(
+              label: busy ? 'OPENING SCANNER...' : 'SCAN HUB QR',
+              icon: Icons.qr_code_scanner_rounded,
+              enabled: !busy,
+              onPressed: () => _openScanner(parcel),
             ),
-            const SizedBox(height: 10),
-          ],
 
-          if (canManageDelivery) ...[
-            SizedBox(
-              width: double.infinity,
-              height: 47,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  _openDeliveryManagement(parcel);
-                },
-                icon: const Icon(
-                  Icons.delivery_dining_rounded,
-                  size: 19,
-                  color: Colors.white,
-                ),
-                label: const Text(
-                  'MANAGE DELIVERY',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                style: RiderStyle.primaryButton,
-              ),
+          if (manage)
+            _primaryAction(
+              label: 'MANAGE DELIVERY',
+              icon: Icons.delivery_dining_rounded,
+              enabled: !busy,
+              onPressed: () => _openDeliveryManagement(parcel),
             ),
-            const SizedBox(height: 10),
-          ],
+
+          if (sellerPickup &&
+              parcel.normalizedStatus == 'at_sorting_center' &&
+              !parcel.receivedBySortingCenter)
+            _progressBox(
+              icon: Icons.hourglass_top_rounded,
+              text: 'Awaiting Logistics receiving confirmation.',
+            ),
+
+          if (linehaul && !scanHub && !manage && !scanSeller && !handoff)
+            _progressBox(
+              icon: Icons.info_outline_rounded,
+              text:
+                  'Line-haul dispatch and hub receiving '
+                  'are managed by Logistics.',
+            ),
+
+          const SizedBox(height: 10),
 
           SizedBox(
             width: double.infinity,
             height: 47,
             child: OutlinedButton.icon(
-              onPressed: () {
-                _showShipmentDetails(parcel);
-              },
+              onPressed: () => _showShipmentDetails(parcel),
               icon: const Icon(Icons.inventory_2_outlined, size: 18),
               label: const Text('VIEW SHIPMENT'),
               style: OutlinedButton.styleFrom(
@@ -1239,10 +1239,6 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                textStyle: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
               ),
             ),
           ),
@@ -1251,9 +1247,34 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
     );
   }
 
+  Widget _primaryAction({
+    required String label,
+    required IconData icon,
+    required bool enabled,
+    required VoidCallback onPressed,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: SizedBox(
+        width: double.infinity,
+        height: 48,
+        child: ElevatedButton.icon(
+          style: RiderStyle.primaryButton,
+          onPressed: enabled ? onPressed : null,
+          icon: Icon(icon, color: Colors.white, size: 19),
+          label: Text(label, style: RiderStyle.buttonText),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // REUSABLE UI
+  // ============================================================
+
   Widget _assignmentBadge(ParcelModel parcel) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
         color: RiderColors.background,
         borderRadius: BorderRadius.circular(10),
@@ -1263,21 +1284,21 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            parcel.isLinehaulAssignment
+            _isSellerPickup(parcel)
+                ? Icons.storefront_outlined
+                : _isLinehaul(parcel)
                 ? Icons.multiple_stop_rounded
-                : parcel.isSellerPickupAssignment
-                ? Icons.inventory_2_outlined
                 : Icons.delivery_dining_outlined,
-            size: 15,
             color: RiderColors.primary,
+            size: 15,
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 7),
           Flexible(
             child: Text(
               parcel.assignmentLabel,
               style: const TextStyle(
                 color: RiderColors.textDark,
-                fontSize: 10,
+                fontSize: 11,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1288,164 +1309,21 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
   }
 
   Widget _progressBox({required IconData icon, required String text}) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: RiderColors.background,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: RiderColors.border),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, size: 18, color: RiderColors.primary),
-            const SizedBox(width: 9),
-            Expanded(child: Text(text, style: RiderStyle.small)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _statusSummary({
-    required String title,
-    required String value,
-    required IconData icon,
-  }) {
     return Container(
       width: double.infinity,
+      margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: RiderColors.lightPurple,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: RiderColors.primary),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: RiderStyle.small),
-                const SizedBox(height: 2),
-                Text(value, style: RiderStyle.cardTitle),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // DELIVERY ADDRESS
-  // ============================================================
-
-  Widget _deliveryAddressCard(String address) {
-    final String formattedAddress = _cleanAddress(address);
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
         color: RiderColors.background,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: RiderColors.border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 40,
-            width: 40,
-            decoration: BoxDecoration(
-              color: RiderColors.lightPurple,
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: const Icon(
-              Icons.location_on_rounded,
-              color: RiderColors.primary,
-              size: 21,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'DELIVERY ADDRESS',
-                  style: TextStyle(
-                    color: RiderColors.textGrey,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.8,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  formattedAddress,
-                  maxLines: 5,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: RiderColors.textDark,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    height: 1.45,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // INFO ROW
-  // ============================================================
-
-  Widget _infoRow({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 11),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            height: 34,
-            width: 34,
-            decoration: BoxDecoration(
-              color: RiderColors.lightPurple,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: RiderColors.primary, size: 17),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: RiderStyle.small),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  maxLines: label.contains('Address') ? 3 : 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: RiderStyle.cardTitle,
-                ),
-              ],
-            ),
-          ),
+          Icon(icon, color: RiderColors.primary, size: 18),
+          const SizedBox(width: 9),
+          Expanded(child: Text(text, style: RiderStyle.small)),
         ],
       ),
     );
@@ -1461,18 +1339,16 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (BuildContext sheetContext) {
-        final Color statusColor = _statusColor(parcel.status);
+        final bool sellerPickup = _isSellerPickup(parcel);
 
-        final String pickupProgress = _sellerPickupProgressText(parcel);
+        final bool finalMile = _isFinalMile(parcel);
 
-        final String linehaulProgress = _linehaulProgressText(parcel);
-
-        final String formattedDate = _formatDate(parcel.orderDate);
+        final bool linehaul = _isLinehaul(parcel);
 
         return SafeArea(
           child: Container(
             constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(sheetContext).size.height * 0.88,
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.88,
             ),
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
             decoration: const BoxDecoration(
@@ -1486,84 +1362,23 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
                 children: [
                   Center(
                     child: Container(
-                      height: 4,
                       width: 42,
+                      height: 4,
                       decoration: BoxDecoration(
                         color: RiderColors.border,
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 18),
-
-                  Row(
-                    children: [
-                      Container(
-                        height: 46,
-                        width: 46,
-                        decoration: BoxDecoration(
-                          color: RiderColors.lightPurple,
-                          borderRadius: BorderRadius.circular(13),
-                        ),
-                        child: Icon(
-                          parcel.isLinehaulAssignment
-                              ? Icons.multiple_stop_rounded
-                              : parcel.isSellerPickupAssignment
-                              ? Icons.inventory_2_outlined
-                              : Icons.local_shipping_outlined,
-                          color: RiderColors.primary,
-                        ),
-                      ),
-
-                      const SizedBox(width: 12),
-
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Shipment Details',
-                              style: RiderStyle.sectionTitle,
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              _displayValue(
-                                parcel.trackingNumber,
-                                fallback: 'Tracking unavailable',
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: RiderStyle.small,
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(width: 8),
-
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusColor.withValues(alpha: 0.10),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          _formatStatus(parcel.status),
-                          style: TextStyle(
-                            color: statusColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    ],
+                  const Text(
+                    'Shipment Details',
+                    style: RiderStyle.sectionTitle,
                   ),
+                  const SizedBox(height: 12),
 
-                  const SizedBox(height: 22),
+                  StatusChip(status: parcel.status),
+                  const SizedBox(height: 16),
 
                   _detailTile(
                     'Tracking Number',
@@ -1572,152 +1387,92 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
 
                   _detailTile('Assignment', parcel.assignmentLabel),
 
+                  if (sellerPickup)
+                    _detailTile('Pickup Progress', _pickupProgress(parcel)),
+
+                  if (finalMile)
+                    _detailTile(
+                      'Final-Mile Progress',
+                      _finalMileProgress(parcel),
+                    ),
+
+                  if (linehaul)
+                    _detailTile(
+                      'Line-Haul Progress',
+                      _linehaulProgress(parcel),
+                    ),
+
                   if (parcel.pickupAddress.trim().isNotEmpty)
-                    _detailTile('Pickup Address', parcel.pickupAddress),
+                    _detailTile('Seller Pickup Address', parcel.pickupAddress),
 
                   if (parcel.originHubName.trim().isNotEmpty)
                     _detailTile('Origin Hub', parcel.originHubName),
 
-                  if (parcel.destinationHubName.trim().isNotEmpty)
-                    _detailTile('Destination Hub', parcel.destinationHubName),
-
                   if (parcel.currentHubName.trim().isNotEmpty)
                     _detailTile('Current Hub', parcel.currentHubName),
 
-                  if (parcel.routingStatus.trim().isNotEmpty)
-                    _detailTile(
-                      'Routing Status',
-                      _titleCase(parcel.routingStatus),
-                    ),
-
-                  if (parcel.linehaulStatus.trim().isNotEmpty)
-                    _detailTile(
-                      'Line-Haul Status',
-                      _linehaulStatusLabel(parcel),
-                    ),
-
-                  if (parcel.requiredVehicleType.trim().isNotEmpty)
-                    _detailTile(
-                      'Required Vehicle',
-                      _titleCase(parcel.requiredVehicleType),
-                    ),
-
-                  if (parcel.estimatedDistanceKm > 0)
-                    _detailTile(
-                      'Estimated Distance',
-                      '${parcel.estimatedDistanceKm.toStringAsFixed(1)} km',
-                    ),
-
-                  if (parcel.parcelWeightKg > 0)
-                    _detailTile(
-                      'Parcel Weight',
-                      '${parcel.parcelWeightKg.toStringAsFixed(2)} kg',
-                    ),
+                  if (parcel.destinationHubName.trim().isNotEmpty)
+                    _detailTile('Destination Hub', parcel.destinationHubName),
 
                   _detailTile('Customer', _displayValue(parcel.customerName)),
 
-                  _detailTile('Contact', _displayValue(parcel.customerPhone)),
-
                   _detailTile(
-                    'Delivery Address',
-                    _cleanAddress(parcel.deliveryAddress),
+                    'Customer Phone',
+                    _displayValue(parcel.customerPhone),
                   ),
 
-                  if (parcel.riderName.trim().isNotEmpty)
-                    _detailTile('Final-Mile Rider', parcel.riderName),
+                  AppAddressCard(
+                    title: 'Delivery Address',
+                    recipientName: parcel.customerName,
+                    phoneNumber: parcel.customerPhone,
+                    address: parcel.deliveryAddress,
+                    accentColor: RiderColors.primary,
+                    compact: true,
+                  ),
 
-                  if (parcel.linehaulRiderName.trim().isNotEmpty)
-                    _detailTile('Line-Haul Rider', parcel.linehaulRiderName),
+                  const SizedBox(height: 12),
 
-                  if (formattedDate.isNotEmpty)
-                    _detailTile('Order Date', formattedDate),
-
-                  _detailTile('Shipment Status', _formatStatus(parcel.status)),
-
-                  if (parcel.sortingStatus.trim().isNotEmpty)
-                    _detailTile(
-                      'Sorting Status',
-                      _titleCase(parcel.sortingStatus),
+                  if (_canScanSellerQr(parcel) || _canScanHubQr(parcel))
+                    _primaryAction(
+                      label: _canScanSellerQr(parcel)
+                          ? 'SCAN SELLER QR'
+                          : 'SCAN HUB QR',
+                      icon: Icons.qr_code_scanner_rounded,
+                      enabled: !_isBusy(parcel),
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        _openScanner(parcel);
+                      },
                     ),
 
-                  if (_isSellerPickupShipment(parcel) &&
-                      pickupProgress.isNotEmpty)
-                    _detailTile('Pickup Progress', pickupProgress),
-
-                  if (_isLinehaulShipment(parcel) &&
-                      linehaulProgress.isNotEmpty)
-                    _detailTile('Line-Haul Progress', linehaulProgress),
-
-                  const SizedBox(height: 10),
-
-                  if (_canUpdateSellerPickup(parcel)) ...[
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton.icon(
-                        onPressed: _isSellerPickupBusy(parcel)
-                            ? null
-                            : () {
-                                Navigator.pop(sheetContext);
-
-                                _handleSellerPickup(parcel);
-                              },
-                        icon: Icon(
-                          _sellerPickupActionIcon(parcel),
-                          color: Colors.white,
-                        ),
-                        label: Text(
-                          _sellerPickupActionLabel(parcel),
-                          style: RiderStyle.buttonText,
-                        ),
-                        style: RiderStyle.primaryButton,
-                      ),
+                  if (_canDeliverToSortingCenter(parcel))
+                    _primaryAction(
+                      label: 'ARRIVED AT SORTING CENTER',
+                      icon: Icons.warehouse_outlined,
+                      enabled: !_isBusy(parcel),
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        _deliverToSortingCenter(parcel);
+                      },
                     ),
-                    const SizedBox(height: 10),
-                  ],
 
-                  if (_canManageDelivery(parcel)) ...[
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.pop(sheetContext);
-
-                          _openDeliveryManagement(parcel);
-                        },
-                        icon: const Icon(
-                          Icons.delivery_dining_rounded,
-                          color: Colors.white,
-                        ),
-                        label: const Text(
-                          'MANAGE DELIVERY',
-                          style: RiderStyle.buttonText,
-                        ),
-                        style: RiderStyle.primaryButton,
-                      ),
+                  if (_canManageDelivery(parcel))
+                    _primaryAction(
+                      label: 'MANAGE DELIVERY',
+                      icon: Icons.delivery_dining_rounded,
+                      enabled: !_isBusy(parcel),
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        _openDeliveryManagement(parcel);
+                      },
                     ),
-                    const SizedBox(height: 10),
-                  ],
 
                   SizedBox(
                     width: double.infinity,
                     height: 48,
                     child: OutlinedButton(
-                      onPressed: () {
-                        Navigator.pop(sheetContext);
-                      },
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: RiderColors.primary,
-                        side: const BorderSide(color: RiderColors.primary),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Close',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
+                      onPressed: () => Navigator.pop(sheetContext),
+                      child: const Text('Close'),
                     ),
                   ),
                 ],
@@ -1744,105 +1499,15 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
         children: [
           Text(label, style: RiderStyle.small),
           const SizedBox(height: 4),
-          Text(value, style: RiderStyle.cardTitle),
+          SelectableText(value, style: RiderStyle.cardTitle),
         ],
       ),
     );
   }
 
   // ============================================================
-  // STATUS
+  // FORMATTING HELPERS
   // ============================================================
-
-  String _formatStatus(String status) {
-    final String normalized = status
-        .trim()
-        .toLowerCase()
-        .replaceAll(' ', '_')
-        .replaceAll('-', '_');
-
-    if (normalized.isEmpty) {
-      return 'Unknown';
-    }
-
-    switch (normalized) {
-      case 'ready_for_pickup':
-        return 'Ready for Pickup';
-
-      case 'assigned':
-        return 'Assigned';
-
-      case 'picked_up':
-        return 'Picked Up';
-
-      case 'in_transit':
-        return 'In Transit';
-
-      case 'at_sorting_center':
-        return 'At Sorting Center';
-
-      case 'staged':
-        return 'Staged';
-
-      case 'sorted':
-        return 'Sorted';
-
-      case 'out_for_delivery':
-        return 'Out for Delivery';
-
-      case 'delivery_failed':
-      case 'failed':
-        return 'Delivery Failed';
-
-      case 'failed_return_at_sorting_center':
-        return 'Returned to Sorting Center';
-
-      case 'delivered':
-        return 'Delivered';
-
-      case 'cancelled':
-        return 'Cancelled';
-
-      default:
-        return _titleCase(normalized);
-    }
-  }
-
-  Color _statusColor(String status) {
-    final String normalized = status
-        .trim()
-        .toLowerCase()
-        .replaceAll(' ', '_')
-        .replaceAll('-', '_');
-
-    switch (normalized) {
-      case 'delivered':
-      case 'completed':
-        return RiderColors.success;
-
-      case 'failed':
-      case 'delivery_failed':
-      case 'cancelled':
-      case 'failed_return_at_sorting_center':
-        return RiderColors.danger;
-
-      case 'pending':
-      case 'assigned':
-      case 'ready_for_pickup':
-        return RiderColors.warning;
-
-      case 'picked_up':
-      case 'in_transit':
-      case 'out_for_delivery':
-      case 'at_sorting_center':
-      case 'staged':
-      case 'sorted':
-        return RiderColors.primary;
-
-      default:
-        return RiderColors.textGrey;
-    }
-  }
 
   String _titleCase(String value) {
     final String normalized = value
@@ -1850,234 +1515,48 @@ class _RiderDeliveriesState extends State<RiderDeliveries> {
         .replaceAll('-', '_')
         .replaceAll(' ', '_');
 
-    if (normalized.isEmpty) {
-      return '';
-    }
+    if (normalized.isEmpty) return 'Unknown';
 
     return normalized
         .split('_')
-        .where((String word) => word.isNotEmpty)
+        .where((word) => word.isNotEmpty)
         .map(
-          (String word) =>
+          (word) =>
               '${word[0].toUpperCase()}'
               '${word.substring(1).toLowerCase()}',
         )
         .join(' ');
   }
 
-  // ============================================================
-  // DATE
-  // ============================================================
-
-  String _formatDate(String value) {
-    final String cleaned = value.trim();
-
-    if (cleaned.isEmpty) {
-      return '';
-    }
-
-    final DateTime? parsed = DateTime.tryParse(cleaned);
-
-    if (parsed == null) {
-      return cleaned;
-    }
-
-    final DateTime local = parsed.toLocal();
-
-    const List<String> months = <String>[
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
+  String _resolveDeliveryAddress({
+    required Map<String, dynamic> raw,
+    required Map<String, dynamic> shipment,
+    required Map<String, dynamic> order,
+  }) {
+    final List<dynamic> candidates = [
+      shipment['delivery_address'],
+      shipment['full_delivery_address'],
+      shipment['shipping_address'],
+      shipment['buyer_address'],
+      shipment['recipient_address'],
+      shipment['address'],
+      raw['delivery_address'],
+      raw['shipping_address'],
+      raw['address'],
+      order['delivery_address'],
+      order['shipping_address'],
+      order['address'],
     ];
 
-    final String month = months[local.month - 1];
+    for (final dynamic candidate in candidates) {
+      final String address = AddressFormatter.clean(candidate);
 
-    final int hour = local.hour == 0
-        ? 12
-        : local.hour > 12
-        ? local.hour - 12
-        : local.hour;
-
-    final String minute = local.minute.toString().padLeft(2, '0');
-
-    final String meridiem = local.hour >= 12 ? 'PM' : 'AM';
-
-    return '$month ${local.day}, '
-        '${local.year} • '
-        '$hour:$minute $meridiem';
-  }
-
-  // ============================================================
-  // STATES
-  // ============================================================
-
-  Widget _loadingState() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      children: const [
-        SizedBox(height: 120),
-        Center(
-          child: Column(
-            children: [
-              CircularProgressIndicator(color: RiderColors.primary),
-              SizedBox(height: 15),
-              Text('Loading assigned shipments...', style: RiderStyle.small),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _errorState() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(30),
-      children: [
-        const SizedBox(height: 100),
-        const Icon(
-          Icons.cloud_off_outlined,
-          size: 55,
-          color: RiderColors.primary,
-        ),
-        const SizedBox(height: 20),
-        const Text(
-          'Unable to Load Shipments',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 18,
-            color: RiderColors.textDark,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          _errorMessage ?? 'Something went wrong.',
-          textAlign: TextAlign.center,
-          style: RiderStyle.small,
-        ),
-        const SizedBox(height: 20),
-        Center(
-          child: ElevatedButton.icon(
-            onPressed: () {
-              _loadDeliveries(refresh: true);
-            },
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-            label: const Text('Retry', style: TextStyle(color: Colors.white)),
-            style: RiderStyle.primaryButton,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _emptyState() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(30),
-      children: const [
-        SizedBox(height: 100),
-        Icon(
-          Icons.local_shipping_outlined,
-          size: 55,
-          color: RiderColors.primary,
-        ),
-        SizedBox(height: 20),
-        Text(
-          'No Shipments Assigned',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 18,
-            color: RiderColors.textDark,
-          ),
-        ),
-        SizedBox(height: 8),
-        Text(
-          'Seller pickups, line-haul transfers, '
-          'and final-mile deliveries assigned '
-          'to your rider account will appear here.',
-          textAlign: TextAlign.center,
-          style: RiderStyle.small,
-        ),
-      ],
-    );
-  }
-
-  Widget _noFilteredDeliveries() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(30),
-      children: [
-        const SizedBox(height: 100),
-        const Icon(
-          Icons.filter_alt_off_outlined,
-          size: 55,
-          color: RiderColors.textGrey,
-        ),
-        const SizedBox(height: 16),
-        const Text(
-          'No Shipments Found',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w800,
-            color: RiderColors.textDark,
-          ),
-        ),
-        const SizedBox(height: 7),
-        const Text(
-          'No assigned shipments match '
-          'the selected status.',
-          textAlign: TextAlign.center,
-          style: RiderStyle.small,
-        ),
-        const SizedBox(height: 14),
-        Center(
-          child: TextButton(
-            onPressed: () {
-              setState(() {
-                _selectedStatus = 'all';
-              });
-            },
-            child: const Text('Show All Shipments'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ============================================================
-  // HELPERS
-  // ============================================================
-
-  String _cleanAddress(String value) {
-    String cleaned = value.trim();
-
-    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
-      return 'Delivery address not available';
+      if (address.isNotEmpty) {
+        return address;
+      }
     }
 
-    cleaned = cleaned.replaceAll(RegExp(r'[\r\n]+'), ', ');
-
-    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ');
-
-    cleaned = cleaned.replaceAll(RegExp(r',\s*,+'), ',');
-
-    cleaned = cleaned.replaceAll(RegExp(r'\s*,\s*'), ', ');
-
-    cleaned = cleaned.replaceAll(RegExp(r'^,\s*|\s*,$'), '');
-
-    return cleaned;
+    return '';
   }
 
   String _displayValue(String value, {String fallback = 'Not available'}) {

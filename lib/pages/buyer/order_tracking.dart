@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../../styles/buyer_style.dart';
+import '../../utils/date_formatter.dart';
+import '../../widgets/app_info_row.dart';
+import '../../widgets/status_chip.dart';
 
 class OrderTracking extends StatelessWidget {
   final Map<String, dynamic> order;
 
   const OrderTracking({super.key, required this.order});
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -15,40 +22,56 @@ class OrderTracking extends StatelessWidget {
 
     final Map<String, dynamic>? shipment = _extractShipment(sellerOrders);
 
-    final String orderNumber = order['order_number']?.toString().trim() ?? '';
+    final String orderNumber = _cleanText(order['order_number']);
 
-    final String trackingNumber =
-        shipment?['tracking_number']?.toString().trim() ?? '';
+    final String trackingNumber = _cleanText(shipment?['tracking_number']);
 
     final String currentStatus = _normalizeStatus(
-      shipment?['status']?.toString() ??
-          order['delivery_status']?.toString() ??
-          order['status']?.toString() ??
-          'pending',
+      _firstNonEmpty(<dynamic>[
+        shipment?['status'],
+        order['delivery_status'],
+        order['status'],
+        'pending',
+      ]),
     );
 
-    final String pickedUpAt = _formatDate(
-      shipment?['picked_up_at']?.toString() ?? '',
+    final String createdAt = DateFormatter.dateTime(
+      order['created_at'],
+      fallback: '',
     );
 
-    final String deliveredAt = _formatDate(
-      shipment?['delivered_at']?.toString() ??
-          order['delivered_at']?.toString() ??
-          '',
+    final String confirmedAt = DateFormatter.dateTime(
+      order['confirmed_at'],
+      fallback: '',
     );
 
-    final List<OrderTrackingStep> steps = _buildTrackingSteps(
-      currentStatus: currentStatus,
-      createdAt: _formatDate(order['created_at']?.toString() ?? ''),
-      confirmedAt: _formatDate(order['confirmed_at']?.toString() ?? ''),
-      pickedUpAt: pickedUpAt,
-      deliveredAt: deliveredAt,
+    final String pickedUpAt = DateFormatter.dateTime(
+      shipment?['picked_up_at'],
+      fallback: '',
+    );
+
+    final String deliveredAt = DateFormatter.dateTime(
+      shipment?['delivered_at'] ?? order['delivered_at'],
+      fallback: '',
     );
 
     final bool isCancelled =
         currentStatus == 'cancelled' || currentStatus == 'canceled';
 
-    final bool isFailed = currentStatus == 'failed';
+    final bool isFailed =
+        currentStatus == 'failed' ||
+        currentStatus == 'delivery_failed' ||
+        currentStatus == 'failed_return_at_sorting_center';
+
+    final bool isTerminal = isCancelled || isFailed;
+
+    final List<OrderTrackingStep> steps = _buildTrackingSteps(
+      currentStatus: currentStatus,
+      createdAt: createdAt,
+      confirmedAt: confirmedAt,
+      pickedUpAt: pickedUpAt,
+      deliveredAt: deliveredAt,
+    );
 
     return Scaffold(
       backgroundColor: BuyerColors.background,
@@ -57,6 +80,7 @@ class OrderTracking extends StatelessWidget {
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: true,
+        title: const Text('Order Tracking', style: BuyerStyle.appBarTitle),
         leading: IconButton(
           tooltip: 'Back',
           onPressed: () {
@@ -68,30 +92,32 @@ class OrderTracking extends StatelessWidget {
             size: 20,
           ),
         ),
-        title: const Text('Order Tracking', style: BuyerStyle.appBarTitle),
       ),
       body: SafeArea(
         top: false,
         child: ListView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(18, 20, 18, 30),
+          physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics(),
+          ),
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 30),
           children: [
-            // ============================================================
+            // ==================================================
             // TRACKING HEADER
-            // ============================================================
+            // ==================================================
 
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(18),
+              padding: const EdgeInsets.all(16),
               decoration: BuyerStyle.elevatedCard,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Container(
-                        height: 50,
                         width: 50,
+                        height: 50,
                         decoration: BuyerStyle.iconContainer(),
                         child: const Icon(
                           Icons.local_shipping_outlined,
@@ -100,7 +126,7 @@ class OrderTracking extends StatelessWidget {
                         ),
                       ),
 
-                      const SizedBox(width: 13),
+                      const SizedBox(width: 12),
 
                       Expanded(
                         child: Column(
@@ -115,37 +141,52 @@ class OrderTracking extends StatelessWidget {
 
                             Text(
                               _displayStatus(currentStatus),
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
                               style: BuyerStyle.cardTitle,
                             ),
                           ],
                         ),
                       ),
-
-                      _statusIcon(currentStatus),
                     ],
                   ),
 
-                  if (orderNumber.isNotEmpty) ...[
-                    const SizedBox(height: 16),
+                  const SizedBox(height: 14),
 
-                    const Divider(height: 1, color: BuyerColors.border),
+                  StatusChip(status: currentStatus),
 
+                  if (orderNumber.isNotEmpty || trackingNumber.isNotEmpty) ...[
                     const SizedBox(height: 14),
 
-                    _infoRow(
-                      icon: Icons.receipt_long_outlined,
+                    const Divider(height: 1, color: BuyerColors.border),
+                  ],
+
+                  if (orderNumber.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+
+                    AppInfoRow(
                       label: 'Order Number',
                       value: orderNumber,
+                      icon: Icons.receipt_long_outlined,
+                      iconColor: BuyerColors.primary,
+                      selectable: true,
+                      showIconBackground: true,
                     ),
                   ],
 
-                  if (trackingNumber.isNotEmpty) ...[
-                    const SizedBox(height: 12),
+                  if (orderNumber.isNotEmpty && trackingNumber.isNotEmpty)
+                    const Divider(height: 1, color: BuyerColors.border),
 
-                    _infoRow(
-                      icon: Icons.qr_code_2_rounded,
+                  if (trackingNumber.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+
+                    AppInfoRow(
                       label: 'Tracking Number',
                       value: trackingNumber,
+                      icon: Icons.qr_code_2_rounded,
+                      iconColor: BuyerColors.primary,
+                      selectable: true,
+                      showIconBackground: true,
                     ),
                   ],
                 ],
@@ -154,16 +195,19 @@ class OrderTracking extends StatelessWidget {
 
             const SizedBox(height: 22),
 
-            // ============================================================
+            // ==================================================
             // CANCELLED / FAILED WARNING
-            // ============================================================
-            if (isCancelled || isFailed) ...[
+            // ==================================================
+            if (isTerminal) ...[
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(15),
                 decoration: BoxDecoration(
                   color: BuyerColors.cancelledBackground,
-                  borderRadius: BorderRadius.circular(15),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: BuyerColors.cancelledText.withValues(alpha: 0.15),
+                  ),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -171,18 +215,22 @@ class OrderTracking extends StatelessWidget {
                     const Icon(
                       Icons.warning_amber_rounded,
                       color: BuyerColors.cancelledText,
+                      size: 23,
                     ),
 
                     const SizedBox(width: 10),
 
                     Expanded(
                       child: Text(
-                        isCancelled ? 'This order has been cancelled.' : 'The delivery attempt for this order was unsuccessful.',
+                        isCancelled
+                            ? 'This order has been cancelled.'
+                            : 'The delivery attempt for this '
+                                  'order was unsuccessful.',
                         style: const TextStyle(
                           color: BuyerColors.cancelledText,
                           fontWeight: FontWeight.w600,
                           fontSize: 13,
-                          height: 1.4,
+                          height: 1.45,
                         ),
                       ),
                     ),
@@ -193,12 +241,22 @@ class OrderTracking extends StatelessWidget {
               const SizedBox(height: 22),
             ],
 
-            // ============================================================
+            // ==================================================
             // DELIVERY PROGRESS
-            // ============================================================
+            // ==================================================
             const Text('Delivery Progress', style: BuyerStyle.sectionTitle),
 
-            const SizedBox(height: 14),
+            const SizedBox(height: 6),
+
+            Text(
+              isTerminal
+                  ? 'The current shipment status is shown above.'
+                  : 'Follow the progress of your order '
+                        'from placement to delivery.',
+              style: BuyerStyle.small,
+            ),
+
+            const SizedBox(height: 18),
 
             for (int index = 0; index < steps.length; index++)
               _TrackingStepItem(
@@ -206,11 +264,11 @@ class OrderTracking extends StatelessWidget {
                 isLast: index == steps.length - 1,
               ),
 
-            const SizedBox(height: 8),
+            // ==================================================
+            // INFORMATION NOTE
+            // ==================================================
+            const SizedBox(height: 10),
 
-            // ============================================================
-            // INFO NOTE
-            // ============================================================
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(14),
@@ -231,8 +289,10 @@ class OrderTracking extends StatelessWidget {
 
                   Expanded(
                     child: Text(
-                      'Tracking progress is based on the latest '
-                      'shipment status recorded by BiliHub.',
+                      'Tracking progress is based on the '
+                      'latest shipment status recorded by '
+                      'BiliHub. Updates may take time to '
+                      'appear after a shipment changes status.',
                       style: TextStyle(
                         fontSize: 12,
                         height: 1.45,
@@ -249,9 +309,9 @@ class OrderTracking extends StatelessWidget {
     );
   }
 
-  // ================================================================
+  // ============================================================
   // TRACKING STEPS
-  // ================================================================
+  // ============================================================
 
   List<OrderTrackingStep> _buildTrackingSteps({
     required String currentStatus,
@@ -262,93 +322,179 @@ class OrderTracking extends StatelessWidget {
   }) {
     final int currentIndex = _statusIndex(currentStatus);
 
-    return [
-      OrderTrackingStep(
-        title: 'Order Placed',
-        subtitle: createdAt.isNotEmpty
-            ? 'Order placed on $createdAt'
-            : 'Your order has been received',
-        done: currentIndex >= 0,
-        active: currentIndex == 0,
-      ),
-      OrderTrackingStep(
-        title: 'Confirmed',
-        subtitle: confirmedAt.isNotEmpty
-            ? 'Order confirmed on $confirmedAt'
-            : 'Seller confirmed your order',
-        done: currentIndex >= 1,
-        active: currentIndex == 1,
-      ),
-      OrderTrackingStep(
-        title: 'Preparing',
-        subtitle: 'Seller is preparing your item for shipment',
-        done: currentIndex >= 2,
-        active: currentIndex == 2,
-      ),
-      OrderTrackingStep(
-        title: 'In Transit',
-        subtitle: pickedUpAt.isNotEmpty
-            ? 'Parcel picked up on $pickedUpAt'
-            : 'Parcel has been picked up and is moving through delivery',
-        done: currentIndex >= 3,
-        active: currentIndex == 3,
-      ),
-      OrderTrackingStep(
-        title: 'Out for Delivery',
-        subtitle: 'Rider is delivering your package',
-        done: currentIndex >= 4,
-        active: currentIndex == 4,
-      ),
-      OrderTrackingStep(
-        title: 'Delivered',
-        subtitle: deliveredAt.isNotEmpty
-            ? 'Package delivered on $deliveredAt'
-            : 'Package received by the buyer',
-        done: currentIndex >= 5,
-        active: currentIndex == 5,
-      ),
+    final bool terminal =
+        currentStatus == 'cancelled' ||
+        currentStatus == 'canceled' ||
+        currentStatus == 'failed' ||
+        currentStatus == 'delivery_failed' ||
+        currentStatus == 'failed_return_at_sorting_center';
+
+    final List<String> titles = <String>[
+      'Order Placed',
+      'Confirmed',
+      'Preparing',
+      'In Transit',
+      'Out for Delivery',
+      'Delivered',
     ];
+
+    final List<String> subtitles = <String>[
+      createdAt.isNotEmpty
+          ? 'Order placed on $createdAt'
+          : 'Your order has been received',
+
+      confirmedAt.isNotEmpty
+          ? 'Order confirmed on $confirmedAt'
+          : 'Seller confirmation',
+
+      'Seller is preparing your item for shipment',
+
+      pickedUpAt.isNotEmpty
+          ? 'Parcel picked up on $pickedUpAt'
+          : 'Parcel is moving through the delivery network',
+
+      'Rider is delivering your package',
+
+      deliveredAt.isNotEmpty
+          ? 'Package delivered on $deliveredAt'
+          : 'Package received by the buyer',
+    ];
+
+    final List<OrderTrackingStep> steps = <OrderTrackingStep>[];
+
+    for (int index = 0; index < titles.length; index++) {
+      bool done = false;
+      bool active = false;
+
+      if (terminal) {
+        // A cancelled/failed shipment does not imply
+        // that all normal delivery steps were completed.
+        if (index == 0 && createdAt.isNotEmpty) {
+          done = true;
+        }
+
+        if (index == 1 && confirmedAt.isNotEmpty) {
+          done = true;
+        }
+
+        if (index == 3 && pickedUpAt.isNotEmpty) {
+          done = true;
+        }
+
+        if (index == 5 && deliveredAt.isNotEmpty) {
+          done = true;
+        }
+      } else if (currentIndex >= 0) {
+        done = index < currentIndex || (currentIndex == 5 && index == 5);
+
+        active = index == currentIndex;
+      } else {
+        // Unknown statuses should not display
+        // unverified progress as completed.
+        done = index == 0 && createdAt.isNotEmpty;
+      }
+
+      steps.add(
+        OrderTrackingStep(
+          title: titles[index],
+          subtitle: subtitles[index],
+          done: done,
+          active: active,
+        ),
+      );
+    }
+
+    return steps;
   }
+
+  // ============================================================
+  // STATUS INDEX
+  // ============================================================
 
   int _statusIndex(String status) {
     switch (_normalizeStatus(status)) {
+      // ========================================================
+      // ORDER PLACED
+      // ========================================================
+
       case 'pending':
         return 0;
+
+      // ========================================================
+      // CONFIRMED
+      // ========================================================
 
       case 'confirmed':
         return 1;
 
+      // ========================================================
+      // PREPARING
+      // ========================================================
+
       case 'processing':
       case 'preparing':
+      case 'assigned':
+      case 'ready_for_pickup':
         return 2;
 
+      // ========================================================
+      // PICKUP / TRANSIT / HUB
+      // ========================================================
+
       case 'shipped':
-      case 'in_transit':
-      case 'in transit':
       case 'picked_up':
-      case 'picked up':
+      case 'in_transit':
+      case 'linehaul_assigned':
+      case 'linehaul_in_transit':
+      case 'in_hub_transfer':
+      case 'at_origin_hub':
+      case 'at_destination_hub':
+      case 'at_sorting_center':
+      case 'sorting':
+      case 'sorted':
+      case 'staged':
+      case 'received':
+      case 'scanned':
         return 3;
 
+      // ========================================================
+      // OUT FOR DELIVERY
+      // ========================================================
+
       case 'out_for_delivery':
-      case 'out for delivery':
         return 4;
 
+      // ========================================================
+      // DELIVERED
+      // ========================================================
+
       case 'delivered':
+      case 'completed':
         return 5;
+
+      // ========================================================
+      // CANCELLED / FAILED
+      // ========================================================
 
       case 'cancelled':
       case 'canceled':
       case 'failed':
+      case 'delivery_failed':
+      case 'failed_return_at_sorting_center':
         return -1;
 
+      // ========================================================
+      // UNKNOWN
+      // ========================================================
+
       default:
-        return 0;
+        return -1;
     }
   }
 
-  // ================================================================
-  // SHIPMENT
-  // ================================================================
+  // ============================================================
+  // SHIPMENT EXTRACTION
+  // ============================================================
 
   Map<String, dynamic>? _extractShipment(
     List<Map<String, dynamic>> sellerOrders,
@@ -364,75 +510,9 @@ class OrderTracking extends StatelessWidget {
     return null;
   }
 
-  // ================================================================
-  // HEADER INFO
-  // ================================================================
-
-  Widget _infoRow({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18, color: BuyerColors.primary),
-
-        const SizedBox(width: 9),
-
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: BuyerStyle.small),
-
-              const SizedBox(height: 3),
-
-              Text(value, style: BuyerStyle.cardTitle),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _statusIcon(String status) {
-    IconData icon;
-    Color color;
-
-    switch (_normalizeStatus(status)) {
-      case 'delivered':
-        icon = Icons.check_circle_outline_rounded;
-        color = BuyerColors.deliveredText;
-        break;
-
-      case 'cancelled':
-      case 'canceled':
-      case 'failed':
-        icon = Icons.cancel_outlined;
-        color = BuyerColors.cancelledText;
-        break;
-
-      case 'out_for_delivery':
-      case 'out for delivery':
-      case 'in_transit':
-      case 'in transit':
-      case 'shipped':
-        icon = Icons.local_shipping_outlined;
-        color = BuyerColors.shippedText;
-        break;
-
-      default:
-        icon = Icons.schedule_rounded;
-        color = BuyerColors.processingText;
-    }
-
-    return Icon(icon, color: color, size: 26);
-  }
-
-  // ================================================================
-  // HELPERS
-  // ================================================================
+  // ============================================================
+  // MAP LIST
+  // ============================================================
 
   List<Map<String, dynamic>> _mapList(dynamic value) {
     if (value is! List) {
@@ -445,8 +525,16 @@ class OrderTracking extends StatelessWidget {
         .toList();
   }
 
+  // ============================================================
+  // STATUS HELPERS
+  // ============================================================
+
   String _normalizeStatus(String status) {
-    return status.trim().toLowerCase();
+    return status
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(RegExp(r'\s+'), '_');
   }
 
   String _displayStatus(String status) {
@@ -470,51 +558,32 @@ class OrderTracking extends StatelessWidget {
         .join(' ');
   }
 
-  String _formatDate(String rawDate) {
-    if (rawDate.trim().isEmpty) {
+  String _cleanText(dynamic value) {
+    final String cleaned = value?.toString().trim() ?? '';
+
+    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
       return '';
     }
 
-    try {
-      final DateTime parsed = DateTime.parse(rawDate).toLocal();
+    return cleaned;
+  }
 
-      const List<String> months = [
-        'Jan',
-        'Feb',
-        'Mar',
-        'Apr',
-        'May',
-        'Jun',
-        'Jul',
-        'Aug',
-        'Sep',
-        'Oct',
-        'Nov',
-        'Dec',
-      ];
+  String _firstNonEmpty(List<dynamic> values) {
+    for (final dynamic value in values) {
+      final String cleaned = _cleanText(value);
 
-      final int hour12 = parsed.hour == 0
-          ? 12
-          : parsed.hour > 12
-          ? parsed.hour - 12
-          : parsed.hour;
-
-      final String minute = parsed.minute.toString().padLeft(2, '0');
-
-      final String period = parsed.hour >= 12 ? 'PM' : 'AM';
-
-      return '${months[parsed.month - 1]} '
-          '${parsed.day}, ${parsed.year} • '
-          '$hour12:$minute $period';
-    } catch (_) {
-      return rawDate;
+      if (cleaned.isNotEmpty) {
+        return cleaned;
+      }
     }
+
+    return '';
   }
 }
 
-// ===================================================================
+// ============================================================
 // TRACKING STEP MODEL
-// ===================================================================
+// ============================================================
 
 class OrderTrackingStep {
   final String title;
@@ -530,9 +599,9 @@ class OrderTrackingStep {
   });
 }
 
-// ===================================================================
+// ============================================================
 // TRACKING STEP ITEM
-// ===================================================================
+// ============================================================
 
 class _TrackingStepItem extends StatelessWidget {
   final OrderTrackingStep step;
@@ -595,7 +664,7 @@ class _TrackingStepItem extends StatelessWidget {
                   ],
                 ),
 
-                const SizedBox(height: 5),
+                const SizedBox(height: 6),
 
                 Text(step.subtitle, style: BuyerStyle.small),
               ],
@@ -607,9 +676,9 @@ class _TrackingStepItem extends StatelessWidget {
   }
 }
 
-// ===================================================================
+// ============================================================
 // TIMELINE INDICATOR
-// ===================================================================
+// ============================================================
 
 class _TimelineIndicator extends StatelessWidget {
   final bool done;
@@ -655,7 +724,7 @@ class _TimelineIndicator extends StatelessWidget {
           ),
         ),
 
-        if (!isLast) Container(height: 65, width: 2, color: lineColor),
+        if (!isLast) Container(height: 75, width: 2, color: lineColor),
       ],
     );
   }

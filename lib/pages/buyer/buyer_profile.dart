@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
-import '../../sevices/auth_storage.dart';
+import '../../services/auth_storage.dart';
 import '../../styles/buyer_style.dart';
 
 import '../auth/login_page.dart';

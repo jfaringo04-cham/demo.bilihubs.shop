@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/parcel_model.dart';
-import '../../sevices/api_services.dart';
+import '../../services/api_services.dart';
 import '../../styles/logistics_style.dart';
+import '../../widgets/app_empty_state.dart';
+import '../../widgets/app_error_state.dart';
+import '../../widgets/app_info_row.dart';
+import '../../widgets/app_loading_state.dart';
 import '../../widgets/dashboard_card.dart';
 
 class ParcelStatistics extends StatefulWidget {
@@ -13,26 +19,37 @@ class ParcelStatistics extends StatefulWidget {
 }
 
 class _ParcelStatisticsState extends State<ParcelStatistics> {
+  static const Duration _requestTimeout = Duration(seconds: 25);
+
   bool _isLoading = true;
   bool _isRefreshing = false;
+  bool _hasDashboardData = false;
+  bool _hasShipmentData = false;
+  bool _isFetching = false;
 
-  String? _errorMessage;
+  String? _dashboardError;
+  String? _shipmentsError;
 
   Map<String, dynamic> _shipments = <String, dynamic>{};
-
   Map<String, dynamic> _riders = <String, dynamic>{};
-
   Map<String, dynamic> _hubs = <String, dynamic>{};
 
-  int _alertsCount = 0;
+  int? _alertsCount;
 
-  final List<ParcelModel> _parcelRecords = <ParcelModel>[];
+  List<ParcelModel> _parcelRecords = <ParcelModel>[];
+
+  int _requestId = 0;
 
   @override
   void initState() {
     super.initState();
-
     _loadStatistics();
+  }
+
+  @override
+  void dispose() {
+    _requestId++;
+    super.dispose();
   }
 
   // ============================================================
@@ -40,92 +57,167 @@ class _ParcelStatisticsState extends State<ParcelStatistics> {
   // ============================================================
 
   Future<void> _loadStatistics({bool refresh = false}) async {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted || _isFetching) return;
+
+    final int requestId = ++_requestId;
+
+    final bool hasPreviousData = _hasDashboardData || _hasShipmentData;
 
     setState(() {
-      if (refresh) {
-        _isRefreshing = true;
-      } else {
-        _isLoading = true;
-      }
-
-      _errorMessage = null;
+      _isFetching = true;
+      _isLoading = !hasPreviousData;
+      _isRefreshing = hasPreviousData || refresh;
+      _dashboardError = null;
+      _shipmentsError = null;
     });
 
     try {
-      final List<Map<String, dynamic>> results = await Future.wait(
-        <Future<Map<String, dynamic>>>[
-          ApiService.getLogisticsDashboard(),
-          ApiService.getLogisticsShipments(perPage: 100),
-        ],
-      );
+      final List<_StatisticsApiResult> results =
+          await Future.wait<_StatisticsApiResult>([
+            _fetchDashboard(),
+            _fetchShipments(),
+          ]);
 
-      if (!mounted) {
-        return;
+      if (!mounted || requestId != _requestId) return;
+
+      final _StatisticsApiResult dashboardResponse = results[0];
+      final _StatisticsApiResult shipmentsResponse = results[1];
+
+      final bool dashboardSuccess = dashboardResponse.data?['success'] == true;
+
+      final bool shipmentsSuccess = shipmentsResponse.data?['success'] == true;
+
+      Map<String, dynamic>? dashboardData;
+      List<ParcelModel>? parsedParcels;
+
+      String? dashboardError = dashboardResponse.error;
+      String? shipmentsError = shipmentsResponse.error;
+
+      if (dashboardSuccess) {
+        try {
+          dashboardData = _extractDashboardData(dashboardResponse.data!);
+        } catch (error) {
+          debugPrint('Dashboard parsing error: $error');
+          dashboardError = 'Unable to read dashboard statistics.';
+        }
       }
 
-      final Map<String, dynamic> dashboardResult = results[0];
-
-      final Map<String, dynamic> shipmentsResult = results[1];
-
-      if (dashboardResult['success'] != true) {
-        final String message =
-            dashboardResult['message']?.toString().trim() ?? '';
-
-        setState(() {
-          _isLoading = false;
-          _isRefreshing = false;
-
-          _errorMessage = message.isNotEmpty
-              ? message
-              : 'Unable to load parcel statistics.';
-        });
-
-        return;
+      if (shipmentsSuccess) {
+        try {
+          parsedParcels = _extractParcels(shipmentsResponse.data!);
+        } catch (error) {
+          debugPrint('Shipment parsing error: $error');
+          shipmentsError = 'Unable to read shipment statistics.';
+        }
       }
 
-      final Map<String, dynamic> data = _extractDashboardData(dashboardResult);
-
-      final List<ParcelModel> parcels = shipmentsResult['success'] == true
-          ? _extractParcels(shipmentsResult)
-          : <ParcelModel>[];
+      if (!mounted || requestId != _requestId) return;
 
       setState(() {
-        _shipments = _map(data['shipments']);
+        if (dashboardData != null) {
+          _shipments = _map(dashboardData['shipments']);
+          _riders = _map(dashboardData['riders']);
+          _hubs = _map(dashboardData['hubs']);
 
-        _riders = _map(data['riders']);
+          _alertsCount = _number(dashboardData['alerts_count']);
 
-        _hubs = _map(data['hubs']);
+          _hasDashboardData = true;
+          dashboardError = null;
+        }
 
-        _alertsCount = _number(data['alerts_count']);
+        if (parsedParcels != null) {
+          _parcelRecords = parsedParcels;
+          _hasShipmentData = true;
+          shipmentsError = null;
+        }
 
-        _parcelRecords
-          ..clear()
-          ..addAll(parcels);
+        _dashboardError = dashboardData != null
+            ? null
+            : dashboardError ??
+                  'Dashboard statistics are currently unavailable.';
+
+        _shipmentsError = parsedParcels != null
+            ? null
+            : shipmentsError ?? 'Shipment records are currently unavailable.';
 
         _isLoading = false;
         _isRefreshing = false;
-
-        _errorMessage = null;
+        _isFetching = false;
       });
     } catch (error) {
-      debugPrint('Logistics statistics error: $error');
+      debugPrint('Parcel statistics loading error: $error');
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted || requestId != _requestId) return;
 
       setState(() {
         _isLoading = false;
         _isRefreshing = false;
+        _isFetching = false;
 
-        _errorMessage =
-            'Unable to load parcel statistics. '
-            'Please try again.';
+        _dashboardError = 'Unable to load statistics. Please try again.';
+
+        _shipmentsError = 'Unable to refresh shipment records.';
       });
     }
+  }
+
+  // ============================================================
+  // INDEPENDENT API REQUESTS
+  // ============================================================
+
+  Future<_StatisticsApiResult> _fetchDashboard() async {
+    try {
+      final Map<String, dynamic> result =
+          await ApiService.getLogisticsDashboard().timeout(_requestTimeout);
+
+      if (result['success'] == true) {
+        return _StatisticsApiResult(data: result);
+      }
+
+      return _StatisticsApiResult(
+        data: result,
+        error: _responseMessage(result, 'Unable to load logistics dashboard.'),
+      );
+    } on TimeoutException {
+      return const _StatisticsApiResult(error: 'Dashboard request timed out.');
+    } catch (error) {
+      debugPrint('Statistics dashboard API error: $error');
+
+      return const _StatisticsApiResult(
+        error: 'Unable to connect to the logistics dashboard API.',
+      );
+    }
+  }
+
+  Future<_StatisticsApiResult> _fetchShipments() async {
+    try {
+      final Map<String, dynamic> result =
+          await ApiService.getLogisticsShipments(perPage: 100)
+              .timeout(_requestTimeout);
+
+      if (result['success'] == true) {
+        return _StatisticsApiResult(data: result);
+      }
+
+      return _StatisticsApiResult(
+        data: result,
+        error: _responseMessage(result, 'Unable to load shipment records.'),
+      );
+    } on TimeoutException {
+      return const _StatisticsApiResult(error: 'Shipment request timed out.');
+    } catch (error) {
+      debugPrint('Statistics shipments API error: $error');
+
+      return const _StatisticsApiResult(
+        error: 'Unable to connect to the logistics shipments API.',
+      );
+    }
+  }
+
+  String _responseMessage(Map<String, dynamic> result, String fallback) {
+    final String message = result['message']?.toString().trim() ?? '';
+
+    return message.isEmpty ? fallback : message;
   }
 
   // ============================================================
@@ -150,16 +242,26 @@ class _ParcelStatisticsState extends State<ParcelStatistics> {
     return <String, dynamic>{};
   }
 
-  int _number(dynamic value) {
-    if (value is int) {
-      return value;
-    }
+  int? _number(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
 
-    if (value is num) {
-      return value.toInt();
-    }
+    return int.tryParse(value.toString());
+  }
 
-    return int.tryParse(value?.toString() ?? '') ?? 0;
+  String _dashboardCount(Map<String, dynamic> source, String key) {
+    if (!_hasDashboardData) return '—';
+
+    final int? count = _number(source[key]);
+
+    return count?.toString() ?? '—';
+  }
+
+  String _alertsValue() {
+    if (!_hasDashboardData) return '—';
+
+    return _alertsCount?.toString() ?? '—';
   }
 
   // ============================================================
@@ -175,10 +277,7 @@ class _ParcelStatisticsState extends State<ParcelStatistics> {
       try {
         parcels.add(ParcelModel.fromJson(_normalizeShipment(item)));
       } catch (error) {
-        debugPrint(
-          'Unable to parse statistics parcel: '
-          '$error',
-        );
+        debugPrint('Unable to parse statistics parcel: $error');
       }
     }
 
@@ -187,24 +286,16 @@ class _ParcelStatisticsState extends State<ParcelStatistics> {
 
   List<Map<String, dynamic>> _extractShipmentMaps(Map<String, dynamic> result) {
     for (final String key in <String>['data', 'shipments', 'parcels']) {
-      final List<Map<String, dynamic>> list = _toMapList(result[key]);
-
-      if (list.isNotEmpty) {
-        return list;
+      if (result[key] is List) {
+        return _toMapList(result[key]);
       }
     }
 
-    final dynamic rawData = result['data'];
+    final Map<String, dynamic> data = _map(result['data']);
 
-    if (rawData is Map) {
-      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
-
-      for (final String key in <String>['data', 'shipments', 'parcels']) {
-        final List<Map<String, dynamic>> list = _toMapList(data[key]);
-
-        if (list.isNotEmpty) {
-          return list;
-        }
+    for (final String key in <String>['data', 'shipments', 'parcels']) {
+      if (data[key] is List) {
+        return _toMapList(data[key]);
       }
     }
 
@@ -216,211 +307,98 @@ class _ParcelStatisticsState extends State<ParcelStatistics> {
       return <Map<String, dynamic>>[];
     }
 
-    final List<Map<String, dynamic>> list = <Map<String, dynamic>>[];
-
-    for (final dynamic item in value) {
-      if (item is Map<String, dynamic>) {
-        list.add(Map<String, dynamic>.from(item));
-      } else if (item is Map) {
-        list.add(Map<String, dynamic>.from(item));
-      }
-    }
-
-    return list;
+    return value
+        .whereType<Map>()
+        .map((Map item) => Map<String, dynamic>.from(item))
+        .toList();
   }
 
   Map<String, dynamic> _normalizeShipment(Map<String, dynamic> raw) {
     final Map<String, dynamic> data = Map<String, dynamic>.from(raw);
 
-    final dynamic shipment = data['shipment'];
+    final Map<String, dynamic> shipment = _map(data['shipment']);
 
-    if (shipment is Map) {
-      data.addAll(Map<String, dynamic>.from(shipment));
+    if (shipment.isNotEmpty) {
+      data.addAll(shipment);
     }
 
-    final dynamic order = data['order'];
+    final Map<String, dynamic> order = _map(data['order']);
 
-    if (order is Map) {
-      data['customer_name'] ??=
-          order['customer_name'] ?? order['buyer_name'] ?? order['name'];
+    data['customer_name'] ??=
+        order['customer_name'] ?? order['buyer_name'] ?? order['name'];
 
-      data['customer_phone'] ??= order['customer_phone'] ?? order['phone'];
+    data['customer_phone'] ??= order['customer_phone'] ?? order['phone'];
 
-      data['delivery_address'] ??=
-          order['delivery_address'] ?? order['address'];
+    data['delivery_address'] ??= order['delivery_address'] ?? order['address'];
 
-      data['order_date'] ??= order['order_date'] ?? order['created_at'];
-    }
+    data['order_date'] ??= order['order_date'] ?? order['created_at'];
 
-    final dynamic rider = data['rider'];
+    final Map<String, dynamic> rider = _map(data['rider']);
 
-    if (rider is Map) {
-      data['rider_id'] ??= rider['id'];
+    data['rider_id'] ??= rider['id'];
+    data['rider_name'] ??= rider['name'];
 
-      data['rider_name'] ??= rider['name'];
-    }
+    final Map<String, dynamic> linehaulRider = _map(data['linehaul_rider']);
 
-    final dynamic linehaulRider = data['linehaul_rider'];
+    data['linehaul_rider_id'] ??= linehaulRider['id'];
+    data['linehaul_rider_name'] ??= linehaulRider['name'];
 
-    if (linehaulRider is Map) {
-      data['linehaul_rider_id'] ??= linehaulRider['id'];
+    final Map<String, dynamic> originHub = _map(data['origin_hub']);
 
-      data['linehaul_rider_name'] ??= linehaulRider['name'];
-    }
+    data['origin_hub_id'] ??= originHub['id'];
+    data['origin_hub_name'] ??= originHub['name'];
 
-    final dynamic originHub = data['origin_hub'];
+    final Map<String, dynamic> destinationHub = _map(data['destination_hub']);
 
-    if (originHub is Map) {
-      data['origin_hub_id'] ??= originHub['id'];
+    data['destination_hub_id'] ??= destinationHub['id'];
+    data['destination_hub_name'] ??= destinationHub['name'];
 
-      data['origin_hub_name'] ??= originHub['name'];
-    }
+    final Map<String, dynamic> currentHub = _map(data['hub']);
 
-    final dynamic destinationHub = data['destination_hub'];
-
-    if (destinationHub is Map) {
-      data['destination_hub_id'] ??= destinationHub['id'];
-
-      data['destination_hub_name'] ??= destinationHub['name'];
-    }
-
-    final dynamic currentHub = data['hub'];
-
-    if (currentHub is Map) {
-      data['current_hub_id'] ??= currentHub['id'];
-
-      data['current_hub_name'] ??= currentHub['name'];
-    }
+    data['current_hub_id'] ??= currentHub['id'];
+    data['current_hub_name'] ??= currentHub['name'];
 
     data['id'] ??= data['shipment_id'] ?? data['order_id'] ?? 0;
 
-    data['tracking_number'] ??= data['tracking_code'] ?? data['tracking'] ?? '';
+    data['shipment_id'] ??= data['id'];
 
-    data['customer_name'] ??= '';
+    data['tracking_number'] ??=
+        data['tracking_code'] ??
+        data['tracking'] ??
+        data['waybill_number'] ??
+        '';
 
-    data['customer_phone'] ??= '';
+    data['customer_name'] ??=
+        data['recipient_name'] ?? data['buyer_name'] ?? '';
 
-    data['delivery_address'] ??= '';
+    data['customer_phone'] ??= data['phone'] ?? data['recipient_phone'] ?? '';
+
+    data['delivery_address'] ??=
+        data['shipping_address'] ??
+        data['recipient_address'] ??
+        data['address'] ??
+        '';
+
+    data['pickup_address'] ??= data['seller_address'] ?? '';
 
     data['rider_name'] ??= '';
 
-    data['status'] ??= data['shipment_status'] ?? 'pending';
+    data['status'] ??=
+        data['shipment_status'] ?? data['delivery_status'] ?? 'pending';
 
-    data['order_date'] ??= data['created_at'] ?? '';
+    data['order_date'] ??= data['created_at'] ?? data['assigned_at'] ?? '';
 
-    data['delivery_earnings'] ??= data['earnings'] ?? 0;
+    data['delivery_earnings'] ??= data['earnings'] ?? data['delivery_fee'] ?? 0;
+
+    data['latitude'] ??= data['lat'];
+
+    data['longitude'] ??= data['lng'] ?? data['lon'];
 
     return data;
   }
 
   // ============================================================
-  // DASHBOARD COUNTS
-  // ============================================================
-
-  int get _totalShipments {
-    final int dashboard = _number(_shipments['total']);
-
-    if (dashboard > 0 || _parcelRecords.isEmpty) {
-      return dashboard;
-    }
-
-    return _parcelRecords.length;
-  }
-
-  int get _pendingShipments {
-    return _number(_shipments['pending']);
-  }
-
-  int get _preparingShipments {
-    return _number(_shipments['preparing']);
-  }
-
-  int get _inTransitShipments {
-    final int dashboard = _number(_shipments['in_transit']);
-
-    if (dashboard > 0 || _parcelRecords.isEmpty) {
-      return dashboard;
-    }
-
-    return _parcelRecords.where((ParcelModel parcel) {
-      return parcel.isInTransit || parcel.isLinehaulInTransit;
-    }).length;
-  }
-
-  int get _outForDeliveryShipments {
-    final int dashboard = _number(_shipments['out_for_delivery']);
-
-    if (dashboard > 0 || _parcelRecords.isEmpty) {
-      return dashboard;
-    }
-
-    return _parcelRecords
-        .where((ParcelModel parcel) => parcel.isOutForDelivery)
-        .length;
-  }
-
-  int get _deliveredShipments {
-    final int dashboard = _number(_shipments['delivered']);
-
-    if (dashboard > 0 || _parcelRecords.isEmpty) {
-      return dashboard;
-    }
-
-    return _parcelRecords
-        .where((ParcelModel parcel) => parcel.isDelivered)
-        .length;
-  }
-
-  int get _cancelledShipments {
-    return _number(_shipments['cancelled']);
-  }
-
-  // ============================================================
-  // SORTING COUNTS
-  // ============================================================
-
-  int get _receivedCount {
-    final int dashboard = _number(_shipments['received']);
-
-    if (dashboard > 0 || _parcelRecords.isEmpty) {
-      return dashboard;
-    }
-
-    return _parcelRecords
-        .where((ParcelModel parcel) => parcel.receivedBySortingCenter)
-        .length;
-  }
-
-  int get _scannedCount {
-    return _number(_shipments['scanned']);
-  }
-
-  int get _sortedCount {
-    final int dashboard = _number(_shipments['sorted']);
-
-    if (dashboard > 0 || _parcelRecords.isEmpty) {
-      return dashboard;
-    }
-
-    return _parcelRecords
-        .where(
-          (ParcelModel parcel) => parcel.normalizedSortingStatus == 'sorted',
-        )
-        .length;
-  }
-
-  int get _stagedCount {
-    final int dashboard = _number(_shipments['staged']);
-
-    if (dashboard > 0 || _parcelRecords.isEmpty) {
-      return dashboard;
-    }
-
-    return _parcelRecords.where((ParcelModel parcel) => parcel.isStaged).length;
-  }
-
-  // ============================================================
-  // ROUTING / LINE HAUL COUNTS
+  // HUB TRANSFER COUNTS FROM LOADED RECORDS
   // ============================================================
 
   int get _requiresTransferCount {
@@ -459,20 +437,46 @@ class _ParcelStatisticsState extends State<ParcelStatistics> {
         .length;
   }
 
+  String _sampleCount(int count) {
+    if (!_hasShipmentData) return '—';
+
+    return count.toString();
+  }
+
   // ============================================================
-  // COMPLETION RATE
+  // DELIVERY COMPLETION
   // ============================================================
 
-  double get _completion {
-    final int total = _totalShipments;
+  double? get _completion {
+    if (!_hasDashboardData) return null;
 
-    final int delivered = _deliveredShipments;
+    final int? total = _number(_shipments['total']);
+    final int? delivered = _number(_shipments['delivered']);
+
+    if (total == null || delivered == null) {
+      return null;
+    }
 
     if (total <= 0) {
-      return 0;
+      return 0.0;
     }
 
     return (delivered / total).clamp(0.0, 1.0);
+  }
+
+  String get _completionLabel {
+    final double? value = _completion;
+
+    if (value == null) {
+      return 'Completion rate unavailable';
+    }
+
+    if (_number(_shipments['total']) == 0) {
+      return 'No shipments recorded yet';
+    }
+
+    return '${(value * 100).toStringAsFixed(1)}% '
+        'of shipments delivered';
   }
 
   // ============================================================
@@ -481,6 +485,11 @@ class _ParcelStatisticsState extends State<ParcelStatistics> {
 
   @override
   Widget build(BuildContext context) {
+    final double width = MediaQuery.sizeOf(context).width;
+    final double horizontalPadding = width < 380 ? 14 : 18;
+
+    final bool hasAnyData = _hasDashboardData || _hasShipmentData;
+
     return Scaffold(
       backgroundColor: LogisticsColors.background,
       appBar: AppBar(
@@ -500,89 +509,202 @@ class _ParcelStatisticsState extends State<ParcelStatistics> {
           ],
         ),
         actions: [
-          if (_isRefreshing)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Center(
-                child: SizedBox(
-                  height: 19,
-                  width: 19,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
+          IconButton(
+            tooltip: 'Refresh statistics',
+            onPressed: _isFetching
+                ? null
+                : () => _loadStatistics(refresh: true),
+            icon: _isRefreshing
+                ? const SizedBox(
+                    height: 19,
+                    width: 19,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: LogisticsColors.primary,
+                    ),
+                  )
+                : const Icon(
+                    Icons.refresh_rounded,
                     color: LogisticsColors.primary,
                   ),
-                ),
-              ),
-            )
-          else
-            IconButton(
-              tooltip: 'Refresh statistics',
-              onPressed: _isLoading
-                  ? null
-                  : () {
-                      _loadStatistics(refresh: true);
-                    },
-              icon: const Icon(
-                Icons.refresh_rounded,
-                color: LogisticsColors.primary,
-              ),
-            ),
+          ),
+          const SizedBox(width: 5),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: () {
-          return _loadStatistics(refresh: true);
-        },
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(
-            parent: BouncingScrollPhysics(),
-          ),
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 30),
-          children: [
-            if (_isLoading)
-              const LinearProgressIndicator(color: LogisticsColors.primary),
-
-            if (_errorMessage != null) ...[
-              const SizedBox(height: 12),
-              _errorCard(),
-            ],
-
-            const SizedBox(height: 18),
-
-            const Text(
-              'Delivery Performance',
-              style: LogisticsStyle.sectionTitle,
+      body: SafeArea(
+        top: false,
+        child: RefreshIndicator(
+          color: LogisticsColors.primary,
+          onRefresh: () => _loadStatistics(refresh: true),
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
             ),
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              14,
+              horizontalPadding,
+              30,
+            ),
+            children: [
+              if (_isLoading && !hasAnyData) ...[
+                const SizedBox(height: 120),
+                const AppLoadingState(
+                  message: 'Loading parcel statistics...',
+                  color: LogisticsColors.primary,
+                ),
+              ] else if (!hasAnyData) ...[
+                const SizedBox(height: 80),
+                AppErrorState(
+                  title: 'Unable to Load Statistics',
+                  message:
+                      _dashboardError ??
+                      _shipmentsError ??
+                      'Unable to retrieve logistics statistics.',
+                  color: LogisticsColors.primary,
+                  onRetry: _loadStatistics,
+                ),
+              ] else ...[
+                if (_isRefreshing) ...[
+                  const LinearProgressIndicator(
+                    color: LogisticsColors.primary,
+                    minHeight: 2,
+                  ),
+                  const SizedBox(height: 14),
+                ],
 
-            const SizedBox(height: 14),
+                if (_dashboardError != null) ...[
+                  _warningBanner(
+                    title: 'Dashboard Statistics',
+                    message: _dashboardError!,
+                  ),
+                  const SizedBox(height: 12),
+                ],
 
-            _deliveryGrid(),
+                if (_shipmentsError != null) ...[
+                  _warningBanner(
+                    title: 'Shipment Records',
+                    message: _shipmentsError!,
+                  ),
+                  const SizedBox(height: 12),
+                ],
 
-            const SizedBox(height: 22),
+                _dataSourceNotice(),
 
-            _sortingProgressCard(),
+                const SizedBox(height: 24),
 
-            const SizedBox(height: 18),
+                const Text(
+                  'Delivery Performance',
+                  style: LogisticsStyle.sectionTitle,
+                ),
 
-            _routingCard(),
+                const SizedBox(height: 5),
 
-            const SizedBox(height: 18),
+                const Text(
+                  'Official Laravel dashboard totals',
+                  style: LogisticsStyle.small,
+                ),
 
-            _completionCard(),
+                const SizedBox(height: 14),
 
-            const SizedBox(height: 18),
+                _deliveryGrid(),
 
-            _networkCard(),
+                const SizedBox(height: 22),
 
-            const SizedBox(height: 22),
-          ],
+                _sortingProgressCard(),
+
+                const SizedBox(height: 18),
+
+                _routingCard(),
+
+                const SizedBox(height: 18),
+
+                _completionCard(),
+
+                const SizedBox(height: 18),
+
+                _networkCard(),
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
 
   // ============================================================
-  // DELIVERY GRID
+  // API WARNINGS
+  // ============================================================
+
+  Widget _warningBanner({required String title, required String message}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: LogisticsStyle.card,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            color: LogisticsColors.warning,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: LogisticsStyle.cardTitle),
+                const SizedBox(height: 4),
+                Text(message, style: LogisticsStyle.small),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: _isFetching
+                ? null
+                : () => _loadStatistics(refresh: true),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dataSourceNotice() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: LogisticsColors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: LogisticsColors.border),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.analytics_outlined,
+            color: LogisticsColors.primary,
+            size: 22,
+          ),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Delivery totals, sorting statistics, and '
+              'network counts use Laravel dashboard data. '
+              'Hub-transfer counts use the loaded shipment '
+              'records only.',
+              style: LogisticsStyle.small,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // DELIVERY PERFORMANCE
   // ============================================================
 
   Widget _deliveryGrid() {
@@ -596,56 +718,49 @@ class _ParcelStatisticsState extends State<ParcelStatistics> {
       children: [
         DashboardCard(
           title: 'Total',
-          value: '$_totalShipments',
+          value: _dashboardCount(_shipments, 'total'),
           icon: Icons.inventory_2_outlined,
           color: LogisticsColors.primary,
         ),
-
         DashboardCard(
           title: 'Pending',
-          value: '$_pendingShipments',
+          value: _dashboardCount(_shipments, 'pending'),
           icon: Icons.pending_actions_rounded,
           color: LogisticsColors.warning,
         ),
-
         DashboardCard(
           title: 'Preparing',
-          value: '$_preparingShipments',
+          value: _dashboardCount(_shipments, 'preparing'),
           icon: Icons.inventory_outlined,
           color: LogisticsColors.warning,
         ),
-
         DashboardCard(
           title: 'In Transit',
-          value: '$_inTransitShipments',
+          value: _dashboardCount(_shipments, 'in_transit'),
           icon: Icons.local_shipping_outlined,
           color: LogisticsColors.primary,
         ),
-
         DashboardCard(
           title: 'Out for Delivery',
-          value: '$_outForDeliveryShipments',
+          value: _dashboardCount(_shipments, 'out_for_delivery'),
           icon: Icons.delivery_dining_rounded,
           color: LogisticsColors.primary,
         ),
-
         DashboardCard(
           title: 'Delivered',
-          value: '$_deliveredShipments',
+          value: _dashboardCount(_shipments, 'delivered'),
           icon: Icons.check_circle_outline_rounded,
           color: LogisticsColors.success,
         ),
-
         DashboardCard(
           title: 'Cancelled',
-          value: '$_cancelledShipments',
+          value: _dashboardCount(_shipments, 'cancelled'),
           icon: Icons.cancel_outlined,
           color: LogisticsColors.danger,
         ),
-
         DashboardCard(
           title: 'Alerts',
-          value: '$_alertsCount',
+          value: _alertsValue(),
           icon: Icons.notifications_active_outlined,
           color: LogisticsColors.warning,
         ),
@@ -658,231 +773,264 @@ class _ParcelStatisticsState extends State<ParcelStatistics> {
   // ============================================================
 
   Widget _sortingProgressCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: LogisticsStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.warehouse_outlined, color: LogisticsColors.primary),
-              SizedBox(width: 9),
-              Text('Sorting Progress', style: LogisticsStyle.sectionTitle),
-            ],
-          ),
-
-          const SizedBox(height: 14),
-
-          _row('Received', _receivedCount),
-
-          _row('Scanned', _scannedCount),
-
-          _row('Sorted', _sortedCount),
-
-          _row('Staged', _stagedCount),
-        ],
-      ),
+    return _sectionCard(
+      title: 'Sorting Progress',
+      subtitle: 'Statistics reported by Laravel',
+      icon: Icons.warehouse_outlined,
+      children: [
+        _statRow(
+          title: 'Received',
+          value: _dashboardCount(_shipments, 'received'),
+          icon: Icons.move_to_inbox_rounded,
+        ),
+        _statRow(
+          title: 'Scanned',
+          value: _dashboardCount(_shipments, 'scanned'),
+          icon: Icons.qr_code_scanner_rounded,
+        ),
+        _statRow(
+          title: 'Sorted',
+          value: _dashboardCount(_shipments, 'sorted'),
+          icon: Icons.sort_rounded,
+        ),
+        _statRow(
+          title: 'Staged',
+          value: _dashboardCount(_shipments, 'staged'),
+          icon: Icons.inventory_rounded,
+        ),
+      ],
     );
   }
 
   // ============================================================
-  // ROUTING / LINE HAUL
+  // HUB TRANSFER / LINE HAUL
   // ============================================================
 
   Widget _routingCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: LogisticsStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.multiple_stop_rounded, color: LogisticsColors.primary),
-              SizedBox(width: 9),
-              Text(
-                'Hub Transfer & Line Haul',
-                style: LogisticsStyle.sectionTitle,
-              ),
-            ],
+    return _sectionCard(
+      title: 'Hub Transfer & Line Haul',
+      subtitle: 'Counts from loaded shipments (up to 100 records)',
+      icon: Icons.multiple_stop_rounded,
+      children: [
+        if (!_hasShipmentData) ...[
+          const AppEmptyState(
+            title: 'Routing Data Unavailable',
+            message:
+                'Unable to retrieve shipment records '
+                'for hub-transfer statistics.',
+            icon: Icons.route_outlined,
+            color: LogisticsColors.primary,
+            compact: true,
           ),
-
-          const SizedBox(height: 6),
-
-          const Text(
-            'Calculated from the current shipment '
-            'routing records.',
-            style: LogisticsStyle.small,
+        ] else ...[
+          _statRow(
+            title: 'Loaded Shipments',
+            value: '${_parcelRecords.length}',
+            icon: Icons.inventory_2_outlined,
           ),
-
-          const SizedBox(height: 12),
-
-          _row('Requires Hub Transfer', _requiresTransferCount),
-
-          _row('Awaiting Line-Haul Rider', _awaitingLinehaulCount),
-
-          _row('Line-Haul Assigned', _linehaulAssignedCount),
-
-          _row('Line-Haul In Transit', _linehaulInTransitCount),
-
-          _row('Line-Haul Completed', _linehaulCompletedCount),
-
-          _row('At Destination Hub', _destinationHubCount),
+          const Divider(height: 22, color: LogisticsColors.border),
+          _statRow(
+            title: 'Requires Hub Transfer',
+            value: _sampleCount(_requiresTransferCount),
+            icon: Icons.route_outlined,
+          ),
+          _statRow(
+            title: 'Awaiting Line-Haul Rider',
+            value: _sampleCount(_awaitingLinehaulCount),
+            icon: Icons.person_search_outlined,
+          ),
+          _statRow(
+            title: 'Line-Haul Assigned',
+            value: _sampleCount(_linehaulAssignedCount),
+            icon: Icons.assignment_ind_outlined,
+          ),
+          _statRow(
+            title: 'Line-Haul In Transit',
+            value: _sampleCount(_linehaulInTransitCount),
+            icon: Icons.local_shipping_outlined,
+          ),
+          _statRow(
+            title: 'Line-Haul Completed',
+            value: _sampleCount(_linehaulCompletedCount),
+            icon: Icons.check_circle_outline_rounded,
+          ),
+          _statRow(
+            title: 'At Destination Hub',
+            value: _sampleCount(_destinationHubCount),
+            icon: Icons.location_city_outlined,
+          ),
         ],
-      ),
+      ],
     );
   }
 
   // ============================================================
-  // COMPLETION RATE
+  // DELIVERY COMPLETION
   // ============================================================
 
   Widget _completionCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: LogisticsStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Delivery Completion', style: LogisticsStyle.sectionTitle),
+    final double? completion = _completion;
 
-          const SizedBox(height: 14),
-
-          LinearProgressIndicator(
-            value: _completion,
-            minHeight: 9,
-            borderRadius: BorderRadius.circular(20),
-            color: LogisticsColors.success,
-            backgroundColor: LogisticsColors.lightPurple,
-          ),
-
-          const SizedBox(height: 10),
-
-          Text(
-            '${(_completion * 100).round()}% '
-            'of shipments delivered',
-            style: LogisticsStyle.small,
-          ),
-        ],
-      ),
+    return _sectionCard(
+      title: 'Delivery Completion',
+      subtitle: 'Based on official dashboard totals',
+      icon: Icons.trending_up_rounded,
+      children: [
+        LinearProgressIndicator(
+          value: completion ?? 0,
+          minHeight: 9,
+          borderRadius: BorderRadius.circular(20),
+          color: LogisticsColors.success,
+          backgroundColor: LogisticsColors.lightPurple,
+        ),
+        const SizedBox(height: 12),
+        Text(_completionLabel, style: LogisticsStyle.cardTitle),
+        const SizedBox(height: 9),
+        AppInfoRow(
+          label: 'Total Shipments',
+          value: _dashboardCount(_shipments, 'total'),
+          icon: Icons.inventory_2_outlined,
+          iconColor: LogisticsColors.primary,
+          compact: true,
+        ),
+        const SizedBox(height: 8),
+        AppInfoRow(
+          label: 'Delivered',
+          value: _dashboardCount(_shipments, 'delivered'),
+          icon: Icons.check_circle_outline_rounded,
+          iconColor: LogisticsColors.primary,
+          compact: true,
+        ),
+      ],
     );
   }
 
   // ============================================================
-  // NETWORK
+  // LOGISTICS NETWORK
   // ============================================================
 
   Widget _networkCard() {
-    final int totalRiders = _number(_riders['total']);
+    return _sectionCard(
+      title: 'Logistics Network',
+      subtitle: 'Rider and hub statistics from Laravel',
+      icon: Icons.hub_outlined,
+      children: [
+        _statRow(
+          title: 'Total Riders',
+          value: _dashboardCount(_riders, 'total'),
+          icon: Icons.people_outline_rounded,
+        ),
+        _statRow(
+          title: 'Active Riders',
+          value: _dashboardCount(_riders, 'active'),
+          icon: Icons.delivery_dining_rounded,
+        ),
+        if (_riders.containsKey('available'))
+          _statRow(
+            title: 'Available Riders',
+            value: _dashboardCount(_riders, 'available'),
+            icon: Icons.person_pin_circle_outlined,
+          ),
+        if (_riders.containsKey('on_delivery'))
+          _statRow(
+            title: 'On Delivery',
+            value: _dashboardCount(_riders, 'on_delivery'),
+            icon: Icons.local_shipping_outlined,
+          ),
+        const Divider(height: 22, color: LogisticsColors.border),
+        _statRow(
+          title: 'Total Hubs',
+          value: _dashboardCount(_hubs, 'total'),
+          icon: Icons.hub_outlined,
+        ),
+        _statRow(
+          title: 'Active Hubs',
+          value: _dashboardCount(_hubs, 'active'),
+          icon: Icons.warehouse_outlined,
+        ),
+      ],
+    );
+  }
 
-    final int activeRiders = _number(_riders['active']);
+  // ============================================================
+  // REUSABLE SECTION CARD
+  // ============================================================
 
-    final int availableRiders = _number(_riders['available']);
-
-    final int onDeliveryRiders = _number(_riders['on_delivery']);
-
-    final int totalHubs = _number(_hubs['total']);
-
-    final int activeHubs = _number(_hubs['active']);
-
+  Widget _sectionCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: LogisticsStyle.card,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.hub_outlined, color: LogisticsColors.primary),
-              SizedBox(width: 9),
-              Text('Logistics Network', style: LogisticsStyle.sectionTitle),
+              Icon(icon, color: LogisticsColors.primary, size: 22),
+              const SizedBox(width: 9),
+              Expanded(child: Text(title, style: LogisticsStyle.sectionTitle)),
             ],
           ),
-
-          const SizedBox(height: 12),
-
-          _row('Total Riders', totalRiders),
-
-          _row('Active Riders', activeRiders),
-
-          if (_riders.containsKey('available'))
-            _row('Available Riders', availableRiders),
-
-          if (_riders.containsKey('on_delivery'))
-            _row('On Delivery', onDeliveryRiders),
-
-          const Divider(height: 24, color: LogisticsColors.border),
-
-          _row('Total Hubs', totalHubs),
-
-          _row('Active Hubs', activeHubs),
+          const SizedBox(height: 5),
+          Text(subtitle, style: LogisticsStyle.small),
+          const SizedBox(height: 16),
+          ...children,
         ],
       ),
     );
   }
 
   // ============================================================
-  // ERROR CARD
+  // REUSABLE STAT ROW
   // ============================================================
 
-  Widget _errorCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: LogisticsColors.danger.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: LogisticsColors.danger.withValues(alpha: 0.25),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(
-            Icons.error_outline_rounded,
-            color: LogisticsColors.danger,
-          ),
-
-          const SizedBox(width: 10),
-
-          Expanded(
-            child: Text(
-              _errorMessage ?? 'Unable to load statistics.',
-              style: LogisticsStyle.small,
-            ),
-          ),
-
-          IconButton(
-            tooltip: 'Retry',
-            onPressed: () {
-              _loadStatistics(refresh: true);
-            },
-            icon: const Icon(
-              Icons.refresh_rounded,
-              color: LogisticsColors.primary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // STAT ROW
-  // ============================================================
-
-  Widget _row(String title, int value) {
+  Widget _statRow({
+    required String title,
+    required String value,
+    required IconData icon,
+  }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 7),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: LogisticsColors.lightPurple,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: LogisticsColors.primary, size: 20),
+          ),
+          const SizedBox(width: 11),
           Expanded(child: Text(title, style: LogisticsStyle.body)),
-
-          Text('$value', style: LogisticsStyle.cardTitle),
+          const SizedBox(width: 10),
+          Text(
+            value,
+            style: const TextStyle(
+              color: LogisticsColors.primary,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ],
       ),
     );
   }
+}
+
+// ============================================================
+// INDEPENDENT API RESPONSE
+// ============================================================
+
+class _StatisticsApiResult {
+  final Map<String, dynamic>? data;
+  final String? error;
+
+  const _StatisticsApiResult({this.data, this.error});
 }

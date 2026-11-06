@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -738,6 +739,221 @@ class ApiService {
   // RIDER DASHBOARD
   // ============================================================
 
+  // ============================================================
+  // RIDER PICKUP OFFERS
+  // Laravel:
+  // GET  /api/rider/pickup-offers
+  // POST /api/rider/pickup-offers/{pickupRequest}/accept
+  // POST /api/rider/pickup-offers/{pickupRequest}/decline
+  // ============================================================
+
+  /// Get active seller pickup offers for the authenticated rider.
+  ///
+  /// These are not assigned deliveries yet.
+  /// A shipment becomes assigned only after a successful acceptance.
+  static Future<Map<String, dynamic>> getRiderPickupOffers() async {
+    return _riderPickupOfferRequest(
+      method: 'GET',
+      path: '/rider/pickup-offers',
+    );
+  }
+
+  /// Accept an offered seller pickup.
+  ///
+  /// offerId must be the PickupRequest ID, not shipmentId.
+  static Future<Map<String, dynamic>> acceptRiderPickupOffer({
+    required int offerId,
+  }) async {
+    if (offerId <= 0) {
+      return <String, dynamic>{
+        'success': false,
+        'status_code': 422,
+        'message': 'Invalid pickup offer ID.',
+      };
+    }
+
+    return _riderPickupOfferRequest(
+      method: 'POST',
+      path: '/rider/pickup-offers/$offerId/accept',
+    );
+  }
+
+  /// Decline an offered seller pickup.
+  ///
+  /// Laravel handles reassignment to another eligible rider.
+  static Future<Map<String, dynamic>> declineRiderPickupOffer({
+    required int offerId,
+  }) async {
+    if (offerId <= 0) {
+      return <String, dynamic>{
+        'success': false,
+        'status_code': 422,
+        'message': 'Invalid pickup offer ID.',
+      };
+    }
+
+    return _riderPickupOfferRequest(
+      method: 'POST',
+      path: '/rider/pickup-offers/$offerId/decline',
+    );
+  }
+
+  // ============================================================
+  // SHARED RIDER PICKUP OFFER REQUEST
+  // ============================================================
+
+  static Future<Map<String, dynamic>> _riderPickupOfferRequest({
+    required String method,
+    required String path,
+  }) async {
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': 401,
+          'message':
+              'Authentication token not found. '
+              'Please log in again.',
+        };
+      }
+
+      final Uri uri = Uri.parse('$baseUrl$path');
+
+      final Map<String, String> headers = _authHeaders(
+        token,
+        json: method == 'POST',
+      );
+
+      late final http.Response response;
+
+      if (method == 'GET') {
+        response = await http
+            .get(uri, headers: headers)
+            .timeout(const Duration(seconds: 25));
+      } else if (method == 'POST') {
+        response = await http
+            .post(uri, headers: headers, body: jsonEncode(<String, dynamic>{}))
+            .timeout(const Duration(seconds: 25));
+      } else {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': 422,
+          'message': 'Unsupported pickup request method.',
+        };
+      }
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      // ========================================================
+      // SUCCESS
+      // ========================================================
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (decoded is! Map) {
+          return <String, dynamic>{
+            'success': false,
+            'status_code': response.statusCode,
+            'message': 'Invalid pickup API response.',
+          };
+        }
+
+        final Map<String, dynamic> result = Map<String, dynamic>.from(decoded);
+
+        if (result['success'] != true) {
+          return <String, dynamic>{
+            'success': false,
+            'status_code': response.statusCode,
+            'message': _getMessage(
+              result,
+              fallback: 'Pickup request was not successful.',
+            ),
+          };
+        }
+
+        // Preserve the original API response, including:
+        // data, meta, message, offer_id, shipment_id.
+        //
+        // AvailablePickups reads response['data'].
+        return <String, dynamic>{
+          ...result,
+          'success': true,
+          'status_code': response.statusCode,
+        };
+      }
+
+      // ========================================================
+      // EXPIRED / ALREADY ACCEPTED / CONFLICT
+      // ========================================================
+
+      if (response.statusCode == 409) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': 409,
+          'message': _getMessage(
+            decoded,
+            fallback:
+                'This pickup offer is no longer available. '
+                'Please refresh your pickup offers.',
+          ),
+        };
+      }
+
+      // ========================================================
+      // INVALID INPUT
+      // ========================================================
+
+      if (response.statusCode == 422) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': 422,
+          'message': _getMessage(
+            decoded,
+            fallback: 'Invalid pickup offer request.',
+          ),
+          'errors': decoded is Map ? decoded['errors'] : null,
+        };
+      }
+
+      // ========================================================
+      // AUTH / FORBIDDEN / NOT FOUND / SERVER ERRORS
+      // ========================================================
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage:
+            'You are not authorized to access '
+            'or respond to this pickup offer.',
+        notFoundMessage:
+            'Pickup offer endpoint was not found. '
+            'Please check that the latest Laravel '
+            'backend has been deployed.',
+        fallback:
+            'Unable to process the pickup request. '
+            'Please try again.',
+      );
+    } on TimeoutException {
+      return <String, dynamic>{
+        'success': false,
+        'message':
+            'The pickup request timed out. '
+            'Please refresh and verify the offer status '
+            'before trying again.',
+      };
+    } catch (error) {
+      debugPrint('Rider pickup offer API error: $error');
+
+      return <String, dynamic>{
+        'success': false,
+        'message':
+            'Unable to connect to the pickup service. '
+            'Please check your connection and try again.',
+      };
+    }
+  }
+
   static Future<Map<String, dynamic>> getRiderDashboard() async {
     try {
       final String? token = await AuthStorage.getToken();
@@ -1290,6 +1506,217 @@ class ApiService {
       return {
         'success': false,
         'message': 'Unable to update sorting-center handoff: $e',
+      };
+    }
+  }
+
+  // ============================================================
+  // RIDER - SHIPMENT COD DETAILS
+  // GET /api/rider/shipments/{shipment}/cod
+  // ============================================================
+
+  static Future<Map<String, dynamic>> getRiderShipmentCod({
+    required int shipmentId,
+  }) async {
+    if (shipmentId <= 0) {
+      return <String, dynamic>{
+        'success': false,
+        'status_code': 422,
+        'message': 'Invalid shipment ID.',
+      };
+    }
+
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found. Please log in again.',
+        };
+      }
+
+      final http.Response response = await http
+          .get(
+            Uri.parse('$baseUrl/rider/shipments/$shipmentId/cod'),
+            headers: _authHeaders(token),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200) {
+        if (decoded is! Map || decoded['success'] != true) {
+          return <String, dynamic>{
+            'success': false,
+            'status_code': 200,
+            'message': 'Unable to verify COD details from the server.',
+          };
+        }
+
+        final dynamic rawData = decoded['data'];
+        if (rawData is! Map) {
+          return <String, dynamic>{
+            'success': false,
+            'status_code': 200,
+            'message': 'Invalid COD details returned by the server.',
+          };
+        }
+
+        return <String, dynamic>{
+          'success': true,
+          'status_code': 200,
+          'message': _getMessage(
+            Map<String, dynamic>.from(decoded),
+            fallback: 'COD details loaded successfully.',
+          ),
+          'data': Map<String, dynamic>.from(rawData),
+        };
+      }
+
+      if (response.statusCode == 422 || response.statusCode == 409) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            decoded,
+            fallback: 'COD information could not be verified.',
+          ),
+          'errors': decoded is Map ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'You cannot view COD details for this shipment.',
+        notFoundMessage: 'Shipment COD API was not found on the server.',
+        fallback: 'Unable to retrieve shipment COD details.',
+      );
+    } on TimeoutException {
+      return <String, dynamic>{
+        'success': false,
+        'message': 'COD details request timed out. Please refresh.',
+      };
+    } catch (error) {
+      debugPrint('Rider shipment COD details error: $error');
+      return <String, dynamic>{
+        'success': false,
+        'message': 'Unable to load COD details. Check your connection.',
+      };
+    }
+  }
+
+  // ============================================================
+  // RIDER - COLLECT SHIPMENT COD
+  // POST /api/rider/shipments/{shipment}/collect
+  // ============================================================
+
+  static Future<Map<String, dynamic>> collectRiderShipmentCod({
+    required int shipmentId,
+    required String amountCollected,
+  }) async {
+    if (shipmentId <= 0) {
+      return <String, dynamic>{
+        'success': false,
+        'status_code': 422,
+        'message': 'Invalid shipment ID.',
+      };
+    }
+
+    final String amount = amountCollected.trim();
+    if (!RegExp(r'^(?:0|[1-9]\d*)(?:\.\d{1,2})?$').hasMatch(amount) ||
+        (double.tryParse(amount) ?? 0) <= 0) {
+      return <String, dynamic>{
+        'success': false,
+        'status_code': 422,
+        'message': 'Enter a valid COD amount with up to two decimals.',
+      };
+    }
+
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found. Please log in again.',
+        };
+      }
+
+      final http.Response response = await http
+          .post(
+            Uri.parse('$baseUrl/rider/shipments/$shipmentId/collect'),
+            headers: _authHeaders(token, json: true),
+            body: jsonEncode(<String, dynamic>{'amount_collected': amount}),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (decoded is! Map || decoded['success'] != true) {
+          return <String, dynamic>{
+            'success': false,
+            'status_code': response.statusCode,
+            'message': _getMessage(
+              decoded,
+              fallback:
+                  'Collection could not be confirmed. Refresh COD status.',
+            ),
+          };
+        }
+
+        final dynamic rawData = decoded['data'];
+        return <String, dynamic>{
+          'success': true,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            Map<String, dynamic>.from(decoded),
+            fallback: 'Shipment COD recorded successfully.',
+          ),
+          'data': rawData is Map
+              ? Map<String, dynamic>.from(rawData)
+              : <String, dynamic>{},
+        };
+      }
+
+      if (response.statusCode == 422 || response.statusCode == 409) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            decoded,
+            fallback: 'COD collection was rejected. Check COD status.',
+          ),
+          'errors': decoded is Map ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'You cannot collect COD for this shipment.',
+        notFoundMessage: 'Shipment COD collection API was not found.',
+        fallback: 'Collection not confirmed. Check COD status before retrying.',
+      );
+    } on TimeoutException {
+      // The server may have committed the payment before the timeout.
+      return <String, dynamic>{
+        'success': false,
+        'message':
+            'Collection request timed out. Do not collect cash again. '
+            'Refresh COD status before retrying.',
+      };
+    } catch (error) {
+      debugPrint('Rider shipment COD collection error: $error');
+      return <String, dynamic>{
+        'success': false,
+        'message':
+            'Collection result is uncertain. Do not collect cash again. '
+            'Verify COD status before retrying.',
       };
     }
   }

@@ -1,79 +1,64 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-import '../../sevices/api_services.dart';
+import '../../services/api_services.dart';
 import '../../styles/rider_style.dart';
+import '../../widgets/app_skeleton.dart';
 
 class AvailablePickup {
   final int id;
-  final String orderNumber;
+  final int shipmentId;
   final String trackingNumber;
   final String sellerName;
-  final String customerName;
-  final String deliveryAddress;
+  final String pickupAddress;
   final String status;
-  final String source;
+  final DateTime? expiresAt;
+  final int secondsRemaining;
 
   const AvailablePickup({
     required this.id,
-    required this.orderNumber,
+    required this.shipmentId,
     required this.trackingNumber,
     required this.sellerName,
-    required this.customerName,
-    required this.deliveryAddress,
+    required this.pickupAddress,
     required this.status,
-    required this.source,
+    required this.expiresAt,
+    required this.secondsRemaining,
   });
 
   factory AvailablePickup.fromJson(Map<String, dynamic> json) {
+    int parseInt(dynamic value) {
+      if (value is num) return value.toInt();
+
+      return int.tryParse(value?.toString().trim() ?? '') ?? 0;
+    }
+
+    String parseString(dynamic value) {
+      final String text = value?.toString().trim() ?? '';
+
+      return text.toLowerCase() == 'null' ? '' : text;
+    }
+
     return AvailablePickup(
-      id:
-          int.tryParse(
-            json['id']?.toString() ?? json['shipment_id']?.toString() ?? '',
-          ) ??
-          0,
-
-      orderNumber:
-          json['order_number']?.toString() ??
-          json['order_no']?.toString() ??
-          '',
-
-      trackingNumber:
-          json['tracking_number']?.toString() ??
-          json['tracking_code']?.toString() ??
-          json['waybill_number']?.toString() ??
-          '',
-
-      sellerName:
-          json['seller_name']?.toString() ??
-          json['store_name']?.toString() ??
-          '',
-
-      customerName:
-          json['customer_name']?.toString() ??
-          json['recipient_name']?.toString() ??
-          json['buyer_name']?.toString() ??
-          '',
-
-      deliveryAddress:
-          json['delivery_address']?.toString() ??
-          json['address']?.toString() ??
-          '',
-
-      status:
-          json['status']?.toString() ??
-          json['shipment_status']?.toString() ??
-          'pending',
-
-      source:
-          json['source']?.toString() ?? json['pickup_source']?.toString() ?? '',
+      id: parseInt(json['offer_id'] ?? json['id']),
+      shipmentId: parseInt(json['shipment_id']),
+      trackingNumber: parseString(json['tracking_number']),
+      sellerName: parseString(json['seller_name']),
+      pickupAddress: parseString(json['pickup_address']),
+      status: parseString(json['status']).isNotEmpty
+          ? parseString(json['status'])
+          : 'offered',
+      expiresAt: DateTime.tryParse(parseString(json['expires_at'])),
+      secondsRemaining: parseInt(json['seconds_remaining']),
     );
   }
 }
 
 class AvailablePickups extends StatefulWidget {
-  final List<AvailablePickup> pickups;
+  final VoidCallback? onPickupAccepted;
 
-  const AvailablePickups({super.key, this.pickups = const <AvailablePickup>[]});
+  const AvailablePickups({super.key, this.onPickupAccepted});
 
   @override
   State<AvailablePickups> createState() => _AvailablePickupsState();
@@ -82,924 +67,744 @@ class AvailablePickups extends StatefulWidget {
 class _AvailablePickupsState extends State<AvailablePickups> {
   bool _isLoading = true;
   bool _isRefreshing = false;
+  bool _hasLoaded = false;
+  bool _requestInProgress = false;
+  bool _actionInProgress = false;
 
   String? _errorMessage;
 
-  String _selectedFilter = 'all';
+  List<AvailablePickup> _offers = <AvailablePickup>[];
 
-  List<AvailablePickup> _pickups = <AvailablePickup>[];
+  final Set<int> _processingIds = <int>{};
 
-  final Map<int, TextEditingController> _noteControllers =
-      <int, TextEditingController>{};
+  Timer? _countdownTimer;
+
+  DateTime _serverSyncTime = DateTime.now();
+  DateTime _localSyncTime = DateTime.now();
+
+  int _requestId = 0;
 
   @override
   void initState() {
     super.initState();
 
-    if (widget.pickups.isNotEmpty) {
-      _pickups = List<AvailablePickup>.from(widget.pickups);
+    _loadOffers();
 
-      _isLoading = false;
-    } else {
-      _loadPickups();
-    }
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
+      if (!mounted || _offers.isEmpty) return;
+
+      setState(() {
+        // Rebuild the countdown labels.
+      });
+    });
   }
 
   @override
   void dispose() {
-    for (final TextEditingController controller in _noteControllers.values) {
-      controller.dispose();
-    }
-
+    _countdownTimer?.cancel();
+    _requestId++;
     super.dispose();
   }
 
   // ============================================================
-  // LOAD PICKUPS
+  // FETCH PICKUP OFFERS
   // ============================================================
 
-  Future<void> _loadPickups({bool refresh = false}) async {
-    if (!mounted) return;
+  Future<void> _loadOffers({bool refresh = false}) async {
+    if (!mounted || _requestInProgress) return;
+
+    _requestInProgress = true;
+
+    final int requestId = ++_requestId;
+    final DateTime requestStartedAt = DateTime.now();
 
     setState(() {
-      if (refresh) {
-        _isRefreshing = true;
-      } else {
-        _isLoading = true;
-      }
-
+      _isLoading = !_hasLoaded;
+      _isRefreshing = _hasLoaded;
       _errorMessage = null;
     });
 
     try {
-      final Map<String, dynamic> result = await ApiService.getRiderDeliveries();
+      final Map<String, dynamic> response =
+          await ApiService.getRiderPickupOffers();
 
-      if (!mounted) return;
+      if (!mounted || requestId != _requestId) return;
 
-      if (result['success'] != true) {
+      if (response['success'] != true) {
         setState(() {
+          _errorMessage =
+              response['message']?.toString() ??
+              'Unable to load pickup offers.';
+
           _isLoading = false;
           _isRefreshing = false;
-
-          _errorMessage =
-              result['message']?.toString().trim().isNotEmpty == true
-              ? result['message'].toString().trim()
-              : 'Unable to load available pickups.';
         });
 
         return;
       }
 
-      final List<Map<String, dynamic>> rawItems = _extractRawItems(result);
+      final dynamic rawData = response['data'];
+
+      if (rawData is! List) {
+        setState(() {
+          _errorMessage = 'Invalid pickup offers response.';
+          _isLoading = false;
+          _isRefreshing = false;
+        });
+
+        return;
+      }
 
       final List<AvailablePickup> parsed = <AvailablePickup>[];
 
-      for (final Map<String, dynamic> raw in rawItems) {
+      for (final dynamic item in rawData) {
+        if (item is! Map) continue;
+
         try {
-          final Map<String, dynamic> normalized = _normalizePickup(raw);
+          final AvailablePickup offer = AvailablePickup.fromJson(
+            Map<String, dynamic>.from(item),
+          );
 
-          final String status =
-              normalized['status']?.toString().trim().toLowerCase().replaceAll(
-                ' ',
-                '_',
-              ) ??
-              '';
-
-          final bool isPickupCandidate =
-              status == 'pending' ||
-              status == 'assigned' ||
-              status == 'staged' ||
-              status == 'ready_for_pickup' ||
-              status == 'at_sorting_center';
-
-          if (!isPickupCandidate) {
-            continue;
+          if (offer.id > 0 && offer.shipmentId > 0) {
+            parsed.add(offer);
           }
-
-          parsed.add(AvailablePickup.fromJson(normalized));
         } catch (error) {
-          debugPrint('Failed to parse available pickup: $error');
+          debugPrint('Pickup offer parsing error: $error');
         }
       }
 
+      final Map<String, dynamic> meta = response['meta'] is Map
+          ? Map<String, dynamic>.from(response['meta'])
+          : <String, dynamic>{};
+
+      final DateTime? serverTime = DateTime.tryParse(
+        meta['server_time']?.toString() ?? '',
+      );
+
+      parsed.sort((AvailablePickup a, AvailablePickup b) {
+        if (a.expiresAt != null && b.expiresAt != null) {
+          return a.expiresAt!.compareTo(b.expiresAt!);
+        }
+
+        if (a.expiresAt != null) return -1;
+        if (b.expiresAt != null) return 1;
+
+        return a.id.compareTo(b.id);
+      });
+
       setState(() {
-        _pickups = parsed;
+        _offers = parsed;
+        _hasLoaded = true;
+
+        // For countdown fallback, start at the time
+        // the API request began, avoiding an inflated timer
+        // when the request takes several seconds.
+        _serverSyncTime = serverTime ?? requestStartedAt;
+        _localSyncTime = serverTime != null ? DateTime.now() : requestStartedAt;
 
         _isLoading = false;
         _isRefreshing = false;
         _errorMessage = null;
       });
     } catch (error) {
-      debugPrint('Available pickups error: $error');
+      debugPrint('Pickup offers request error: $error');
+
+      if (!mounted || requestId != _requestId) return;
+
+      setState(() {
+        _errorMessage = 'Unable to retrieve pickup offers. Please retry.';
+        _isLoading = false;
+        _isRefreshing = false;
+      });
+    } finally {
+      _requestInProgress = false;
+    }
+  }
+
+  // ============================================================
+  // COUNTDOWN
+  // ============================================================
+
+  DateTime get _estimatedServerNow {
+    final Duration elapsed = DateTime.now().difference(_localSyncTime);
+
+    return _serverSyncTime.add(elapsed);
+  }
+
+  Duration _remainingTime(AvailablePickup offer) {
+    final Duration elapsed = DateTime.now().difference(_localSyncTime);
+
+    if (offer.expiresAt != null) {
+      return offer.expiresAt!.toUtc().difference(_estimatedServerNow.toUtc());
+    }
+
+    return Duration(seconds: offer.secondsRemaining) - elapsed;
+  }
+
+  bool _isExpired(AvailablePickup offer) {
+    return _remainingTime(offer).inMilliseconds <= 0;
+  }
+
+  String _countdownText(AvailablePickup offer) {
+    final Duration remaining = _remainingTime(offer);
+
+    if (remaining.inMilliseconds <= 0) {
+      return 'Expired';
+    }
+
+    final int totalSeconds = (remaining.inMilliseconds / 1000).ceil();
+
+    final int minutes = totalSeconds ~/ 60;
+    final int seconds = totalSeconds % 60;
+
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  int get _activeOfferCount {
+    return _offers.where((AvailablePickup offer) => !_isExpired(offer)).length;
+  }
+
+  // ============================================================
+  // ACCEPT / DECLINE
+  // ============================================================
+
+  Future<void> _handleOffer(
+    AvailablePickup offer, {
+    required bool accept,
+  }) async {
+    if (!mounted || _actionInProgress || _processingIds.contains(offer.id)) {
+      return;
+    }
+
+    if (_isExpired(offer)) {
+      _showMessage(
+        'This pickup offer has expired. Refreshing offers.',
+        isError: true,
+      );
+
+      await _loadOffers(refresh: true);
+      return;
+    }
+
+    final bool confirmed = await _showConfirmation(offer, accept: accept);
+
+    if (!confirmed || !mounted) return;
+
+    // Recheck after the confirmation dialog.
+    if (_isExpired(offer)) {
+      _showMessage('This pickup offer has expired.', isError: true);
+
+      await _loadOffers(refresh: true);
+      return;
+    }
+
+    if (_actionInProgress) return;
+
+    setState(() {
+      _actionInProgress = true;
+      _processingIds.add(offer.id);
+    });
+
+    try {
+      final Map<String, dynamic> response = accept
+          ? await ApiService.acceptRiderPickupOffer(offerId: offer.id)
+          : await ApiService.declineRiderPickupOffer(offerId: offer.id);
 
       if (!mounted) return;
 
+      if (response['success'] != true) {
+        final String message =
+            response['message']?.toString() ??
+            'Unable to process this pickup offer.';
+
+        _showMessage(message, isError: true);
+
+        // A request may have succeeded on the server
+        // before a timeout or connection interruption.
+        // Refresh rather than assuming it failed.
+        await _loadOffers(refresh: true);
+        return;
+      }
+
       setState(() {
-        _isLoading = false;
-        _isRefreshing = false;
-
-        _errorMessage = 'Unable to connect to the server. Please try again.';
+        _offers.removeWhere((AvailablePickup item) => item.id == offer.id);
       });
-    }
-  }
 
-  // ============================================================
-  // EXTRACT RAW ITEMS
-  // ============================================================
+      if (accept) {
+        // Notify Rider Home to refresh when this
+        // page is closed.
+        widget.onPickupAccepted?.call();
 
-  List<Map<String, dynamic>> _extractRawItems(Map<String, dynamic> result) {
-    final List<Map<String, dynamic>> direct = _toMapList(result['data']);
-
-    if (direct.isNotEmpty) {
-      return direct;
-    }
-
-    final dynamic rawData = result['data'];
-
-    if (rawData is Map) {
-      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
-
-      final List<Map<String, dynamic>> nestedData = _toMapList(data['data']);
-
-      if (nestedData.isNotEmpty) {
-        return nestedData;
+        await _showSuccessDialog(offer);
+      } else {
+        _showMessage('Pickup offer declined successfully.');
       }
 
-      final List<Map<String, dynamic>> deliveries = _toMapList(
-        data['deliveries'],
+      if (!mounted) return;
+
+      await _loadOffers(refresh: true);
+    } catch (error) {
+      debugPrint('Pickup offer action error: $error');
+
+      if (!mounted) return;
+
+      _showMessage(
+        'Unable to confirm the pickup request. '
+        'Refreshing the latest offer status.',
+        isError: true,
       );
 
-      if (deliveries.isNotEmpty) {
-        return deliveries;
-      }
-
-      final List<Map<String, dynamic>> orders = _toMapList(data['orders']);
-
-      if (orders.isNotEmpty) {
-        return orders;
-      }
-
-      final List<Map<String, dynamic>> shipments = _toMapList(
-        data['shipments'],
-      );
-
-      if (shipments.isNotEmpty) {
-        return shipments;
+      await _loadOffers(refresh: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _processingIds.remove(offer.id);
+          _actionInProgress = false;
+        });
       }
     }
-
-    return <Map<String, dynamic>>[];
-  }
-
-  List<Map<String, dynamic>> _toMapList(dynamic value) {
-    if (value is! List) {
-      return <Map<String, dynamic>>[];
-    }
-
-    final List<Map<String, dynamic>> list = <Map<String, dynamic>>[];
-
-    for (final dynamic item in value) {
-      if (item is Map<String, dynamic>) {
-        list.add(Map<String, dynamic>.from(item));
-      } else if (item is Map) {
-        list.add(Map<String, dynamic>.from(item));
-      }
-    }
-
-    return list;
   }
 
   // ============================================================
-  // NORMALIZE PICKUP
+  // CONFIRMATION DIALOG
   // ============================================================
 
-  Map<String, dynamic> _normalizePickup(Map<String, dynamic> raw) {
-    final Map<String, dynamic> map = Map<String, dynamic>.from(raw);
-
-    final dynamic shipment = raw['shipment'];
-
-    if (shipment is Map) {
-      map.addAll(Map<String, dynamic>.from(shipment));
-    }
-
-    map['id'] ??= map['shipment_id'] ?? map['order_id'] ?? 0;
-
-    map['order_number'] ??= map['order_no'] ?? '';
-
-    map['tracking_number'] ??=
-        map['tracking_code'] ?? map['waybill_number'] ?? '';
-
-    map['seller_name'] ??= map['store_name'] ?? '';
-
-    map['customer_name'] ??= map['recipient_name'] ?? map['buyer_name'] ?? '';
-
-    map['delivery_address'] ??= map['address'] ?? map['shipping_address'] ?? '';
-
-    map['status'] ??=
-        map['shipment_status'] ?? map['delivery_status'] ?? 'pending';
-
-    map['source'] ??= map['pickup_source'] ?? '';
-
-    return map;
-  }
-
-  // ============================================================
-  // FILTERED PICKUPS
-  // ============================================================
-
-  List<AvailablePickup> get _filteredPickups {
-    if (_selectedFilter == 'all') {
-      return _pickups;
-    }
-
-    return _pickups.where((AvailablePickup pickup) {
-      final String source = pickup.source.trim().toLowerCase().replaceAll(
-        ' ',
-        '_',
-      );
-
-      if (_selectedFilter == 'sorting_center') {
-        return source == 'sorting_center' || source == 'from_sorting_center';
-      }
-
-      if (_selectedFilter == 'seller') {
-        return source == 'seller' ||
-            source == 'from_seller' ||
-            source == 'from_sellers';
-      }
-
-      return true;
-    }).toList();
-  }
-
-  TextEditingController _noteController(int id) {
-    return _noteControllers.putIfAbsent(id, () => TextEditingController());
-  }
-
-  // ============================================================
-  // BUILD
-  // ============================================================
-
-  @override
-  Widget build(BuildContext context) {
-    final double width = MediaQuery.of(context).size.width;
-
-    final double horizontalPadding = width < 380 ? 14 : 18;
-
-    final List<AvailablePickup> pickups = _filteredPickups;
-
-    return Scaffold(
-      backgroundColor: RiderColors.background,
-
-      appBar: AppBar(
-        backgroundColor: RiderColors.white,
-
-        elevation: 0,
-
-        surfaceTintColor: Colors.transparent,
-
-        iconTheme: const IconThemeData(color: RiderColors.textDark),
-
-        title: const Text('Available Pickups', style: RiderStyle.title),
-
-        actions: [
-          if (_isRefreshing)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-
-              child: Center(
-                child: SizedBox(
-                  height: 19,
-                  width: 19,
-
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-
-                    color: RiderColors.primary,
-                  ),
-                ),
-              ),
-            )
-          else
-            IconButton(
-              tooltip: 'Refresh pickups',
-
-              onPressed: _isLoading
-                  ? null
-                  : () {
-                      _loadPickups(refresh: true);
-                    },
-
-              icon: const Icon(
-                Icons.refresh_rounded,
-
-                color: RiderColors.primary,
-              ),
-            ),
-        ],
-      ),
-
-      body: SafeArea(
-        top: false,
-
-        child: Column(
-          children: [
-            // ==================================================
-            // FILTERS
-            // ==================================================
-
-            Container(
-              width: double.infinity,
-
-              color: RiderColors.white,
-
-              padding: EdgeInsets.fromLTRB(
-                horizontalPadding,
-                12,
-                horizontalPadding,
-                14,
-              ),
-
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-
-                child: Row(
-                  children: [
-                    _filterChip(
-                      label: 'All',
-                      value: 'all',
-                      icon: Icons.all_inbox_rounded,
-                    ),
-
-                    const SizedBox(width: 8),
-
-                    _filterChip(
-                      label: 'From Sorting Center',
-
-                      value: 'sorting_center',
-
-                      icon: Icons.account_tree_outlined,
-                    ),
-
-                    const SizedBox(width: 8),
-
-                    _filterChip(
-                      label: 'From Sellers',
-
-                      value: 'seller',
-
-                      icon: Icons.storefront_outlined,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            // ==================================================
-            // BODY
-            // ==================================================
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: () {
-                  return _loadPickups(refresh: true);
-                },
-
-                child: _buildBody(pickups, horizontalPadding),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // BODY
-  // ============================================================
-
-  Widget _buildBody(List<AvailablePickup> pickups, double horizontalPadding) {
-    if (_isLoading) {
-      return _loadingState();
-    }
-
-    if (_errorMessage != null) {
-      return _errorState();
-    }
-
-    if (_pickups.isEmpty) {
-      return _emptyState();
-    }
-
-    if (pickups.isEmpty) {
-      return _filterEmptyState();
-    }
-
-    return ListView.builder(
-      physics: const AlwaysScrollableScrollPhysics(
-        parent: BouncingScrollPhysics(),
-      ),
-
-      padding: EdgeInsets.fromLTRB(
-        horizontalPadding,
-        16,
-        horizontalPadding,
-        28,
-      ),
-
-      itemCount: pickups.length,
-
-      itemBuilder: (BuildContext context, int index) {
-        return _pickupCard(pickups[index]);
-      },
-    );
-  }
-
-  // ============================================================
-  // FILTER CHIP
-  // ============================================================
-
-  Widget _filterChip({
-    required String label,
-    required String value,
-    required IconData icon,
-  }) {
-    final bool selected = _selectedFilter == value;
-
-    return Material(
-      color: selected ? RiderColors.primary : RiderColors.background,
-
-      borderRadius: BorderRadius.circular(20),
-
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _selectedFilter = value;
-          });
-        },
-
-        borderRadius: BorderRadius.circular(20),
-
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-
-            border: Border.all(
-              color: selected ? RiderColors.primary : RiderColors.border,
-            ),
+  Future<bool> _showConfirmation(
+    AvailablePickup offer, {
+    required bool accept,
+  }) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
           ),
-
-          child: Row(
+          title: Row(
             children: [
               Icon(
-                icon,
-
-                size: 16,
-
-                color: selected ? Colors.white : RiderColors.primary,
+                accept ? Icons.local_shipping_outlined : Icons.cancel_outlined,
+                color: accept ? RiderColors.primary : RiderColors.warning,
               ),
-
-              const SizedBox(width: 6),
-
-              Text(
-                label,
-
-                style: TextStyle(
-                  color: selected ? Colors.white : RiderColors.textDark,
-
-                  fontSize: 11,
-
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // PICKUP CARD
-  // ============================================================
-
-  Widget _pickupCard(AvailablePickup pickup) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-
-      padding: const EdgeInsets.all(16),
-
-      decoration: RiderStyle.card,
-
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-
-            children: [
-              Container(
-                height: 45,
-                width: 45,
-
-                decoration: BoxDecoration(
-                  color: RiderColors.lightPurple,
-
-                  borderRadius: BorderRadius.circular(13),
-                ),
-
-                child: const Icon(
-                  Icons.inventory_2_outlined,
-
-                  color: RiderColors.primary,
-
-                  size: 22,
-                ),
-              ),
-
-              const SizedBox(width: 12),
-
+              const SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-
-                  children: [
-                    Text(
-                      _displayValue(
-                        pickup.trackingNumber,
-
-                        fallback: 'Tracking unavailable',
-                      ),
-
-                      maxLines: 1,
-
-                      overflow: TextOverflow.ellipsis,
-
-                      style: RiderStyle.cardTitle,
-                    ),
-
-                    const SizedBox(height: 4),
-
-                    Text(
-                      'Order # ${_displayValue(pickup.orderNumber)}',
-
-                      style: RiderStyle.small,
-                    ),
-                  ],
+                child: Text(
+                  accept ? 'Accept Pickup Request?' : 'Decline Pickup Request?',
                 ),
               ),
-
-              _statusBadge(pickup.status),
             ],
           ),
-
-          const SizedBox(height: 18),
-
-          _infoRow(
-            icon: Icons.storefront_outlined,
-
-            title: 'Seller',
-
-            value: _displayValue(pickup.sellerName),
+          content: Text(
+            accept
+                ? 'Are you sure you want to accept pickup '
+                      '${_display(offer.trackingNumber)}?\n\n'
+                      'Seller: ${_display(offer.sellerName)}\n'
+                      'Pickup Address: ${_display(offer.pickupAddress)}\n\n'
+                      'Once confirmed by BiliHub, this parcel '
+                      'will be assigned to your rider account.'
+                : 'Are you sure you want to decline pickup '
+                      '${_display(offer.trackingNumber)}?\n\n'
+                      'The system may offer this parcel '
+                      'to another eligible rider.',
           ),
-
-          _infoRow(
-            icon: Icons.person_outline_rounded,
-
-            title: 'Customer',
-
-            value: _displayValue(pickup.customerName),
-          ),
-
-          _infoRow(
-            icon: Icons.location_on_outlined,
-
-            title: 'Address',
-
-            value: _displayValue(pickup.deliveryAddress),
-          ),
-
-          const SizedBox(height: 14),
-
-          TextField(
-            controller: _noteController(pickup.id),
-
-            minLines: 2,
-            maxLines: 3,
-
-            decoration: InputDecoration(
-              hintText: 'Optional notes',
-
-              hintStyle: RiderStyle.small,
-
-              filled: true,
-
-              fillColor: RiderColors.background,
-
-              contentPadding: const EdgeInsets.all(13),
-
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(13),
-
-                borderSide: BorderSide.none,
-              ),
-
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(13),
-
-                borderSide: const BorderSide(color: RiderColors.border),
-              ),
-
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(13),
-
-                borderSide: const BorderSide(color: RiderColors.primary),
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          SizedBox(
-            width: double.infinity,
-
-            height: 48,
-
-            child: ElevatedButton.icon(
+          actions: [
+            TextButton(
               onPressed: () {
-                _showPickupActionInfo(pickup);
+                Navigator.of(dialogContext).pop(false);
               },
-
-              icon: const Icon(Icons.local_shipping_outlined, size: 19),
-
-              label: const Text('View Pickup Status'),
-
-              style: RiderStyle.primaryButton,
+              child: const Text('Cancel'),
             ),
-          ),
-        ],
-      ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: accept
+                    ? RiderColors.primary
+                    : RiderColors.warning,
+              ),
+              onPressed: () {
+                Navigator.of(dialogContext).pop(true);
+              },
+              child: Text(accept ? 'Confirm Accept' : 'Confirm Decline'),
+            ),
+          ],
+        );
+      },
     );
+
+    return confirmed ?? false;
   }
 
   // ============================================================
-  // PICKUP ACTION
+  // SUCCESS DIALOG
   // ============================================================
 
-  void _showPickupActionInfo(AvailablePickup pickup) {
-    final String status = _formatStatus(pickup.status);
-
-    final String note = _noteController(pickup.id).text.trim();
-
-    showModalBottomSheet<void>(
+  Future<void> _showSuccessDialog(AvailablePickup offer) async {
+    await showDialog<void>(
       context: context,
-
-      backgroundColor: Colors.transparent,
-
-      builder: (BuildContext sheetContext) {
-        return SafeArea(
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-
-            decoration: const BoxDecoration(
-              color: RiderColors.white,
-
-              borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-            ),
-
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-
-              crossAxisAlignment: CrossAxisAlignment.start,
-
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-
-                    decoration: BoxDecoration(
-                      color: RiderColors.border,
-
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 18),
-
-                const Text(
-                  'Pickup Information',
-
-                  style: RiderStyle.sectionTitle,
-                ),
-
-                const SizedBox(height: 14),
-
-                _sheetInfo(
-                  'Tracking Number',
-                  _displayValue(pickup.trackingNumber),
-                ),
-
-                _sheetInfo('Status', status),
-
-                _sheetInfo('Source', _formatStatus(pickup.source)),
-
-                if (note.isNotEmpty) _sheetInfo('Notes', note),
-
-                const SizedBox(height: 12),
-
-                const Text(
-                  'Pickup completion will be connected once the Rider pickup action endpoint is confirmed in the Laravel backend.',
-
-                  style: RiderStyle.small,
-                ),
-
-                const SizedBox(height: 16),
-
-                SizedBox(
-                  width: double.infinity,
-
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(sheetContext);
-                    },
-
-                    style: RiderStyle.primaryButton,
-
-                    child: const Text('Close', style: RiderStyle.buttonText),
-                  ),
-                ),
-              ],
-            ),
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
           ),
+          title: const Row(
+            children: [
+              Icon(
+                Icons.check_circle_rounded,
+                color: RiderColors.success,
+                size: 28,
+              ),
+              SizedBox(width: 10),
+              Expanded(child: Text('Pickup Assigned!')),
+            ],
+          ),
+          content: Text(
+            'You successfully accepted parcel '
+            '${_display(offer.trackingNumber)}.\n\n'
+            'You are now assigned to collect this '
+            'parcel from the seller.\n\n'
+            'Open My Deliveries to manage the pickup.',
+          ),
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: RiderColors.primary,
+              ),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Got It'),
+            ),
+          ],
         );
       },
     );
   }
 
-  Widget _sheetInfo(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+  // ============================================================
+  // NOTIFICATIONS
+  // ============================================================
 
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
 
-        children: [
-          Text(label, style: RiderStyle.small),
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: isError ? Colors.red.shade700 : RiderColors.primary,
+          content: Text(message),
+        ),
+      );
+  }
 
-          const SizedBox(height: 3),
+  String _display(String value) {
+    final String text = value.trim();
 
-          Text(_displayValue(value), style: RiderStyle.cardTitle),
+    if (text.isEmpty || text.toLowerCase() == 'null') {
+      return 'Not available';
+    }
+
+    return text;
+  }
+
+  // ============================================================
+  // MAIN UI
+  // ============================================================
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: RiderColors.background,
+      appBar: AppBar(
+        backgroundColor: RiderColors.background,
+        surfaceTintColor: RiderColors.background,
+        elevation: 0,
+        title: const Text('Pickup Offers', style: RiderStyle.title),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh pickup offers',
+            onPressed: _requestInProgress || _actionInProgress
+                ? null
+                : () => _loadOffers(refresh: true),
+            icon: _isRefreshing
+                ? const SizedBox(
+                    width: 19,
+                    height: 19,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: RiderColors.primary,
+                    ),
+                  )
+                : const Icon(Icons.refresh_rounded, color: RiderColors.primary),
+          ),
         ],
+      ),
+      body: RefreshIndicator(
+        color: RiderColors.primary,
+        onRefresh: () => _loadOffers(refresh: true),
+        child: _buildContent(),
       ),
     );
   }
 
-  // ============================================================
-  // INFORMATION ROW
-  // ============================================================
-
-  Widget _infoRow({
-    required IconData icon,
-    required String title,
-    required String value,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 11),
-
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-
+  Widget _buildContent() {
+    if (_isLoading && !_hasLoaded) {
+      // FIX: ListView is not a const constructor.
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
         children: [
-          Icon(icon, color: RiderColors.textGrey, size: 18),
-
-          const SizedBox(width: 9),
-
-          SizedBox(width: 72, child: Text(title, style: RiderStyle.small)),
-
-          Expanded(child: Text(value, style: RiderStyle.cardTitle)),
+          const AppSkeleton(
+            type: AppSkeletonType.parcel,
+            itemCount: 3,
+            color: RiderColors.primary,
+          ),
         ],
+      );
+    }
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(
+        parent: BouncingScrollPhysics(),
       ),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 30),
+      children: [
+        _headerCard(),
+
+        const SizedBox(height: 16),
+
+        if (_isRefreshing) ...[
+          const LinearProgressIndicator(
+            color: RiderColors.primary,
+            minHeight: 2,
+          ),
+          const SizedBox(height: 16),
+        ],
+
+        if (_errorMessage != null) ...[
+          _errorCard(),
+          const SizedBox(height: 16),
+        ],
+
+        if (_offers.isEmpty) _emptyCard() else ..._offers.map(_offerCard),
+      ],
     );
   }
 
   // ============================================================
-  // STATUS
+  // HEADER CARD
   // ============================================================
 
-  Widget _statusBadge(String status) {
-    final String formatted = _formatStatus(status);
-
-    final Color color = _statusColor(status);
+  Widget _headerCard() {
+    final int activeCount = _activeOfferCount;
 
     return Container(
-      constraints: const BoxConstraints(maxWidth: 105),
-
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-
-        borderRadius: BorderRadius.circular(20),
-      ),
-
-      child: Text(
-        formatted,
-
-        maxLines: 1,
-
-        overflow: TextOverflow.ellipsis,
-
-        style: TextStyle(
-          color: color,
-
-          fontSize: 9,
-
-          fontWeight: FontWeight.w800,
-        ),
+      width: double.infinity,
+      padding: const EdgeInsets.all(17),
+      decoration: RiderStyle.card,
+      child: Row(
+        children: [
+          Container(
+            height: 48,
+            width: 48,
+            decoration: BoxDecoration(
+              color: RiderColors.lightPurple,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(
+              Icons.notifications_active_outlined,
+              color: RiderColors.primary,
+              size: 25,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'New Pickup Requests',
+                  style: RiderStyle.sectionTitle,
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  '$activeCount active '
+                  '${activeCount == 1 ? 'offer' : 'offers'}',
+                  style: RiderStyle.small,
+                ),
+                const SizedBox(height: 3),
+                const Text(
+                  'Accept before the offer expires.',
+                  style: RiderStyle.small,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Color _statusColor(String status) {
-    final String value = status.trim().toLowerCase().replaceAll(' ', '_');
-
-    if (value.contains('sorting')) {
-      return RiderColors.primary;
-    }
-
-    if (value == 'delivered' || value == 'completed') {
-      return RiderColors.success;
-    }
-
-    if (value == 'failed' ||
-        value == 'cancelled' ||
-        value == 'delivery_failed') {
-      return RiderColors.danger;
-    }
-
-    if (value == 'pending' ||
-        value == 'assigned' ||
-        value == 'staged' ||
-        value == 'ready_for_pickup' ||
-        value == 'ready') {
-      return RiderColors.warning;
-    }
-
-    if (value == 'picked_up' ||
-        value == 'in_transit' ||
-        value == 'out_for_delivery') {
-      return RiderColors.primary;
-    }
-
-    return RiderColors.textGrey;
-  }
-
-  String _formatStatus(String value) {
-    final String cleaned = value
-        .trim()
-        .replaceAll('_', ' ')
-        .replaceAll('-', ' ');
-
-    if (cleaned.isEmpty) {
-      return 'Unknown';
-    }
-
-    return cleaned
-        .split(RegExp(r'\s+'))
-        .map((String word) {
-          if (word.isEmpty) {
-            return word;
-          }
-
-          return '${word[0].toUpperCase()}'
-              '${word.substring(1).toLowerCase()}';
-        })
-        .join(' ');
-  }
-
   // ============================================================
-  // LOADING
+  // OFFER CARD
   // ============================================================
 
-  Widget _loadingState() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
+  Widget _offerCard(AvailablePickup offer) {
+    final bool expired = _isExpired(offer);
+    final bool busy = _processingIds.contains(offer.id);
+    final bool disableActions = expired || busy || _actionInProgress;
 
-      children: const [
-        SizedBox(height: 120),
-
-        Center(
-          child: Column(
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(16),
+      decoration: RiderStyle.card,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircularProgressIndicator(color: RiderColors.primary),
+              Container(
+                height: 44,
+                width: 44,
+                decoration: BoxDecoration(
+                  color: RiderColors.lightPurple,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.local_shipping_outlined,
+                  color: RiderColors.primary,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _display(offer.trackingNumber),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: RiderStyle.cardTitle,
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Seller Pickup Request',
+                      style: RiderStyle.small,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
 
-              SizedBox(height: 14),
+          const SizedBox(height: 16),
 
-              Text('Loading available pickups...', style: RiderStyle.small),
+          _detail(
+            icon: Icons.storefront_outlined,
+            label: 'Seller',
+            value: _display(offer.sellerName),
+          ),
+
+          const SizedBox(height: 12),
+
+          _detail(
+            icon: Icons.location_on_outlined,
+            label: 'Pickup Address',
+            value: _display(offer.pickupAddress),
+          ),
+
+          const SizedBox(height: 14),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: expired
+                  ? RiderColors.lightOrange
+                  : RiderColors.lightPurple,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  expired ? Icons.timer_off_outlined : Icons.timer_outlined,
+                  size: 19,
+                  color: expired ? RiderColors.warning : RiderColors.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    expired
+                        ? 'Offer expired — refresh to update'
+                        : 'Time remaining: ${_countdownText(offer)}',
+                    style: RiderStyle.small,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          if (busy)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: Center(
+                child: CircularProgressIndicator(color: RiderColors.primary),
+              ),
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: disableActions
+                        ? null
+                        : () => _handleOffer(offer, accept: false),
+                    child: const Text('Decline'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: RiderColors.primary,
+                    ),
+                    onPressed: disableActions
+                        ? null
+                        : () => _handleOffer(offer, accept: true),
+                    child: const Text('Accept'),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detail({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: RiderColors.primary, size: 19),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: RiderStyle.small),
+              const SizedBox(height: 3),
+              Text(value, style: RiderStyle.body),
             ],
           ),
         ),
@@ -1008,66 +813,37 @@ class _AvailablePickupsState extends State<AvailablePickups> {
   }
 
   // ============================================================
-  // ERROR
+  // ERROR CARD
   // ============================================================
 
-  Widget _errorState() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-
-      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 60),
-
-      children: [
-        const Icon(
-          Icons.cloud_off_outlined,
-
-          size: 58,
-
-          color: RiderColors.primary,
-        ),
-
-        const SizedBox(height: 18),
-
-        const Text(
-          'Unable to Load Pickups',
-
-          textAlign: TextAlign.center,
-
-          style: TextStyle(
-            color: RiderColors.textDark,
-
-            fontSize: 18,
-
-            fontWeight: FontWeight.w800,
+  Widget _errorCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: RiderStyle.card,
+      child: Column(
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            color: RiderColors.warning,
+            size: 25,
           ),
-        ),
-
-        const SizedBox(height: 8),
-
-        Text(
-          _errorMessage ?? 'Something went wrong.',
-
-          textAlign: TextAlign.center,
-
-          style: RiderStyle.small,
-        ),
-
-        const SizedBox(height: 18),
-
-        Center(
-          child: ElevatedButton.icon(
-            onPressed: () {
-              _loadPickups(refresh: true);
-            },
-
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-
-            label: const Text('Retry', style: TextStyle(color: Colors.white)),
-
-            style: RiderStyle.primaryButton,
+          const SizedBox(height: 8),
+          Text(
+            _errorMessage ?? 'Unable to load pickup offers.',
+            textAlign: TextAlign.center,
+            style: RiderStyle.small,
           ),
-        ),
-      ],
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: _requestInProgress || _actionInProgress
+                ? null
+                : () => _loadOffers(refresh: true),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Retry'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1075,132 +851,43 @@ class _AvailablePickupsState extends State<AvailablePickups> {
   // EMPTY STATE
   // ============================================================
 
-  Widget _emptyState() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-
-      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 60),
-
-      children: [
-        Center(
-          child: Container(
-            height: 90,
-            width: 90,
-
-            decoration: const BoxDecoration(
-              color: RiderColors.lightPurple,
-
-              shape: BoxShape.circle,
-            ),
-
-            child: const Icon(
-              Icons.inventory_2_outlined,
-
-              color: RiderColors.primary,
-
-              size: 42,
-            ),
+  Widget _emptyCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: RiderStyle.card,
+      child: Column(
+        children: [
+          const Icon(
+            Icons.inbox_outlined,
+            size: 48,
+            color: RiderColors.primary,
           ),
-        ),
-
-        const SizedBox(height: 20),
-
-        const Text(
-          'No Available Pickups',
-
-          textAlign: TextAlign.center,
-
-          style: TextStyle(
-            color: RiderColors.textDark,
-
-            fontSize: 19,
-
-            fontWeight: FontWeight.w800,
+          const SizedBox(height: 12),
+          const Text(
+            'No Active Pickup Offers',
+            style: RiderStyle.sectionTitle,
+            textAlign: TextAlign.center,
           ),
-        ),
-
-        const SizedBox(height: 8),
-
-        const Text(
-          'There are currently no pickup-ready shipments assigned to this rider.',
-
-          textAlign: TextAlign.center,
-
-          style: RiderStyle.small,
-        ),
-      ],
+          const SizedBox(height: 8),
+          const Text(
+            'When BiliHub offers you a seller pickup, '
+            'the request will appear here.\n\n'
+            'Pull down or tap Refresh Offers to check '
+            'for new requests.',
+            style: RiderStyle.small,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          TextButton.icon(
+            onPressed: _requestInProgress || _actionInProgress
+                ? null
+                : () => _loadOffers(refresh: true),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Refresh Offers'),
+          ),
+        ],
+      ),
     );
-  }
-
-  Widget _filterEmptyState() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-
-      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 60),
-
-      children: [
-        const Icon(
-          Icons.filter_alt_off_outlined,
-
-          size: 55,
-
-          color: RiderColors.textGrey,
-        ),
-
-        const SizedBox(height: 16),
-
-        const Text(
-          'No Pickups Found',
-
-          textAlign: TextAlign.center,
-
-          style: TextStyle(
-            color: RiderColors.textDark,
-
-            fontSize: 18,
-
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-
-        const SizedBox(height: 8),
-
-        const Text(
-          'No available pickups match the selected source filter.',
-
-          textAlign: TextAlign.center,
-
-          style: RiderStyle.small,
-        ),
-
-        const SizedBox(height: 14),
-
-        Center(
-          child: TextButton(
-            onPressed: () {
-              setState(() {
-                _selectedFilter = 'all';
-              });
-            },
-
-            child: const Text('Show All Pickups'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ============================================================
-  // DISPLAY VALUE
-  // ============================================================
-
-  String _displayValue(String value, {String fallback = 'Not available'}) {
-    final String cleaned = value.trim();
-
-    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
-      return fallback;
-    }
-
-    return cleaned;
   }
 }

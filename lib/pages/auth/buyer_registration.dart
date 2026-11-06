@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../sevices/api_services.dart';
+import '../../services/api_services.dart';
 import '../../styles/registration_style.dart';
 
 class RegistrationPage extends StatefulWidget {

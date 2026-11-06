@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../sevices/auth_storage.dart';
+import '../../services/auth_storage.dart';
 import '../../styles/buyer_style.dart';
 
 class PaymentMethodsPage extends StatefulWidget {

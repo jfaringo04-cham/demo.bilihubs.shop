@@ -16,6 +16,10 @@ class RiderNavigation extends StatefulWidget {
 }
 
 class _RiderNavigationState extends State<RiderNavigation> {
+  // ============================================================
+  // TAB INDEXES
+  // ============================================================
+
   static const int _homeIndex = 0;
   static const int _deliveriesIndex = 1;
   static const int _profileIndex = 4;
@@ -25,20 +29,27 @@ class _RiderNavigationState extends State<RiderNavigation> {
 
   int _currentIndex = _homeIndex;
 
+  // Incrementing this value creates a fresh RiderDeliveries
+  // instance and triggers a new API request.
   int _deliveriesRefreshVersion = 0;
 
-  final List<BottomNavItem> _items = const <BottomNavItem>[
+  // ============================================================
+  // BOTTOM NAVIGATION ITEMS
+  // ============================================================
+
+  static const List<BottomNavItem> _items = <BottomNavItem>[
     BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
     BottomNavItem(icon: Icons.local_shipping_outlined, label: 'Deliveries'),
     BottomNavItem(icon: Icons.qr_code_scanner_rounded, label: 'Scanner'),
-    BottomNavItem(
-      icon: Icons.account_balance_wallet_outlined,
-      label: 'Earnings',
-    ),
+    BottomNavItem(icon: Icons.account_balance_wallet_outlined, label: 'Wallet'),
     BottomNavItem(icon: Icons.person_outline_rounded, label: 'Profile'),
   ];
 
   late final List<Widget> _pages;
+
+  // ============================================================
+  // INITIALIZE PAGES
+  // ============================================================
 
   @override
   void initState() {
@@ -54,11 +65,42 @@ class _RiderNavigationState extends State<RiderNavigation> {
   }
 
   // ============================================================
+  // REFRESH DELIVERIES
+  // ============================================================
+
+  void _refreshDeliveries() {
+    _deliveriesRefreshVersion++;
+
+    _pages[_deliveriesIndex] = RiderDeliveries(
+      key: ValueKey<int>(_deliveriesRefreshVersion),
+    );
+  }
+
+  // ============================================================
   // CHANGE TAB
   // ============================================================
 
   void _changeTab(int index) {
+    if (!mounted) return;
+
     if (index < _firstTabIndex || index > _lastTabIndex) {
+      return;
+    }
+
+    // Refresh the data whenever the user opens
+    // the Deliveries tab.
+    //
+    // This includes:
+    // - Returning after accepting a pickup offer
+    // - Opening My Deliveries from Rider Home
+    // - Returning from another tab
+    // - Tapping Deliveries again to reload
+    if (index == _deliveriesIndex) {
+      setState(() {
+        _refreshDeliveries();
+        _currentIndex = _deliveriesIndex;
+      });
+
       return;
     }
 
@@ -76,27 +118,17 @@ class _RiderNavigationState extends State<RiderNavigation> {
   // ============================================================
 
   void _openDeliveriesAfterScan() {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
-    setState(() {
-      _deliveriesRefreshVersion++;
-
-      _pages[_deliveriesIndex] = RiderDeliveries(
-        key: ValueKey<int>(_deliveriesRefreshVersion),
-      );
-
-      _currentIndex = _deliveriesIndex;
-    });
+    _changeTab(_deliveriesIndex);
   }
 
   // ============================================================
-  // HANDLE BACK
+  // HANDLE ANDROID BACK BUTTON
   // ============================================================
 
   void _handleBack(bool didPop, Object? result) {
-    if (didPop) {
+    if (didPop || !mounted) {
       return;
     }
 

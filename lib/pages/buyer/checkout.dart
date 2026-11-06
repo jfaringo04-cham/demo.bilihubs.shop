@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../../sevices/api_services.dart';
-import '../../sevices/auth_storage.dart';
-import '../../sevices/cart_service.dart';
+import '../../services/api_services.dart';
+import '../../services/auth_storage.dart';
+import '../../services/cart_service.dart';
 import '../../styles/buyer_style.dart';
+import '../../utils/money_formatter.dart';
 
 class Checkout extends StatefulWidget {
   final List<CartItem> items;
@@ -336,7 +337,8 @@ class _CheckoutState extends State<Checkout> {
 
     if (!hasAddress) {
       _showMessage(
-        'Please select a saved delivery address before placing your order.',
+        'Please select a saved delivery address '
+        'before placing your order.',
       );
 
       return;
@@ -456,7 +458,8 @@ class _CheckoutState extends State<Checkout> {
       return message;
     }
 
-    return 'Unable to place your order. Please try again.';
+    return 'Unable to place your order. '
+        'Please try again.';
   }
 
   // ============================================================
@@ -621,7 +624,8 @@ class _CheckoutState extends State<Checkout> {
           const SizedBox(height: 5),
 
           Text(
-            '$totalItems item${totalItems > 1 ? 's' : ''}',
+            '$totalItems item'
+            '${totalItems > 1 ? 's' : ''}',
             style: BuyerStyle.small,
           ),
 
@@ -696,14 +700,14 @@ class _CheckoutState extends State<Checkout> {
                         const SizedBox(height: 5),
 
                         Text(
-                          '₱${product.sellingPrice.toStringAsFixed(2)} each',
+                          '${MoneyFormatter.peso(product.sellingPrice)} each',
                           style: BuyerStyle.small,
                         ),
 
                         if (product.hasDiscount) ...[
                           const SizedBox(height: 2),
                           Text(
-                            '₱${product.price.toStringAsFixed(2)} original',
+                            '${MoneyFormatter.peso(product.price)} original',
                             style: const TextStyle(
                               color: BuyerColors.textGrey,
                               fontSize: 11,
@@ -722,7 +726,7 @@ class _CheckoutState extends State<Checkout> {
                   const SizedBox(width: 10),
 
                   Text(
-                    '₱${item.subtotal.toStringAsFixed(2)}',
+                    MoneyFormatter.peso(item.subtotal),
                     style: const TextStyle(
                       color: BuyerColors.primary,
                       fontSize: 14,
@@ -737,7 +741,6 @@ class _CheckoutState extends State<Checkout> {
       ),
     );
   }
-
   // ============================================================
   // DELIVERY ADDRESS
   // ============================================================
@@ -1038,15 +1041,15 @@ class _CheckoutState extends State<Checkout> {
 
           const SizedBox(height: 12),
 
-          _summaryRow('Subtotal', '₱${subtotal.toStringAsFixed(2)}'),
+          _summaryRow('Subtotal', MoneyFormatter.peso(subtotal)),
 
           const SizedBox(height: 12),
 
-          _summaryRow('Shipping Fee', '₱${shippingFee.toStringAsFixed(2)}'),
+          _summaryRow('Shipping Fee', MoneyFormatter.peso(shippingFee)),
 
           const SizedBox(height: 12),
 
-          _summaryRow('Service Fee (3%)', '₱${serviceFee.toStringAsFixed(2)}'),
+          _summaryRow('Service Fee (3%)', MoneyFormatter.peso(serviceFee)),
 
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 15),
@@ -1058,7 +1061,7 @@ class _CheckoutState extends State<Checkout> {
             children: [
               const Text('Total', style: BuyerStyle.sectionTitle),
               Text(
-                '₱${grandTotal.toStringAsFixed(2)}',
+                MoneyFormatter.peso(grandTotal),
                 style: const TextStyle(
                   color: BuyerColors.primary,
                   fontSize: 21,

@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-import '../../sevices/api_services.dart';
-import '../../sevices/auth_storage.dart';
+import '../../services/api_services.dart';
+import '../../services/auth_storage.dart';
 import '../../styles/rider_style.dart';
+import '../../widgets/app_error_state.dart';
+import '../../widgets/app_info_row.dart';
+import '../../widgets/app_loading_state.dart';
+
 import '../auth/login_page.dart';
 
 class RiderProfile extends StatefulWidget {
@@ -26,9 +32,15 @@ class RiderProfile extends StatefulWidget {
 }
 
 class _RiderProfileState extends State<RiderProfile> {
+  static const Duration _requestTimeout = Duration(seconds: 25);
+
   bool _isLoading = true;
   bool _isRefreshing = false;
   bool _isLoggingOut = false;
+  bool _hasProfile = false;
+  bool _isServerVerified = false;
+
+  int _requestId = 0;
 
   String? _errorMessage;
 
@@ -39,7 +51,6 @@ class _RiderProfileState extends State<RiderProfile> {
   String _vehicle = '';
   String _availabilityStatus = '';
   String _accountStatus = '';
-
   String _licenseNumber = '';
   String _vehiclePlateNumber = '';
 
@@ -48,8 +59,14 @@ class _RiderProfileState extends State<RiderProfile> {
   @override
   void initState() {
     super.initState();
-
+    _applyWidgetFallback();
     _loadProfile();
+  }
+
+  @override
+  void dispose() {
+    _requestId++;
+    super.dispose();
   }
 
   // ============================================================
@@ -57,133 +74,173 @@ class _RiderProfileState extends State<RiderProfile> {
   // ============================================================
 
   Future<void> _loadProfile({bool refresh = false}) async {
-    if (!mounted) {
+    if (!mounted || _isLoggingOut || _isRefreshing) {
       return;
     }
 
-    setState(() {
-      if (refresh) {
-        _isRefreshing = true;
-      } else {
-        _isLoading = true;
-      }
+    final int requestId = ++_requestId;
 
+    setState(() {
+      _isLoading = !_hasProfile;
+      _isRefreshing = refresh || _hasProfile;
       _errorMessage = null;
     });
 
     try {
-      await _loadSavedUser();
+      // Load locally stored user information first.
+      try {
+        final Map<String, dynamic>? saved = await AuthStorage.getUser();
 
-      final Map<String, dynamic> result = await ApiService.getRiderDashboard();
+        if (!mounted || requestId != _requestId) {
+          return;
+        }
 
-      if (!mounted) {
+        if (saved != null) {
+          _savedUser = Map<String, dynamic>.from(saved);
+
+          _applySavedUser(_savedUser);
+        }
+      } catch (error) {
+        debugPrint('Rider saved profile error: $error');
+      }
+
+      // Get the current rider information from Laravel.
+      final Map<String, dynamic> result = await ApiService.getRiderDashboard()
+          .timeout(_requestTimeout);
+
+      if (!mounted || requestId != _requestId) {
         return;
       }
 
-      if (result['success'] == true) {
-        final Map<String, dynamic> rider = _extractRiderData(result);
+      if (result['success'] != true) {
+        _setLoadError(
+          requestId,
+          _resultMessage(result, fallback: 'Unable to load rider information.'),
+        );
 
+        return;
+      }
+
+      final Map<String, dynamic> rider = _extractRiderData(result);
+
+      if (rider.isNotEmpty) {
         _applyRiderData(rider);
-
-        setState(() {
-          _isLoading = false;
-          _isRefreshing = false;
-          _errorMessage = null;
-        });
-
-        return;
       }
 
       setState(() {
-        _applyFallbackValues();
+        _hasProfile = _hasMeaningfulProfile();
+        _isServerVerified = rider.isNotEmpty;
 
         _isLoading = false;
         _isRefreshing = false;
 
-        final String message = result['message']?.toString().trim() ?? '';
-
-        _errorMessage = message.isNotEmpty
-            ? message
-            : 'Rider information is not available yet.';
+        _errorMessage = rider.isEmpty
+            ? 'The server responded, but current rider '
+                  'profile details were not included. '
+                  'Showing available saved information.'
+            : null;
       });
+    } on TimeoutException {
+      _setLoadError(
+        requestId,
+        'The server is taking too long to respond. '
+        'Please check your connection and try again.',
+      );
     } catch (error) {
-      debugPrint('Rider profile error: $error');
+      debugPrint('Rider profile load error: $error');
 
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _applyFallbackValues();
-
-        _isLoading = false;
-        _isRefreshing = false;
-
-        _errorMessage =
-            'Unable to load rider information. '
-            'Please try again.';
-      });
+      _setLoadError(
+        requestId,
+        'Unable to connect to the BiliHub server. '
+        'Please check your internet connection '
+        'and try again.',
+      );
     }
   }
 
-  // ============================================================
-  // SAVED USER
-  // ============================================================
-
-  Future<void> _loadSavedUser() async {
-    final Map<String, dynamic>? saved = await AuthStorage.getUser();
-
-    if (saved == null) {
-      _savedUser = <String, dynamic>{};
-
-      _applyWidgetFallback();
-
+  void _setLoadError(int requestId, String message) {
+    if (!mounted || requestId != _requestId) {
       return;
     }
 
-    _savedUser = Map<String, dynamic>.from(saved);
+    setState(() {
+      _hasProfile = _hasMeaningfulProfile();
 
-    _name = _firstText(<dynamic>[
-      saved['name'],
-      saved['full_name'],
-      widget.name,
-    ]);
+      _isLoading = false;
+      _isRefreshing = false;
 
-    _email = _firstText(<dynamic>[saved['email'], widget.email]);
+      _errorMessage = message;
+    });
+  }
 
-    _phone = _firstText(<dynamic>[
+  bool _hasMeaningfulProfile() {
+    return _name.isNotEmpty ||
+        _email.isNotEmpty ||
+        _phone.isNotEmpty ||
+        _riderId.isNotEmpty ||
+        _vehicle.isNotEmpty ||
+        _availabilityStatus.isNotEmpty ||
+        _accountStatus.isNotEmpty;
+  }
+
+  // ============================================================
+  // PROFILE FALLBACK
+  // ============================================================
+
+  void _applyWidgetFallback() {
+    _name = _cleanText(widget.name);
+    _email = _cleanText(widget.email);
+    _phone = _cleanText(widget.phone);
+    _riderId = _cleanText(widget.riderId);
+    _vehicle = _cleanText(widget.vehicle);
+
+    _hasProfile = _hasMeaningfulProfile();
+  }
+
+  void _applySavedUser(Map<String, dynamic> saved) {
+    _name = _firstText([saved['name'], saved['full_name'], _name, widget.name]);
+
+    _email = _firstText([saved['email'], _email, widget.email]);
+
+    _phone = _firstText([
       saved['mobile_number'],
       saved['phone'],
       saved['contact_number'],
+      _phone,
       widget.phone,
     ]);
 
-    _riderId = _firstText(<dynamic>[saved['rider_id'], widget.riderId]);
+    _riderId = _firstText([saved['rider_id'], _riderId, widget.riderId]);
 
-    _vehicle = _firstText(<dynamic>[
+    _vehicle = _firstText([
       saved['vehicle_type'],
       saved['vehicle'],
+      _vehicle,
       widget.vehicle,
     ]);
 
-    _availabilityStatus = _firstText(<dynamic>[
+    _availabilityStatus = _firstText([
       saved['availability_status'],
       saved['availability'],
+      _availabilityStatus,
     ]);
 
-    _accountStatus = _firstText(<dynamic>[
-      saved['status'],
+    _accountStatus = _firstText([
       saved['account_status'],
+      saved['status'],
+      _accountStatus,
     ]);
 
-    _licenseNumber = _firstText(<dynamic>[
+    _licenseNumber = _firstText([
       saved['license_number'],
       saved['driver_license_number'],
+      _licenseNumber,
     ]);
 
-    _vehiclePlateNumber = _firstText(<dynamic>[
+    _vehiclePlateNumber = _firstText([
       saved['plate_number'],
       saved['vehicle_plate_number'],
+      _vehiclePlateNumber,
     ]);
 
     final dynamic savedRider = saved['rider'];
@@ -191,6 +248,8 @@ class _RiderProfileState extends State<RiderProfile> {
     if (savedRider is Map) {
       _applyRiderData(Map<String, dynamic>.from(savedRider));
     }
+
+    _hasProfile = _hasMeaningfulProfile();
   }
 
   // ============================================================
@@ -198,10 +257,10 @@ class _RiderProfileState extends State<RiderProfile> {
   // ============================================================
 
   Map<String, dynamic> _extractRiderData(Map<String, dynamic> result) {
-    final dynamic direct = result['rider'];
+    final dynamic directRider = result['rider'];
 
-    if (direct is Map) {
-      return Map<String, dynamic>.from(direct);
+    if (directRider is Map) {
+      return Map<String, dynamic>.from(directRider);
     }
 
     final dynamic rawData = result['data'];
@@ -218,7 +277,17 @@ class _RiderProfileState extends State<RiderProfile> {
       final dynamic profile = data['profile'];
 
       if (profile is Map) {
-        return Map<String, dynamic>.from(profile);
+        final Map<String, dynamic> profileMap = Map<String, dynamic>.from(
+          profile,
+        );
+
+        if (profileMap['rider'] is Map) {
+          return Map<String, dynamic>.from(profileMap['rider']);
+        }
+
+        if (_looksLikeRider(profileMap)) {
+          return profileMap;
+        }
       }
 
       if (_looksLikeRider(data)) {
@@ -234,43 +303,54 @@ class _RiderProfileState extends State<RiderProfile> {
         data.containsKey('availability_status') ||
         data.containsKey('rider_id') ||
         data.containsKey('license_number') ||
-        data.containsKey('driver_license_number');
+        data.containsKey('driver_license_number') ||
+        data.containsKey('plate_number');
   }
 
   // ============================================================
-  // APPLY RIDER DATA
+  // APPLY RIDER INFORMATION
   // ============================================================
 
   void _applyRiderData(Map<String, dynamic> rider) {
-    final String name = _firstText(<dynamic>[
+    final dynamic user = rider['user'];
+
+    final Map<String, dynamic> userMap = user is Map
+        ? Map<String, dynamic>.from(user)
+        : <String, dynamic>{};
+
+    _name = _firstText([
       rider['name'],
       rider['full_name'],
+      userMap['name'],
       _name,
       widget.name,
     ]);
 
-    final String email = _firstText(<dynamic>[
+    _email = _firstText([
       rider['email'],
+      userMap['email'],
       _email,
       widget.email,
     ]);
 
-    final String phone = _firstText(<dynamic>[
+    _phone = _firstText([
       rider['mobile_number'],
       rider['phone'],
       rider['contact_number'],
+      userMap['mobile_number'],
+      userMap['phone'],
       _phone,
       widget.phone,
     ]);
 
-    final String riderId = _firstText(<dynamic>[
+    _riderId = _firstText([
       rider['rider_id'],
       rider['id'],
       _riderId,
       widget.riderId,
     ]);
 
-    final String vehicle = _firstText(<dynamic>[
+    _vehicle = _firstText([
       rider['vehicle_type'],
       rider['vehicle'],
       rider['vehicle_name'],
@@ -280,36 +360,27 @@ class _RiderProfileState extends State<RiderProfile> {
 
     final String availability = _availabilityFromMap(rider);
 
-    final String accountStatus = _firstText(<dynamic>[
-      rider['status'],
+    if (availability.isNotEmpty) {
+      _availabilityStatus = availability;
+    }
+
+    _accountStatus = _firstText([
       rider['account_status'],
+      rider['status'],
       _accountStatus,
     ]);
 
-    final String licenseNumber = _firstText(<dynamic>[
+    _licenseNumber = _firstText([
       rider['license_number'],
       rider['driver_license_number'],
       _licenseNumber,
     ]);
 
-    final String plateNumber = _firstText(<dynamic>[
+    _vehiclePlateNumber = _firstText([
       rider['plate_number'],
       rider['vehicle_plate_number'],
       _vehiclePlateNumber,
     ]);
-
-    _name = name;
-    _email = email;
-    _phone = phone;
-    _riderId = riderId;
-    _vehicle = vehicle;
-    _accountStatus = accountStatus;
-    _licenseNumber = licenseNumber;
-    _vehiclePlateNumber = plateNumber;
-
-    if (availability.isNotEmpty) {
-      _availabilityStatus = availability;
-    }
   }
 
   // ============================================================
@@ -326,101 +397,70 @@ class _RiderProfileState extends State<RiderProfile> {
     if (boolValue != null) {
       final String value = boolValue.toString().trim().toLowerCase();
 
-      if (value == '1' || value == 'true' || value == 'yes') {
+      if (value == 'true' || value == '1' || value == 'yes') {
         return 'available';
       }
 
-      if (value == '0' || value == 'false' || value == 'no') {
+      if (value == 'false' || value == '0' || value == 'no') {
         return 'unavailable';
       }
     }
 
-    return _firstText(<dynamic>[
+    return _firstText([
       data['availability_status'],
       data['availability'],
       data['online_status'],
     ]);
   }
 
-  void _applyWidgetFallback() {
-    _name = widget.name?.trim() ?? '';
+  bool get _isOnline {
+    final String status = _normalizeStatus(_availabilityStatus);
 
-    _email = widget.email?.trim() ?? '';
-
-    _phone = widget.phone?.trim() ?? '';
-
-    _riderId = widget.riderId?.trim() ?? '';
-
-    _vehicle = widget.vehicle?.trim() ?? '';
+    return status == 'available' || status == 'online' || status == 'active';
   }
 
-  void _applyFallbackValues() {
-    if (_name.isEmpty) {
-      _name = _firstText(<dynamic>[_savedUser['name'], widget.name]);
-    }
+  bool get _isAccountApproved {
+    final String status = _normalizeStatus(_accountStatus);
 
-    if (_email.isEmpty) {
-      _email = _firstText(<dynamic>[_savedUser['email'], widget.email]);
-    }
+    return status == 'active' || status == 'approved' || status == 'verified';
+  }
 
-    if (_phone.isEmpty) {
-      _phone = _firstText(<dynamic>[
-        _savedUser['mobile_number'],
-        _savedUser['phone'],
-        widget.phone,
-      ]);
-    }
-
-    if (_riderId.isEmpty) {
-      _riderId = _firstText(<dynamic>[_savedUser['rider_id'], widget.riderId]);
-    }
-
-    if (_vehicle.isEmpty) {
-      _vehicle = _firstText(<dynamic>[
-        _savedUser['vehicle_type'],
-        widget.vehicle,
-      ]);
-    }
-
+  String get _availabilityText {
     if (_availabilityStatus.isEmpty) {
-      _availabilityStatus = _firstText(<dynamic>[
-        _savedUser['availability_status'],
-        _savedUser['availability'],
-      ]);
+      return 'Not available';
     }
 
+    return _formatStatus(_availabilityStatus);
+  }
+
+  String get _accountStatusText {
     if (_accountStatus.isEmpty) {
-      _accountStatus = _firstText(<dynamic>[
-        _savedUser['status'],
-        _savedUser['account_status'],
-      ]);
+      return 'Not available';
     }
 
-    if (_licenseNumber.isEmpty) {
-      _licenseNumber = _firstText(<dynamic>[
-        _savedUser['license_number'],
-        _savedUser['driver_license_number'],
-      ]);
-    }
-
-    if (_vehiclePlateNumber.isEmpty) {
-      _vehiclePlateNumber = _firstText(<dynamic>[
-        _savedUser['plate_number'],
-        _savedUser['vehicle_plate_number'],
-      ]);
-    }
+    return _formatStatus(_accountStatus);
   }
 
   // ============================================================
-  // HELPERS
+  // TEXT HELPERS
   // ============================================================
+
+  String _cleanText(dynamic value) {
+    final String cleaned = value?.toString().trim() ?? '';
+
+    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
+      return '';
+    }
+
+    return cleaned;
+  }
 
   String _firstText(List<dynamic> values) {
     for (final dynamic value in values) {
-      final String cleaned = value?.toString().trim() ?? '';
+      final String text = _cleanText(value);
 
-      if (cleaned.isNotEmpty && cleaned.toLowerCase() != 'null') {
-        return cleaned;
+      if (text.isNotEmpty) {
+        return text;
       }
     }
 
@@ -437,6 +477,10 @@ class _RiderProfileState extends State<RiderProfile> {
     return cleaned;
   }
 
+  String _normalizeStatus(String value) {
+    return value.trim().toLowerCase().replaceAll(' ', '_').replaceAll('-', '_');
+  }
+
   String _formatStatus(String value) {
     final String cleaned = value
         .trim()
@@ -444,66 +488,35 @@ class _RiderProfileState extends State<RiderProfile> {
         .replaceAll('-', ' ');
 
     if (cleaned.isEmpty) {
-      return 'Unavailable';
+      return 'Not available';
     }
 
     return cleaned
         .split(RegExp(r'\s+'))
-        .map((String word) {
-          if (word.isEmpty) {
-            return word;
-          }
-
-          return '${word[0].toUpperCase()}'
-              '${word.substring(1).toLowerCase()}';
-        })
+        .where((String word) => word.isNotEmpty)
+        .map(
+          (String word) =>
+              '${word[0].toUpperCase()}'
+              '${word.substring(1).toLowerCase()}',
+        )
         .join(' ');
   }
 
-  String get _statusText {
-    if (_availabilityStatus.trim().isEmpty) {
-      return 'Unavailable';
-    }
+  String _resultMessage(
+    Map<String, dynamic> result, {
+    required String fallback,
+  }) {
+    final String message = _cleanText(result['message']);
 
-    return _formatStatus(_availabilityStatus);
+    return message.isNotEmpty ? message : fallback;
   }
 
-  String get _accountStatusText {
-    if (_accountStatus.trim().isEmpty) {
-      return 'Active';
-    }
-
-    return _formatStatus(_accountStatus);
-  }
-
-  bool get _isOnline {
-    final String status = _availabilityStatus
-        .trim()
-        .toLowerCase()
-        .replaceAll(' ', '_')
-        .replaceAll('-', '_');
-
-    return status == 'online' || status == 'available' || status == 'active';
-  }
-
-  bool get _isAccountApproved {
-    final String status = _accountStatus
-        .trim()
-        .toLowerCase()
-        .replaceAll(' ', '_')
-        .replaceAll('-', '_');
-
-    if (status.isEmpty) {
-      return true;
-    }
-
-    return status == 'active' || status == 'approved' || status == 'verified';
-  }
+  // ============================================================
+  // NOT AVAILABLE FEATURES
+  // ============================================================
 
   void _showComingSoon(String feature) {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -520,9 +533,7 @@ class _RiderProfileState extends State<RiderProfile> {
   // ============================================================
 
   Future<void> _logout() async {
-    if (_isLoggingOut) {
-      return;
-    }
+    if (_isLoggingOut) return;
 
     final bool? confirmed = await _showLogoutConfirmation();
 
@@ -535,17 +546,11 @@ class _RiderProfileState extends State<RiderProfile> {
     });
 
     try {
-      /*
-       * Mobile auth currently relies on the stored Sanctum
-       * token. Clearing the local session guarantees that the
-       * protected Rider APIs can no longer be called from the
-       * current device session.
-       */
+      // Clears the local session and stored token.
+      // This does not claim to revoke the token on Laravel.
       await AuthStorage.clearSession();
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute<void>(
@@ -556,11 +561,9 @@ class _RiderProfileState extends State<RiderProfile> {
         (Route<dynamic> route) => false,
       );
     } catch (error) {
-      debugPrint('Logout error: $error');
+      debugPrint('Rider logout error: $error');
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       setState(() {
         _isLoggingOut = false;
@@ -608,7 +611,6 @@ class _RiderProfileState extends State<RiderProfile> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: RiderColors.danger,
                 foregroundColor: Colors.white,
-                elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -654,11 +656,9 @@ class _RiderProfileState extends State<RiderProfile> {
           else
             IconButton(
               tooltip: 'Refresh profile',
-              onPressed: _isLoading
+              onPressed: _isLoading || _isLoggingOut
                   ? null
-                  : () {
-                      _loadProfile(refresh: true);
-                    },
+                  : () => _loadProfile(refresh: true),
               icon: const Icon(
                 Icons.refresh_rounded,
                 color: RiderColors.primary,
@@ -669,27 +669,52 @@ class _RiderProfileState extends State<RiderProfile> {
       body: SafeArea(
         top: false,
         child: RefreshIndicator(
-          onRefresh: () {
-            return _loadProfile(refresh: true);
-          },
-          child: SingleChildScrollView(
+          color: RiderColors.primary,
+          onRefresh: () => _loadProfile(refresh: true),
+          child: ListView(
             physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics(),
             ),
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 30),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (_isLoading) _loadingCard(),
-
-                if (_isLoading) const SizedBox(height: 15),
-
-                if (!_isLoading && _errorMessage != null) _errorCard(),
-
-                if (!_isLoading && _errorMessage != null)
+            children: [
+              if (_isLoading && !_hasProfile) ...[
+                const SizedBox(height: 125),
+                const AppLoadingState(
+                  message: 'Loading rider profile...',
+                  color: RiderColors.primary,
+                ),
+              ] else if (!_hasProfile) ...[
+                const SizedBox(height: 80),
+                AppErrorState(
+                  title: 'Unable to Load Profile',
+                  message:
+                      _errorMessage ??
+                      'Rider information is unavailable. '
+                          'Please try again.',
+                  color: RiderColors.primary,
+                  onRetry: () => _loadProfile(refresh: true),
+                ),
+                const SizedBox(height: 30),
+                _logoutButton(),
+              ] else ...[
+                if (_isRefreshing) ...[
+                  const LinearProgressIndicator(
+                    color: RiderColors.primary,
+                    minHeight: 2,
+                  ),
                   const SizedBox(height: 15),
+                ],
+
+                if (_errorMessage != null) ...[
+                  _errorBanner(),
+                  const SizedBox(height: 15),
+                ],
 
                 _profileHeader(),
+
+                const SizedBox(height: 14),
+
+                if (!_isServerVerified) _cachedDataNotice(),
 
                 const SizedBox(height: 22),
 
@@ -704,27 +729,22 @@ class _RiderProfileState extends State<RiderProfile> {
                   icon: Icons.email_outlined,
                   title: 'Email Address',
                   value: _displayValue(_email),
-                  iconBackground: RiderColors.lightBlue,
-                  iconColor: RiderColors.primary,
                 ),
 
                 _infoCard(
                   icon: Icons.phone_outlined,
                   title: 'Phone Number',
                   value: _displayValue(_phone),
-                  iconBackground: RiderColors.lightGreen,
-                  iconColor: RiderColors.success,
                 ),
 
                 _infoCard(
                   icon: Icons.badge_outlined,
                   title: 'Rider ID',
                   value: _displayValue(_riderId),
-                  iconBackground: RiderColors.lightPurple,
-                  iconColor: RiderColors.primary,
+                  selectable: true,
                 ),
 
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
 
                 const Text('Rider Information', style: RiderStyle.sectionTitle),
 
@@ -733,27 +753,23 @@ class _RiderProfileState extends State<RiderProfile> {
                 _infoCard(
                   icon: Icons.two_wheeler_outlined,
                   title: 'Vehicle Type',
-                  value: _displayValue(_formatStatus(_vehicle)),
-                  iconBackground: RiderColors.lightOrange,
-                  iconColor: RiderColors.warning,
+                  value: _displayValue(
+                    _vehicle.isEmpty ? '' : _formatStatus(_vehicle),
+                  ),
                 ),
 
-                if (_vehiclePlateNumber.trim().isNotEmpty)
+                if (_vehiclePlateNumber.isNotEmpty)
                   _infoCard(
                     icon: Icons.confirmation_number_outlined,
                     title: 'Plate Number',
                     value: _vehiclePlateNumber,
-                    iconBackground: RiderColors.lightBlue,
-                    iconColor: RiderColors.primary,
                   ),
 
-                if (_licenseNumber.trim().isNotEmpty)
+                if (_licenseNumber.isNotEmpty)
                   _infoCard(
                     icon: Icons.credit_card_outlined,
                     title: 'Driver License',
                     value: _licenseNumber,
-                    iconBackground: RiderColors.lightPurple,
-                    iconColor: RiderColors.primary,
                   ),
 
                 _infoCard(
@@ -761,13 +777,7 @@ class _RiderProfileState extends State<RiderProfile> {
                       ? Icons.check_circle_outline_rounded
                       : Icons.pause_circle_outline_rounded,
                   title: 'Availability',
-                  value: _statusText,
-                  iconBackground: _isOnline
-                      ? RiderColors.lightGreen
-                      : RiderColors.lightOrange,
-                  iconColor: _isOnline
-                      ? RiderColors.success
-                      : RiderColors.warning,
+                  value: _availabilityText,
                 ),
 
                 _infoCard(
@@ -776,15 +786,9 @@ class _RiderProfileState extends State<RiderProfile> {
                       : Icons.pending_actions_outlined,
                   title: 'Account Status',
                   value: _accountStatusText,
-                  iconBackground: _isAccountApproved
-                      ? RiderColors.lightGreen
-                      : RiderColors.lightOrange,
-                  iconColor: _isAccountApproved
-                      ? RiderColors.success
-                      : RiderColors.warning,
                 ),
 
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
 
                 _accountSection(),
 
@@ -792,7 +796,7 @@ class _RiderProfileState extends State<RiderProfile> {
 
                 _logoutButton(),
               ],
-            ),
+            ],
           ),
         ),
       ),
@@ -800,61 +804,61 @@ class _RiderProfileState extends State<RiderProfile> {
   }
 
   // ============================================================
-  // LOADING
+  // ERROR BANNER
   // ============================================================
 
-  Widget _loadingCard() {
+  Widget _errorBanner() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(15),
-      decoration: RiderStyle.card,
-      child: const Row(
-        children: [
-          SizedBox(
-            height: 21,
-            width: 21,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.2,
-              color: RiderColors.primary,
-            ),
-          ),
-          SizedBox(width: 12),
-          Expanded(child: Text('Loading profile...', style: RiderStyle.small)),
-        ],
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: RiderColors.white,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: RiderColors.border),
       ),
-    );
-  }
-
-  // ============================================================
-  // ERROR
-  // ============================================================
-
-  Widget _errorCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(15),
-      decoration: RiderStyle.card,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Icon(
             Icons.info_outline_rounded,
             color: RiderColors.warning,
-            size: 21,
+            size: 20,
           ),
           const SizedBox(width: 10),
+          Expanded(child: Text(_errorMessage ?? '', style: RiderStyle.small)),
+          TextButton(
+            onPressed: _isRefreshing ? null : () => _loadProfile(refresh: true),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _cachedDataNotice() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: RiderColors.lightOrange,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.info_outline_rounded,
+            color: RiderColors.warning,
+            size: 19,
+          ),
+          SizedBox(width: 9),
           Expanded(
             child: Text(
-              _errorMessage ?? 'Unable to load rider information.',
+              'Some information is from your saved session '
+              'or previously loaded data and has not yet '
+              'been verified with the server.',
               style: RiderStyle.small,
             ),
-          ),
-          IconButton(
-            tooltip: 'Retry',
-            onPressed: () {
-              _loadProfile(refresh: true);
-            },
-            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
           ),
         ],
       ),
@@ -871,12 +875,12 @@ class _RiderProfileState extends State<RiderProfile> {
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 22),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: <Color>[RiderColors.primary, RiderColors.primaryDark],
+          colors: [RiderColors.primary, RiderColors.primaryDark],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(22),
-        boxShadow: <BoxShadow>[
+        boxShadow: [
           BoxShadow(
             color: RiderColors.primary.withValues(alpha: 0.18),
             blurRadius: 18,
@@ -884,100 +888,70 @@ class _RiderProfileState extends State<RiderProfile> {
           ),
         ],
       ),
-      child: Stack(
+      child: Column(
         children: [
-          Positioned(
-            right: -45,
-            top: -55,
-            child: Container(
-              height: 145,
-              width: 145,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.07),
+          Container(
+            height: 88,
+            width: 88,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.16),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.30),
+                width: 2,
               ),
+            ),
+            child: const Icon(
+              Icons.delivery_dining_rounded,
+              color: Colors.white,
+              size: 48,
             ),
           ),
 
-          Positioned(
-            left: -55,
-            bottom: -75,
-            child: Container(
-              height: 130,
-              width: 130,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.05),
-              ),
+          const SizedBox(height: 14),
+
+          Text(
+            _displayValue(_name, fallback: 'Rider'),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 21,
+              fontWeight: FontWeight.w800,
             ),
           ),
 
-          Column(
+          const SizedBox(height: 5),
+
+          Text(
+            _displayValue(_email),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+
+          const SizedBox(height: 13),
+
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Container(
-                height: 88,
-                width: 88,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.16),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.30),
-                    width: 2,
-                  ),
-                ),
-                child: const Icon(
-                  Icons.delivery_dining_rounded,
-                  color: Colors.white,
-                  size: 48,
-                ),
+              _headerBadge(
+                icon: Icons.circle,
+                label: _availabilityText,
+                iconColor: _isOnline ? Colors.greenAccent : Colors.white70,
               ),
-
-              const SizedBox(height: 14),
-
-              Text(
-                _displayValue(_name, fallback: 'Rider'),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 21,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-
-              const SizedBox(height: 5),
-
-              Text(
-                _displayValue(_email),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
-              ),
-
-              const SizedBox(height: 13),
-
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _headerBadge(
-                    icon: Icons.circle,
-                    label: _statusText,
-                    iconColor: _isOnline ? Colors.greenAccent : Colors.white54,
-                  ),
-                  _headerBadge(
-                    icon: _isAccountApproved
-                        ? Icons.verified_rounded
-                        : Icons.schedule_rounded,
-                    label: _accountStatusText,
-                    iconColor: _isAccountApproved
-                        ? Colors.greenAccent
-                        : Colors.amberAccent,
-                  ),
-                ],
+              _headerBadge(
+                icon: _isAccountApproved
+                    ? Icons.verified_rounded
+                    : Icons.schedule_rounded,
+                label: _accountStatusText,
+                iconColor: _isAccountApproved
+                    ? Colors.greenAccent
+                    : Colors.amberAccent,
               ),
             ],
           ),
@@ -1001,7 +975,7 @@ class _RiderProfileState extends State<RiderProfile> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: iconColor, size: 10),
+          Icon(icon, color: iconColor, size: 11),
           const SizedBox(width: 6),
           Text(
             label,
@@ -1017,53 +991,26 @@ class _RiderProfileState extends State<RiderProfile> {
   }
 
   // ============================================================
-  // INFORMATION CARD
+  // SHARED INFORMATION CARD
   // ============================================================
 
   Widget _infoCard({
     required IconData icon,
     required String title,
     required String value,
-    required Color iconBackground,
-    required Color iconColor,
+    bool selectable = false,
   }) {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(15),
       decoration: RiderStyle.card,
-      child: Row(
-        children: [
-          Container(
-            height: 46,
-            width: 46,
-            decoration: BoxDecoration(
-              color: iconBackground,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: iconColor, size: 22),
-          ),
-
-          const SizedBox(width: 13),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: RiderStyle.small),
-
-                const SizedBox(height: 4),
-
-                Text(
-                  value,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: RiderStyle.cardTitle,
-                ),
-              ],
-            ),
-          ),
-        ],
+      child: AppInfoRow(
+        label: title,
+        value: value,
+        icon: icon,
+        iconColor: RiderColors.primary,
+        selectable: selectable,
       ),
     );
   }
@@ -1089,7 +1036,7 @@ class _RiderProfileState extends State<RiderProfile> {
             title: 'Account Settings',
             subtitle: 'Manage your profile information',
             onTap: () {
-              _showComingSoon('Account settings');
+              _showComingSoon('Account Settings');
             },
           ),
 
@@ -1100,7 +1047,7 @@ class _RiderProfileState extends State<RiderProfile> {
             title: 'Security',
             subtitle: 'Password and account security',
             onTap: () {
-              _showComingSoon('Security settings');
+              _showComingSoon('Security Settings');
             },
           ),
 
@@ -1118,10 +1065,6 @@ class _RiderProfileState extends State<RiderProfile> {
       ),
     );
   }
-
-  // ============================================================
-  // MENU ITEM
-  // ============================================================
 
   Widget _menuItem({
     required IconData icon,
@@ -1153,12 +1096,10 @@ class _RiderProfileState extends State<RiderProfile> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title, style: RiderStyle.cardTitle),
-
                   const SizedBox(height: 2),
-
                   Text(
                     subtitle,
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: RiderStyle.small,
                   ),

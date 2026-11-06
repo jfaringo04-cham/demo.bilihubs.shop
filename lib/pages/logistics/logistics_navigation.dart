@@ -4,6 +4,7 @@ import '../../widgets/bottom_nav.dart';
 
 import 'logistics_home.dart';
 import 'logistics_profile.dart';
+import 'logistics_wallet.dart';
 import 'parcel_list.dart';
 import 'parcel_scanner.dart';
 import 'tracking_map.dart';
@@ -16,40 +17,57 @@ class LogisticsNavigation extends StatefulWidget {
 }
 
 class _LogisticsNavigationState extends State<LogisticsNavigation> {
+  // ============================================================
+  // TAB INDEXES
+  // ============================================================
   static const int _homeIndex = 0;
   static const int _scannerIndex = 1;
-  static const int _profileIndex = 4;
-
-  static const int _firstTabIndex = _homeIndex;
-  static const int _lastTabIndex = _profileIndex;
+  static const int _trackingIndex = 2;
+  static const int _profileIndex = 5;
 
   int _currentIndex = _homeIndex;
 
-  final List<BottomNavItem> _items = const <BottomNavItem>[
+  // ============================================================
+  // BOTTOM NAVIGATION ITEMS
+  // ============================================================
+
+  static const List<BottomNavItem> _items = <BottomNavItem>[
     BottomNavItem(icon: Icons.home_outlined, label: 'Home'),
     BottomNavItem(icon: Icons.qr_code_scanner_rounded, label: 'Scanner'),
     BottomNavItem(icon: Icons.location_on_outlined, label: 'Tracking'),
     BottomNavItem(icon: Icons.inventory_2_outlined, label: 'Parcels'),
+    BottomNavItem(icon: Icons.account_balance_wallet_outlined, label: 'Wallet'),
     BottomNavItem(icon: Icons.person_outline_rounded, label: 'Profile'),
   ];
 
-  late final List<Widget> _pages;
+  // ============================================================
+  // PERSISTENT PAGES
+  // ============================================================
+
+  late final Widget _homePage;
+  late final Widget _parcelsPage;
+  late final Widget _walletPage;
+  late final Widget _profilePage;
 
   @override
   void initState() {
     super.initState();
 
-    _pages = <Widget>[
-      LogisticsHome(
-        onOpenScanner: () {
-          _changeTab(_scannerIndex);
-        },
-      ),
-      const ParcelScanner(),
-      const TrackingMap(),
-      const ParcelList(),
-      const LogisticsProfile(),
-    ];
+    _homePage = LogisticsHome(onOpenScanner: _openScanner);
+
+    _parcelsPage = const ParcelList();
+
+    _walletPage = const LogisticsWallet();
+
+    _profilePage = const LogisticsProfile();
+  }
+
+  // ============================================================
+  // OPEN SCANNER FROM HOME
+  // ============================================================
+
+  void _openScanner() {
+    _changeTab(_scannerIndex);
   }
 
   // ============================================================
@@ -57,7 +75,9 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
   // ============================================================
 
   void _changeTab(int index) {
-    if (index < _firstTabIndex || index > _lastTabIndex) {
+    if (!mounted) return;
+
+    if (index < _homeIndex || index > _profileIndex) {
       return;
     }
 
@@ -71,19 +91,52 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
   }
 
   // ============================================================
-  // HANDLE BACK
+  // HANDLE ANDROID BACK BUTTON
   // ============================================================
 
   void _handleBack(bool didPop, Object? result) {
-    if (didPop) {
+    if (didPop || !mounted) {
       return;
     }
 
     if (_currentIndex != _homeIndex) {
-      setState(() {
-        _currentIndex = _homeIndex;
-      });
+      _changeTab(_homeIndex);
     }
+  }
+
+  // ============================================================
+  // BUILD PAGES
+  // ============================================================
+
+  List<Widget> _buildPages() {
+    return <Widget>[
+      // Home remains mounted when switching tabs.
+      _homePage,
+
+      // Scanner is mounted ONLY while its tab is active.
+      //
+      // This prevents the camera from continuing to scan
+      // QR codes while the user is on another page.
+      if (_currentIndex == _scannerIndex)
+        const ParcelScanner()
+      else
+        const SizedBox.shrink(),
+
+      // Tracking Map is mounted ONLY while active.
+      //
+      // The map's timer and network polling stop when
+      // the user leaves its tab because TrackingMap
+      // is disposed.
+      if (_currentIndex == _trackingIndex)
+        const TrackingMap()
+      else
+        const SizedBox.shrink(),
+
+      // These pages stay mounted to preserve UI state.
+      _parcelsPage,
+      _walletPage,
+      _profilePage,
+    ];
   }
 
   // ============================================================
@@ -93,11 +146,18 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
+      // On Home, allow the enclosing route to pop.
+      // On other tabs, Android Back returns to Home.
       canPop: _currentIndex == _homeIndex,
       onPopInvokedWithResult: _handleBack,
       child: Scaffold(
         backgroundColor: Colors.white,
-        body: IndexedStack(index: _currentIndex, children: _pages),
+
+        // Keep the non-camera pages alive while switching.
+        // Scanner and Tracking Map are intentionally
+        // recreated when their tabs become active.
+        body: IndexedStack(index: _currentIndex, children: _buildPages()),
+
         bottomNavigationBar: BottomNav(
           currentIndex: _currentIndex,
           items: _items,

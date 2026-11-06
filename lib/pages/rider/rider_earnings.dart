@@ -1,7 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-import '../../sevices/api_services.dart';
+import '../../services/api_services.dart';
 import '../../styles/rider_style.dart';
+import '../../utils/date_formatter.dart';
+import '../../utils/money_formatter.dart';
+import '../../widgets/app_empty_state.dart';
+import '../../widgets/app_error_state.dart';
+import '../../widgets/app_info_row.dart';
+import '../../widgets/app_loading_state.dart';
+import '../../widgets/status_chip.dart';
 
 class Earnings extends StatefulWidget {
   const Earnings({super.key});
@@ -11,8 +20,11 @@ class Earnings extends StatefulWidget {
 }
 
 class _EarningsState extends State<Earnings> {
+  static const Duration _requestTimeout = Duration(seconds: 25);
+
   bool _isLoading = true;
   bool _isRefreshing = false;
+  bool _hasLoaded = false;
 
   String? _errorMessage;
 
@@ -23,54 +35,51 @@ class _EarningsState extends State<Earnings> {
   DateTime? _fromDate;
   DateTime? _toDate;
 
+  DateTime? _appliedFromDate;
+  DateTime? _appliedToDate;
+
+  int _requestId = 0;
+
   @override
   void initState() {
     super.initState();
-
     _loadEarnings();
   }
 
+  @override
+  void dispose() {
+    _requestId++;
+    super.dispose();
+  }
+
   // ============================================================
-  // LOAD EARNINGS
+  // LOAD RIDER EARNINGS
   // ============================================================
 
   Future<void> _loadEarnings({bool refresh = false}) async {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted || _isRefreshing) return;
+
+    final int requestId = ++_requestId;
 
     setState(() {
-      if (refresh) {
-        _isRefreshing = true;
-      } else {
-        _isLoading = true;
-      }
-
+      _isLoading = !_hasLoaded;
+      _isRefreshing = refresh || _hasLoaded;
       _errorMessage = null;
     });
 
     try {
-      final Map<String, dynamic> result = await ApiService.getRiderEarnings();
+      final Map<String, dynamic> result = await ApiService.getRiderEarnings()
+          .timeout(_requestTimeout);
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted || requestId != _requestId) return;
 
       if (result['success'] != true) {
         final String message = result['message']?.toString().trim() ?? '';
 
-        setState(() {
-          _earnings = <String, dynamic>{};
-
-          _recentDeliveries = <Map<String, dynamic>>[];
-
-          _isLoading = false;
-          _isRefreshing = false;
-
-          _errorMessage = message.isNotEmpty
-              ? message
-              : 'Unable to load rider earnings.';
-        });
+        _setLoadError(
+          requestId,
+          message.isNotEmpty ? message : 'Unable to load rider earnings.',
+        );
 
         return;
       }
@@ -82,66 +91,62 @@ class _EarningsState extends State<Earnings> {
 
       recentDeliveries.sort((Map<String, dynamic> a, Map<String, dynamic> b) {
         final DateTime? aDate = _extractRecordDate(a);
-
         final DateTime? bDate = _extractRecordDate(b);
 
         if (aDate != null && bDate != null) {
           return bDate.compareTo(aDate);
         }
 
-        if (aDate != null) {
-          return -1;
-        }
-
-        if (bDate != null) {
-          return 1;
-        }
+        if (aDate != null) return -1;
+        if (bDate != null) return 1;
 
         return 0;
       });
 
+      if (!mounted || requestId != _requestId) return;
+
       setState(() {
         _earnings = earningsData;
-
         _recentDeliveries = recentDeliveries;
 
         _isLoading = false;
         _isRefreshing = false;
-
+        _hasLoaded = true;
         _errorMessage = null;
       });
+    } on TimeoutException {
+      _setLoadError(
+        requestId,
+        'The server is taking too long to respond. '
+        'Please check your connection and try again.',
+      );
     } catch (error) {
       debugPrint('Rider earnings error: $error');
 
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _earnings = <String, dynamic>{};
-
-        _recentDeliveries = <Map<String, dynamic>>[];
-
-        _isLoading = false;
-        _isRefreshing = false;
-
-        _errorMessage =
-            'Unable to connect to the server. '
-            'Please try again.';
-      });
+      _setLoadError(
+        requestId,
+        'Unable to connect to the server. '
+        'Please check your internet connection and try again.',
+      );
     }
   }
 
+  void _setLoadError(int requestId, String message) {
+    if (!mounted || requestId != _requestId) return;
+
+    setState(() {
+      _isLoading = false;
+      _isRefreshing = false;
+      _errorMessage = message;
+    });
+  }
+
   // ============================================================
-  // EXTRACT EARNINGS DATA
+  // EXTRACT API DATA
   // ============================================================
 
   Map<String, dynamic> _extractEarningsData(Map<String, dynamic> result) {
     final dynamic rawData = result['data'];
-
-    if (rawData is Map<String, dynamic>) {
-      return Map<String, dynamic>.from(rawData);
-    }
 
     if (rawData is Map) {
       return Map<String, dynamic>.from(rawData);
@@ -156,10 +161,6 @@ class _EarningsState extends State<Earnings> {
     return Map<String, dynamic>.from(result);
   }
 
-  // ============================================================
-  // RECENT EARNING RECORDS
-  // ============================================================
-
   List<Map<String, dynamic>> _extractRecentDeliveries(
     Map<String, dynamic> data,
   ) {
@@ -173,10 +174,12 @@ class _EarningsState extends State<Earnings> {
     ];
 
     for (final dynamic candidate in candidates) {
-      final List<Map<String, dynamic>> list = _toMapList(candidate);
+      if (candidate is List) {
+        return _toMapList(candidate);
+      }
 
-      if (list.isNotEmpty) {
-        return list;
+      if (candidate is Map && candidate['data'] is List) {
+        return _toMapList(candidate['data']);
       }
     }
 
@@ -188,49 +191,19 @@ class _EarningsState extends State<Earnings> {
       return <Map<String, dynamic>>[];
     }
 
-    final List<Map<String, dynamic>> list = <Map<String, dynamic>>[];
-
-    for (final dynamic item in value) {
-      if (item is Map<String, dynamic>) {
-        list.add(Map<String, dynamic>.from(item));
-      } else if (item is Map) {
-        list.add(Map<String, dynamic>.from(item));
-      }
-    }
-
-    return list;
+    return value
+        .whereType<Map>()
+        .map((Map item) => Map<String, dynamic>.from(item))
+        .toList();
   }
 
   // ============================================================
   // VALUE HELPERS
   // ============================================================
 
-  double? _toDouble(dynamic value) {
-    if (value is num) {
-      return value.toDouble();
-    }
-
-    if (value == null) {
-      return null;
-    }
-
-    final String cleaned = value
-        .toString()
-        .replaceAll(',', '')
-        .replaceAll('₱', '')
-        .trim();
-
-    return double.tryParse(cleaned);
-  }
-
   int _toInt(dynamic value) {
-    if (value is int) {
-      return value;
-    }
-
-    if (value is num) {
-      return value.toInt();
-    }
+    if (value is int) return value;
+    if (value is num) return value.toInt();
 
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
@@ -257,31 +230,24 @@ class _EarningsState extends State<Earnings> {
     return '';
   }
 
-  String _money(dynamic value) {
-    final double? amount = _toDouble(value);
+  String _moneyValue(dynamic value) {
+    if (value == null) return 'Not available';
 
-    if (amount == null) {
-      return '₱0.00';
-    }
+    final double? amount = MoneyFormatter.value(value);
 
-    return '₱${amount.toStringAsFixed(2)}';
+    if (amount == null) return 'Not available';
+
+    return MoneyFormatter.peso(amount);
+  }
+
+  String _countValue(dynamic value) {
+    if (value == null) return 'Not available';
+    return _toInt(value).toString();
   }
 
   // ============================================================
   // DATE HELPERS
   // ============================================================
-
-  String _dateText(DateTime? date) {
-    if (date == null) {
-      return 'Select date';
-    }
-
-    final String month = date.month.toString().padLeft(2, '0');
-
-    final String day = date.day.toString().padLeft(2, '0');
-
-    return '$month/$day/${date.year}';
-  }
 
   DateTime? _extractRecordDate(Map<String, dynamic> item) {
     final List<dynamic> candidates = <dynamic>[
@@ -301,7 +267,7 @@ class _EarningsState extends State<Earnings> {
         continue;
       }
 
-      final DateTime? parsed = DateTime.tryParse(value);
+      final DateTime? parsed = DateFormatter.value(value);
 
       if (parsed != null) {
         return parsed.toLocal();
@@ -309,27 +275,6 @@ class _EarningsState extends State<Earnings> {
     }
 
     return null;
-  }
-
-  String _formatDateTime(DateTime date) {
-    const List<String> months = <String>[
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-
-    final String month = months[date.month - 1];
-
-    return '$month ${date.day}, ${date.year}';
   }
 
   // ============================================================
@@ -346,9 +291,7 @@ class _EarningsState extends State<Earnings> {
 
     final String normalized = _normalize(raw);
 
-    if (normalized.isNotEmpty) {
-      return normalized;
-    }
+    if (normalized.isNotEmpty) return normalized;
 
     if (_toBool(item['is_linehaul_rider'])) {
       return 'linehaul';
@@ -445,86 +388,20 @@ class _EarningsState extends State<Earnings> {
       return '$origin → $destination';
     }
 
-    if (origin.isNotEmpty) {
-      return origin;
-    }
-
-    if (destination.isNotEmpty) {
-      return destination;
-    }
+    if (origin.isNotEmpty) return origin;
+    if (destination.isNotEmpty) return destination;
 
     return '';
   }
-
-  // ============================================================
-  // STATUS HELPERS
-  // ============================================================
 
   String _normalize(String value) {
     return value.trim().toLowerCase().replaceAll(' ', '_').replaceAll('-', '_');
   }
 
-  String _formatStatus(String status) {
-    final String cleaned = status
-        .trim()
-        .replaceAll('_', ' ')
-        .replaceAll('-', ' ');
-
-    if (cleaned.isEmpty) {
-      return 'Unknown';
-    }
-
-    return cleaned
-        .split(RegExp(r'\s+'))
-        .map((String word) {
-          if (word.isEmpty) {
-            return word;
-          }
-
-          return '${word[0].toUpperCase()}'
-              '${word.substring(1).toLowerCase()}';
-        })
-        .join(' ');
-  }
-
-  Color _statusColor(String status) {
-    switch (_normalize(status)) {
-      case 'delivered':
-      case 'completed':
-      case 'paid':
-      case 'credited':
-      case 'released':
-        return RiderColors.success;
-
-      case 'cancelled':
-      case 'failed':
-      case 'delivery_failed':
-      case 'rejected':
-        return RiderColors.danger;
-
-      case 'pending':
-      case 'processing':
-      case 'assigned':
-      case 'awaiting_payment':
-        return RiderColors.warning;
-
-      default:
-        return RiderColors.primary;
-    }
-  }
-
   bool _toBool(dynamic value) {
-    if (value == null) {
-      return false;
-    }
-
-    if (value is bool) {
-      return value;
-    }
-
-    if (value is num) {
-      return value != 0;
-    }
+    if (value == null) return false;
+    if (value is bool) return value;
+    if (value is num) return value != 0;
 
     final String text = value.toString().trim().toLowerCase();
 
@@ -532,20 +409,20 @@ class _EarningsState extends State<Earnings> {
   }
 
   // ============================================================
-  // FILTERED RECORDS
+  // FILTERED EARNING RECORDS
   // ============================================================
 
   List<Map<String, dynamic>> get _filteredRecentDeliveries {
-    if (_fromDate == null && _toDate == null) {
+    if (_appliedFromDate == null && _appliedToDate == null) {
       return _recentDeliveries;
     }
 
     return _recentDeliveries.where((Map<String, dynamic> item) {
       final DateTime? itemDate = _extractRecordDate(item);
 
-      if (itemDate == null) {
-        return true;
-      }
+      // Records with no date cannot be verified as
+      // belonging to the selected date range.
+      if (itemDate == null) return false;
 
       final DateTime dateOnly = DateTime(
         itemDate.year,
@@ -553,32 +430,32 @@ class _EarningsState extends State<Earnings> {
         itemDate.day,
       );
 
-      if (_fromDate != null) {
+      if (_appliedFromDate != null) {
         final DateTime from = DateTime(
-          _fromDate!.year,
-          _fromDate!.month,
-          _fromDate!.day,
+          _appliedFromDate!.year,
+          _appliedFromDate!.month,
+          _appliedFromDate!.day,
         );
 
-        if (dateOnly.isBefore(from)) {
-          return false;
-        }
+        if (dateOnly.isBefore(from)) return false;
       }
 
-      if (_toDate != null) {
+      if (_appliedToDate != null) {
         final DateTime to = DateTime(
-          _toDate!.year,
-          _toDate!.month,
-          _toDate!.day,
+          _appliedToDate!.year,
+          _appliedToDate!.month,
+          _appliedToDate!.day,
         );
 
-        if (dateOnly.isAfter(to)) {
-          return false;
-        }
+        if (dateOnly.isAfter(to)) return false;
       }
 
       return true;
     }).toList();
+  }
+
+  bool get _hasActiveFilter {
+    return _appliedFromDate != null || _appliedToDate != null;
   }
 
   // ============================================================
@@ -587,7 +464,7 @@ class _EarningsState extends State<Earnings> {
 
   @override
   Widget build(BuildContext context) {
-    final double width = MediaQuery.of(context).size.width;
+    final double width = MediaQuery.sizeOf(context).width;
 
     final double horizontalPadding = width < 380 ? 14 : 18;
 
@@ -601,48 +478,36 @@ class _EarningsState extends State<Earnings> {
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Rider Earnings', style: RiderStyle.title),
+            Text('Rider Wallet', style: RiderStyle.title),
             SizedBox(height: 2),
-            Text('Server-calculated rider income', style: RiderStyle.small),
+            Text('Wallet balance and rider earnings', style: RiderStyle.small),
           ],
         ),
         actions: [
-          if (_isRefreshing)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Center(
-                child: SizedBox(
-                  height: 19,
-                  width: 19,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: RiderColors.primary,
-                  ),
-                ),
-              ),
-            )
-          else
-            IconButton(
-              tooltip: 'Refresh',
-              onPressed: _isLoading
-                  ? null
-                  : () {
-                      _loadEarnings(refresh: true);
-                    },
-              icon: const Icon(
-                Icons.refresh_rounded,
-                color: RiderColors.primary,
-              ),
-            ),
+          IconButton(
+            tooltip: 'Refresh earnings',
+            onPressed: _isLoading || _isRefreshing
+                ? null
+                : () => _loadEarnings(refresh: true),
+            icon: _isRefreshing
+                ? const SizedBox(
+                    height: 19,
+                    width: 19,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: RiderColors.primary,
+                    ),
+                  )
+                : const Icon(Icons.refresh_rounded, color: RiderColors.primary),
+          ),
           const SizedBox(width: 5),
         ],
       ),
       body: SafeArea(
         top: false,
         child: RefreshIndicator(
-          onRefresh: () {
-            return _loadEarnings(refresh: true);
-          },
+          color: RiderColors.primary,
+          onRefresh: () => _loadEarnings(refresh: true),
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics(),
@@ -653,33 +518,315 @@ class _EarningsState extends State<Earnings> {
               horizontalPadding,
               30,
             ),
+            child: _buildContent(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // CONTENT
+  // ============================================================
+
+  Widget _buildContent() {
+    if (_isLoading && !_hasLoaded) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 150),
+        child: AppLoadingState(
+          message: 'Loading rider wallet...',
+          color: RiderColors.primary,
+        ),
+      );
+    }
+
+    if (!_hasLoaded) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 90),
+        child: AppErrorState(
+          title: 'Unable to Load Rider Wallet',
+          message:
+              _errorMessage ?? 'Unable to retrieve your earnings information.',
+          color: RiderColors.primary,
+          onRetry: _loadEarnings,
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_isRefreshing) ...[
+          const LinearProgressIndicator(
+            color: RiderColors.primary,
+            minHeight: 2,
+          ),
+          const SizedBox(height: 14),
+        ],
+
+        if (_errorMessage != null) ...[
+          _refreshWarning(_errorMessage!),
+          const SizedBox(height: 14),
+        ],
+
+        _walletOverview(),
+
+        const SizedBox(height: 18),
+
+        _dateFilterCard(),
+
+        const SizedBox(height: 18),
+
+        _summaryCards(),
+
+        const SizedBox(height: 22),
+
+        _earningsTrendCard(),
+
+        const SizedBox(height: 22),
+
+        _collectionDetails(),
+      ],
+    );
+  }
+
+  Widget _refreshWarning(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: RiderColors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: RiderColors.border),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.wifi_off_rounded,
+            color: RiderColors.primary,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Showing previously loaded data. $message',
+              style: RiderStyle.small,
+            ),
+          ),
+          TextButton(
+            onPressed: _isRefreshing
+                ? null
+                : () => _loadEarnings(refresh: true),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // WALLET OVERVIEW
+  // ============================================================
+
+  Widget _walletOverview() {
+    final dynamic available = _firstValue(<String>[
+      'available_balance',
+      'wallet_balance',
+      'available',
+      'balance',
+    ]);
+
+    final dynamic pending = _firstValue(<String>[
+      'pending_balance',
+      'pending_withdrawal',
+      'pending',
+    ]);
+
+    final dynamic total = _firstValue(<String>[
+      'total_earnings',
+      'earnings_total',
+      'total',
+    ]);
+
+    final double? pendingAmount = MoneyFormatter.value(pending);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: RiderStyle.card,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                height: 42,
+                width: 42,
+                decoration: BoxDecoration(
+                  color: RiderColors.lightPurple,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.account_balance_wallet_outlined,
+                  color: RiderColors.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 11),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Rider Wallet', style: RiderStyle.sectionTitle),
+                    SizedBox(height: 2),
+                    Text(
+                      'Server-recorded wallet balances',
+                      style: RiderStyle.small,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 18),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: RiderColors.lightPurple,
+              borderRadius: BorderRadius.circular(16),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (_isLoading) _loadingCard(),
+                const Text('Available Balance', style: RiderStyle.small),
 
-                if (!_isLoading && _errorMessage != null) _errorCard(),
+                const SizedBox(height: 5),
 
-                if (_isLoading || _errorMessage != null)
-                  const SizedBox(height: 18),
+                Text(
+                  _moneyValue(available),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: RiderColors.primary,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
 
-                _dateFilterCard(),
+                const SizedBox(height: 7),
 
-                const SizedBox(height: 18),
-
-                _summaryCards(),
-
-                const SizedBox(height: 22),
-
-                _earningsTrendCard(),
-
-                const SizedBox(height: 22),
-
-                _collectionDetails(),
+                const Text(
+                  'Amount currently available in your rider wallet.',
+                  style: RiderStyle.small,
+                ),
               ],
             ),
           ),
-        ),
+
+          const SizedBox(height: 12),
+
+          Row(
+            children: [
+              Expanded(
+                child: _walletStatCard(
+                  title: 'Pending',
+                  value: _moneyValue(pending),
+                  icon: Icons.hourglass_top_rounded,
+                  background: RiderColors.lightOrange,
+                ),
+              ),
+
+              const SizedBox(width: 10),
+
+              Expanded(
+                child: _walletStatCard(
+                  title: 'Total Earned',
+                  value: _moneyValue(total),
+                  icon: Icons.payments_outlined,
+                  background: RiderColors.lightGreen,
+                ),
+              ),
+            ],
+          ),
+
+          if (pendingAmount != null && pendingAmount > 0) ...[
+            const SizedBox(height: 12),
+
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: RiderColors.background,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: RiderColors.border),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    color: RiderColors.warning,
+                    size: 18,
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Pending wallet funds are shown separately '
+                      'until the server makes them available.',
+                      style: RiderStyle.small,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _walletStatCard({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color background,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: RiderColors.background,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: RiderColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            height: 34,
+            width: 34,
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: RiderColors.primary, size: 18),
+          ),
+
+          const SizedBox(height: 11),
+
+          Text(title, style: RiderStyle.small),
+
+          const SizedBox(height: 3),
+
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: RiderStyle.cardTitle,
+          ),
+        ],
       ),
     );
   }
@@ -698,6 +845,14 @@ class _EarningsState extends State<Earnings> {
         children: [
           const Text('Earnings Period', style: RiderStyle.sectionTitle),
 
+          const SizedBox(height: 5),
+
+          const Text(
+            'Filter the loaded earning records by date. '
+            'Wallet totals remain unchanged.',
+            style: RiderStyle.small,
+          ),
+
           const SizedBox(height: 14),
 
           Row(
@@ -706,9 +861,7 @@ class _EarningsState extends State<Earnings> {
                 child: _dateField(
                   label: 'From Date',
                   date: _fromDate,
-                  onTap: () {
-                    _pickDate(true);
-                  },
+                  onTap: () => _pickDate(true),
                 ),
               ),
 
@@ -718,9 +871,7 @@ class _EarningsState extends State<Earnings> {
                 child: _dateField(
                   label: 'To Date',
                   date: _toDate,
-                  onTap: () {
-                    _pickDate(false);
-                  },
+                  onTap: () => _pickDate(false),
                 ),
               ),
             ],
@@ -739,11 +890,11 @@ class _EarningsState extends State<Earnings> {
                 ),
               ),
 
-              if (_fromDate != null || _toDate != null) ...[
+              if (_fromDate != null || _toDate != null || _hasActiveFilter) ...[
                 const SizedBox(width: 8),
 
                 IconButton(
-                  tooltip: 'Clear dates',
+                  tooltip: 'Clear date filter',
                   onPressed: _clearFilter,
                   icon: const Icon(
                     Icons.filter_alt_off_outlined,
@@ -753,6 +904,16 @@ class _EarningsState extends State<Earnings> {
               ],
             ],
           ),
+
+          if (_hasActiveFilter) ...[
+            const SizedBox(height: 10),
+
+            Text(
+              'Showing ${_filteredRecentDeliveries.length} '
+              'record(s) in the selected period.',
+              style: RiderStyle.small,
+            ),
+          ],
         ],
       ),
     );
@@ -784,7 +945,7 @@ class _EarningsState extends State<Earnings> {
               children: [
                 Expanded(
                   child: Text(
-                    _dateText(date),
+                    DateFormatter.shortDate(date, fallback: 'Select date'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -811,20 +972,18 @@ class _EarningsState extends State<Earnings> {
   }
 
   Future<void> _pickDate(bool from) async {
-    final DateTime initial = from
-        ? (_fromDate ?? DateTime.now())
-        : (_toDate ?? DateTime.now());
+    final DateTime now = DateTime.now();
+
+    final DateTime initial = from ? (_fromDate ?? now) : (_toDate ?? now);
 
     final DateTime? selected = await showDatePicker(
       context: context,
       initialDate: initial,
       firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
+      lastDate: now,
     );
 
-    if (selected == null || !mounted) {
-      return;
-    }
+    if (selected == null || !mounted) return;
 
     setState(() {
       if (from) {
@@ -857,7 +1016,10 @@ class _EarningsState extends State<Earnings> {
       return;
     }
 
-    setState(() {});
+    setState(() {
+      _appliedFromDate = _fromDate;
+      _appliedToDate = _toDate;
+    });
 
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -865,10 +1027,8 @@ class _EarningsState extends State<Earnings> {
         SnackBar(
           behavior: SnackBarBehavior.floating,
           content: Text(
-            'Showing '
-            '${_filteredRecentDeliveries.length} '
-            'earning record(s) in the '
-            'selected period.',
+            'Showing ${_filteredRecentDeliveries.length} '
+            'earning record(s) in the selected period.',
           ),
         ),
       );
@@ -878,11 +1038,13 @@ class _EarningsState extends State<Earnings> {
     setState(() {
       _fromDate = null;
       _toDate = null;
+      _appliedFromDate = null;
+      _appliedToDate = null;
     });
   }
 
   // ============================================================
-  // SUMMARY
+  // EARNINGS SUMMARY
   // ============================================================
 
   Widget _summaryCards() {
@@ -940,15 +1102,15 @@ class _EarningsState extends State<Earnings> {
           children: [
             _summaryCard(
               title: 'Today',
-              value: _money(today),
-              subtitle: 'Today\'s earnings',
+              value: _moneyValue(today),
+              subtitle: "Today's earnings",
               icon: Icons.today_outlined,
               iconBackground: RiderColors.lightPurple,
             ),
 
             _summaryCard(
               title: 'This Week',
-              value: _money(week),
+              value: _moneyValue(week),
               subtitle: 'Weekly earnings',
               icon: Icons.date_range_outlined,
               iconBackground: RiderColors.lightBlue,
@@ -956,7 +1118,7 @@ class _EarningsState extends State<Earnings> {
 
             _summaryCard(
               title: 'This Month',
-              value: _money(month),
+              value: _moneyValue(month),
               subtitle: 'Monthly earnings',
               icon: Icons.calendar_month_outlined,
               iconBackground: RiderColors.lightOrange,
@@ -964,7 +1126,7 @@ class _EarningsState extends State<Earnings> {
 
             _summaryCard(
               title: 'Total',
-              value: _money(total),
+              value: _moneyValue(total),
               subtitle: 'Total rider earnings',
               icon: Icons.account_balance_wallet_outlined,
               iconBackground: RiderColors.lightGreen,
@@ -979,7 +1141,7 @@ class _EarningsState extends State<Earnings> {
             Expanded(
               child: _smallSummaryCard(
                 title: 'Completed Tasks',
-                value: deliveries == null ? '0' : _toInt(deliveries).toString(),
+                value: _countValue(deliveries),
                 icon: Icons.local_shipping_outlined,
               ),
             ),
@@ -989,7 +1151,7 @@ class _EarningsState extends State<Earnings> {
             Expanded(
               child: _smallSummaryCard(
                 title: 'Average',
-                value: _money(average),
+                value: _moneyValue(average),
                 icon: Icons.trending_up_rounded,
               ),
             ),
@@ -1007,19 +1169,19 @@ class _EarningsState extends State<Earnings> {
     required Color iconBackground,
   }) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(13),
       decoration: RiderStyle.card,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            height: 38,
-            width: 38,
+            height: 36,
+            width: 36,
             decoration: BoxDecoration(
               color: iconBackground,
               borderRadius: BorderRadius.circular(11),
             ),
-            child: Icon(icon, color: RiderColors.primary, size: 20),
+            child: Icon(icon, color: RiderColors.primary, size: 19),
           ),
 
           const Spacer(),
@@ -1030,14 +1192,19 @@ class _EarningsState extends State<Earnings> {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: RiderColors.textDark,
-              fontSize: 18,
+              fontSize: 17,
               fontWeight: FontWeight.w800,
             ),
           ),
 
-          const SizedBox(height: 2),
+          const SizedBox(height: 3),
 
-          Text(title, style: RiderStyle.cardTitle),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: RiderStyle.cardTitle,
+          ),
 
           const SizedBox(height: 2),
 
@@ -1101,6 +1268,8 @@ class _EarningsState extends State<Earnings> {
   // ============================================================
 
   Widget _earningsTrendCard() {
+    final int recordCount = _filteredRecentDeliveries.length;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
@@ -1120,15 +1289,14 @@ class _EarningsState extends State<Earnings> {
           const SizedBox(height: 18),
 
           Container(
-            height: 145,
             width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 16),
             decoration: BoxDecoration(
               color: RiderColors.background,
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: RiderColors.border),
             ),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Icon(
                   Icons.bar_chart_rounded,
@@ -1140,21 +1308,18 @@ class _EarningsState extends State<Earnings> {
 
                 const Text('Recorded Earnings', style: RiderStyle.cardTitle),
 
-                const SizedBox(height: 4),
+                const SizedBox(height: 5),
 
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Text(
-                    _filteredRecentDeliveries.isEmpty
-                        ? 'No dated earning records '
-                              'are available for the '
-                              'selected period.'
-                        : '${_filteredRecentDeliveries.length} '
-                              'earning record(s) found '
-                              'for the current period.',
-                    textAlign: TextAlign.center,
-                    style: RiderStyle.small,
-                  ),
+                Text(
+                  recordCount == 0
+                      ? _hasActiveFilter
+                            ? 'No dated earning records match '
+                                  'the selected period.'
+                            : 'No earning records are available yet.'
+                      : '$recordCount earning record(s) '
+                            'available for the selected period.',
+                  textAlign: TextAlign.center,
+                  style: RiderStyle.small,
                 ),
               ],
             ),
@@ -1181,31 +1346,33 @@ class _EarningsState extends State<Earnings> {
         if (items.isEmpty)
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(22),
+            padding: const EdgeInsets.all(10),
             decoration: RiderStyle.card,
-            child: const Column(
-              children: [
-                Icon(
-                  Icons.receipt_long_outlined,
-                  color: RiderColors.textGrey,
-                  size: 34,
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'No earnings activity available yet.',
-                  textAlign: TextAlign.center,
-                  style: RiderStyle.small,
-                ),
-              ],
+            child: AppEmptyState(
+              title: _hasActiveFilter
+                  ? 'No Matching Earnings'
+                  : 'No Earnings Activity',
+              message: _hasActiveFilter
+                  ? 'No dated earning records match '
+                        'your selected date range.'
+                  : 'Your rider earning records will '
+                        'appear here when available.',
+              icon: Icons.receipt_long_outlined,
+              color: RiderColors.primary,
+              compact: true,
+              actionLabel: _hasActiveFilter ? 'Clear Filter' : null,
+              onAction: _hasActiveFilter ? _clearFilter : null,
             ),
           )
         else
-          ...items.map((Map<String, dynamic> item) {
-            return _earningItem(item);
-          }),
+          ...items.map((Map<String, dynamic> item) => _earningItem(item)),
       ],
     );
   }
+
+  // ============================================================
+  // EARNING ITEM
+  // ============================================================
 
   Widget _earningItem(Map<String, dynamic> item) {
     final String tracking = _firstText(item, <String>[
@@ -1234,15 +1401,13 @@ class _EarningsState extends State<Earnings> {
         item['earning_amount'] ??
         item['delivery_fee'];
 
-    final String amount = _money(earningsValue);
+    final String amount = _moneyValue(earningsValue);
 
     final DateTime? recordDate = _extractRecordDate(item);
 
     final String assignment = _assignmentLabel(item);
 
     final String route = _routeText(item);
-
-    final Color statusColor = _statusColor(status);
 
     return Container(
       width: double.infinity,
@@ -1256,8 +1421,8 @@ class _EarningsState extends State<Earnings> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                height: 42,
                 width: 42,
+                height: 42,
                 decoration: BoxDecoration(
                   color: _assignmentBackground(item),
                   borderRadius: BorderRadius.circular(12),
@@ -1277,7 +1442,7 @@ class _EarningsState extends State<Earnings> {
                   children: [
                     Text(
                       tracking.isEmpty ? 'Tracking unavailable' : tracking,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: RiderStyle.cardTitle,
                     ),
@@ -1286,16 +1451,16 @@ class _EarningsState extends State<Earnings> {
 
                     Text(
                       assignment,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: RiderStyle.small,
                     ),
 
                     if (customer.isNotEmpty) ...[
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 4),
                       Text(
                         customer,
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: RiderStyle.small,
                       ),
@@ -1306,12 +1471,15 @@ class _EarningsState extends State<Earnings> {
 
               const SizedBox(width: 8),
 
-              Text(
-                amount,
-                style: const TextStyle(
-                  color: RiderColors.earnings,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
+              Flexible(
+                child: Text(
+                  amount,
+                  textAlign: TextAlign.end,
+                  style: const TextStyle(
+                    color: RiderColors.earnings,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ],
@@ -1320,19 +1488,12 @@ class _EarningsState extends State<Earnings> {
           if (route.isNotEmpty) ...[
             const SizedBox(height: 12),
 
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.route_outlined,
-                  size: 16,
-                  color: RiderColors.primary,
-                ),
-
-                const SizedBox(width: 6),
-
-                Expanded(child: Text(route, style: RiderStyle.small)),
-              ],
+            AppInfoRow(
+              label: 'Route',
+              value: route,
+              icon: Icons.route_outlined,
+              iconColor: RiderColors.primary,
+              compact: true,
             ),
           ],
 
@@ -1340,92 +1501,26 @@ class _EarningsState extends State<Earnings> {
 
           Row(
             children: [
-              const Text('Status', style: RiderStyle.small),
+              const Expanded(child: Text('Status', style: RiderStyle.small)),
 
-              const Spacer(),
-
-              Text(
-                _formatStatus(status),
-                style: TextStyle(
-                  color: statusColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              StatusChip(status: status.isEmpty ? 'Unknown' : status),
             ],
           ),
 
           if (recordDate != null) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 9),
 
             Row(
               children: [
-                const Text('Date', style: RiderStyle.small),
+                const Expanded(child: Text('Date', style: RiderStyle.small)),
 
-                const Spacer(),
-
-                Text(_formatDateTime(recordDate), style: RiderStyle.small),
+                Text(
+                  DateFormatter.dateOnly(recordDate),
+                  style: RiderStyle.small,
+                ),
               ],
             ),
           ],
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // LOADING / ERROR
-  // ============================================================
-
-  Widget _loadingCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: RiderStyle.card,
-      child: const Row(
-        children: [
-          SizedBox(
-            height: 22,
-            width: 22,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.2,
-              color: RiderColors.primary,
-            ),
-          ),
-
-          SizedBox(width: 12),
-
-          Expanded(child: Text('Loading earnings...', style: RiderStyle.small)),
-        ],
-      ),
-    );
-  }
-
-  Widget _errorCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: RiderStyle.card,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.info_outline_rounded, color: RiderColors.warning),
-
-          const SizedBox(width: 10),
-
-          Expanded(
-            child: Text(
-              _errorMessage ?? 'Unable to load earnings.',
-              style: RiderStyle.small,
-            ),
-          ),
-
-          IconButton(
-            onPressed: () {
-              _loadEarnings(refresh: true);
-            },
-            icon: const Icon(Icons.refresh_rounded, color: RiderColors.primary),
-          ),
         ],
       ),
     );

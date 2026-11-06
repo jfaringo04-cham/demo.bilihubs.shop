@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../sevices/cart_service.dart';
+import '../../services/cart_service.dart';
 import '../../widgets/bottom_nav.dart';
 
 import 'buyer_home.dart';

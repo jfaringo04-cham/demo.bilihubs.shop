@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../sevices/api_services.dart';
-import '../../sevices/auth_storage.dart';
+import '../../services/api_services.dart';
+import '../../services/auth_storage.dart';
 import '../../styles/login_style.dart';
 
 import '../buyer/buyer_navigation.dart';

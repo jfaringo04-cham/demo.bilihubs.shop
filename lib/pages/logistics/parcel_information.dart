@@ -1,8 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/parcel_model.dart';
-import '../../sevices/api_services.dart';
+import '../../services/api_services.dart';
 import '../../styles/logistics_style.dart';
+import '../../utils/address_formatter.dart';
+import '../../utils/date_formatter.dart';
+import '../../widgets/app_address_card.dart';
+import '../../widgets/app_error_state.dart';
+import '../../widgets/app_info_row.dart';
+import '../../widgets/app_loading_state.dart';
 import '../../widgets/status_chip.dart';
 
 class ParcelInformation extends StatefulWidget {
@@ -15,228 +23,204 @@ class ParcelInformation extends StatefulWidget {
 }
 
 class _ParcelInformationState extends State<ParcelInformation> {
+  static const Duration _requestTimeout = Duration(seconds: 30);
+
   late ParcelModel _parcel;
 
-  Map<String, dynamic> _details = <String, dynamic>{};
+  Map<String, dynamic> _details = {};
 
   bool _isLoading = true;
   bool _isRefreshing = false;
-  bool _isProcessing = false;
+  bool _isFetching = false;
+  bool _isVerified = false;
+  bool _hasLoaded = false;
 
+  bool _isProcessing = false;
   bool _isLoadingRiders = false;
   bool _isAssigningRider = false;
 
   String? _errorMessage;
+  int _requestId = 0;
 
   @override
   void initState() {
     super.initState();
-
     _parcel = widget.parcel;
-
     _loadDetails();
   }
 
-  // ============================================================
-  // LOAD DETAILS
-  // ============================================================
-
-  Future<void> _loadDetails({bool showLoading = true}) async {
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      if (showLoading) {
-        _isLoading = true;
-      } else {
-        _isRefreshing = true;
-      }
-
-      _errorMessage = null;
-    });
-
-    try {
-      final Map<String, dynamic> result = await ApiService.getLogisticsShipment(
-        _parcel.id,
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      if (result['success'] != true) {
-        final String message = result['message']?.toString().trim() ?? '';
-
-        setState(() {
-          _isLoading = false;
-          _isRefreshing = false;
-
-          _errorMessage = message.isNotEmpty
-              ? message
-              : 'Unable to load parcel details.';
-        });
-
-        return;
-      }
-
-      final Map<String, dynamic>? details = _extractShipmentMap(result);
-
-      if (details == null) {
-        setState(() {
-          _isLoading = false;
-          _isRefreshing = false;
-
-          _errorMessage = 'Invalid parcel response received.';
-        });
-
-        return;
-      }
-
-      final Map<String, dynamic> normalized = _normalizeShipment(details);
-
-      ParcelModel parsedParcel;
-
-      try {
-        parsedParcel = ParcelModel.fromJson(normalized);
-      } catch (error) {
-        setState(() {
-          _isLoading = false;
-          _isRefreshing = false;
-
-          _errorMessage = 'Unable to read parcel data: $error';
-        });
-
-        return;
-      }
-
-      setState(() {
-        _details = normalized;
-        _parcel = parsedParcel;
-
-        _isLoading = false;
-        _isRefreshing = false;
-        _errorMessage = null;
-      });
-    } catch (error) {
-      debugPrint('Logistics parcel detail error: $error');
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isLoading = false;
-        _isRefreshing = false;
-
-        _errorMessage =
-            'Unable to load parcel details. '
-            'Please check your connection and try again.';
-      });
-    }
+  @override
+  void dispose() {
+    _requestId++;
+    super.dispose();
   }
 
   // ============================================================
-  // EXTRACT RESPONSE
+  // API / LOAD LATEST SHIPMENT
   // ============================================================
 
-  Map<String, dynamic>? _extractShipmentMap(Map<String, dynamic> result) {
-    final dynamic rawData = result['data'];
+  Future<void> _loadDetails({bool showLoading = true}) async {
+    if (!mounted ||
+        _isFetching ||
+        _isProcessing ||
+        _isLoadingRiders ||
+        _isAssigningRider) {
+      return;
+    }
+
+    final int requestId = ++_requestId;
+
+    setState(() {
+      _isFetching = true;
+      _isLoading = !_hasLoaded && showLoading;
+      _isRefreshing = _hasLoaded || !showLoading;
+      _isVerified = false;
+      _errorMessage = null;
+    });
+
+    if (_parcel.id <= 0) {
+      _setLoadError(requestId, 'Invalid shipment ID.');
+      return;
+    }
+
+    try {
+      final Map<String, dynamic> response =
+          await ApiService.getLogisticsShipment(_parcel.id)
+              .timeout(_requestTimeout);
+
+      if (!mounted || requestId != _requestId) return;
+
+      if (response['success'] != true) {
+        _setLoadError(
+          requestId,
+          _responseMessage(response, 'Unable to load parcel information.'),
+        );
+        return;
+      }
+
+      final Map<String, dynamic>? raw = _extractShipment(response);
+
+      if (raw == null) {
+        _setLoadError(requestId, 'Invalid shipment response from the server.');
+        return;
+      }
+
+      final Map<String, dynamic> normalized = _normalizeShipment(raw);
+
+      final ParcelModel latest;
+
+      try {
+        latest = ParcelModel.fromJson(normalized);
+      } catch (error) {
+        debugPrint('Logistics parcel parsing error: $error');
+
+        _setLoadError(requestId, 'Unable to read the latest shipment data.');
+        return;
+      }
+
+      if (latest.id <= 0 || latest.id != _parcel.id) {
+        _setLoadError(requestId, 'The server returned an unexpected shipment.');
+        return;
+      }
+
+      if (!mounted || requestId != _requestId) return;
+
+      setState(() {
+        _parcel = latest;
+        _details = normalized;
+        _hasLoaded = true;
+        _isVerified = true;
+        _isLoading = false;
+        _isRefreshing = false;
+        _isFetching = false;
+        _errorMessage = null;
+      });
+    } on TimeoutException {
+      _setLoadError(requestId, 'Request timed out. Refresh the shipment.');
+    } catch (error) {
+      debugPrint('Logistics parcel API error: $error');
+
+      _setLoadError(requestId, 'Unable to connect to the BiliHub server.');
+    }
+  }
+
+  void _setLoadError(int requestId, String message) {
+    if (!mounted || requestId != _requestId) return;
+
+    setState(() {
+      _isFetching = false;
+      _isLoading = false;
+      _isRefreshing = false;
+      _isVerified = false;
+      _errorMessage = message;
+    });
+  }
+
+  Map<String, dynamic>? _extractShipment(Map<String, dynamic> response) {
+    final dynamic rawData = response['data'];
 
     if (rawData is Map) {
       final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
 
-      final dynamic nestedShipment = data['shipment'];
+      if (data['shipment'] is Map) {
+        final Map<String, dynamic> shipment = Map<String, dynamic>.from(
+          data['shipment'],
+        );
 
-      if (nestedShipment is Map) {
-        return Map<String, dynamic>.from(nestedShipment);
+        for (final String key in [
+          'order',
+          'seller',
+          'rider',
+          'linehaul_rider',
+          'origin_hub',
+          'destination_hub',
+          'hub',
+        ]) {
+          shipment[key] ??= data[key];
+        }
+
+        return shipment;
       }
 
       return data;
     }
 
-    final dynamic directShipment = result['shipment'];
-
-    if (directShipment is Map) {
-      return Map<String, dynamic>.from(directShipment);
+    if (response['shipment'] is Map) {
+      return Map<String, dynamic>.from(response['shipment']);
     }
 
     return null;
   }
 
-  // ============================================================
-  // NORMALIZE SHIPMENT
-  // ============================================================
+  Map<String, dynamic> _asMap(dynamic raw) {
+    if (raw is Map) {
+      return Map<String, dynamic>.from(raw);
+    }
+    return {};
+  }
 
   Map<String, dynamic> _normalizeShipment(Map<String, dynamic> raw) {
     final Map<String, dynamic> data = Map<String, dynamic>.from(raw);
 
-    final dynamic nestedShipment = raw['shipment'];
+    final Map<String, dynamic> nested = _asMap(data['shipment']);
 
-    if (nestedShipment is Map) {
-      data.addAll(Map<String, dynamic>.from(nestedShipment));
+    if (nested.isNotEmpty) {
+      data.addAll(nested);
     }
 
-    final dynamic order = data['order'];
+    final Map<String, dynamic> order = _asMap(data['order']);
 
-    if (order is Map) {
-      final Map<String, dynamic> orderMap = Map<String, dynamic>.from(order);
+    final Map<String, dynamic> seller = _asMap(data['seller']);
 
-      data['customer_name'] ??=
-          orderMap['customer_name'] ??
-          orderMap['buyer_name'] ??
-          orderMap['name'];
+    final Map<String, dynamic> rider = _asMap(data['rider']);
 
-      data['customer_phone'] ??=
-          orderMap['customer_phone'] ?? orderMap['phone'];
+    final Map<String, dynamic> linehaulRider = _asMap(data['linehaul_rider']);
 
-      data['delivery_address'] ??=
-          orderMap['delivery_address'] ?? orderMap['address'];
+    final Map<String, dynamic> originHub = _asMap(data['origin_hub']);
 
-      data['order_number'] ??= orderMap['order_number'] ?? orderMap['number'];
+    final Map<String, dynamic> destinationHub = _asMap(data['destination_hub']);
 
-      data['order_date'] ??= orderMap['created_at'];
-    }
-
-    final dynamic rider = data['rider'];
-
-    if (rider is Map) {
-      data['rider_id'] ??= rider['id'];
-
-      data['rider_name'] ??= rider['name'];
-    }
-
-    final dynamic linehaulRider = data['linehaul_rider'];
-
-    if (linehaulRider is Map) {
-      data['linehaul_rider_id'] ??= linehaulRider['id'];
-
-      data['linehaul_rider_name'] ??= linehaulRider['name'];
-    }
-
-    final dynamic originHub = data['origin_hub'];
-
-    if (originHub is Map) {
-      data['origin_hub_id'] ??= originHub['id'];
-
-      data['origin_hub_name'] ??= originHub['name'];
-    }
-
-    final dynamic destinationHub = data['destination_hub'];
-
-    if (destinationHub is Map) {
-      data['destination_hub_id'] ??= destinationHub['id'];
-
-      data['destination_hub_name'] ??= destinationHub['name'];
-    }
-
-    final dynamic currentHub = data['hub'];
-
-    if (currentHub is Map) {
-      data['current_hub_id'] ??= currentHub['id'];
-
-      data['current_hub_name'] ??= currentHub['name'];
-    }
+    final Map<String, dynamic> currentHub = _asMap(data['hub']);
 
     data['id'] ??= data['shipment_id'] ?? data['order_id'] ?? 0;
 
@@ -249,88 +233,150 @@ class _ParcelInformationState extends State<ParcelInformation> {
         '';
 
     data['customer_name'] ??=
-        data['recipient_name'] ?? data['buyer_name'] ?? '';
-
-    data['customer_phone'] ??= data['phone'] ?? data['recipient_phone'] ?? '';
-
-    data['delivery_address'] ??=
-        data['shipping_address'] ??
-        data['recipient_address'] ??
-        data['address'] ??
+        order['customer_name'] ??
+        order['buyer_name'] ??
+        data['recipient_name'] ??
+        data['buyer_name'] ??
         '';
 
-    data['pickup_address'] ??= data['seller_address'] ?? '';
+    data['customer_phone'] ??=
+        order['customer_phone'] ??
+        order['phone'] ??
+        data['recipient_phone'] ??
+        data['phone'] ??
+        '';
 
-    data['rider_name'] ??= '';
+    data['order_number'] ??= order['order_number'] ?? order['number'];
+
+    data['seller_name'] ??=
+        seller['name'] ?? seller['shop_name'] ?? seller['store_name'];
+
+    data['rider_id'] ??= rider['id'];
+    data['rider_name'] ??= rider['name'] ?? '';
+
+    data['linehaul_rider_id'] ??= linehaulRider['id'];
+
+    data['linehaul_rider_name'] ??= linehaulRider['name'];
+
+    data['origin_hub_id'] ??= originHub['id'];
+    data['origin_hub_name'] ??= originHub['name'];
+
+    data['destination_hub_id'] ??= destinationHub['id'];
+
+    data['destination_hub_name'] ??= destinationHub['name'];
+
+    data['current_hub_id'] ??= currentHub['id'];
+
+    data['current_hub_name'] ??= currentHub['name'];
+
+    data['delivery_address'] = _resolveDeliveryAddress(data, order);
+
+    data['pickup_address'] = AddressFormatter.clean(
+      data['pickup_address'] ?? data['seller_address'],
+    );
 
     data['status'] ??=
         data['shipment_status'] ?? data['delivery_status'] ?? 'pending';
 
-    data['order_date'] ??= data['created_at'] ?? data['assigned_at'] ?? '';
+    data['order_date'] ??= data['created_at'] ?? order['created_at'] ?? '';
 
     data['delivery_earnings'] ??= data['earnings'] ?? data['delivery_fee'] ?? 0;
 
     data['latitude'] ??= data['lat'];
-
     data['longitude'] ??= data['lng'] ?? data['lon'];
 
     return data;
   }
 
-  // ============================================================
-  // STATUS HELPERS
-  // ============================================================
+  String _resolveDeliveryAddress(
+    Map<String, dynamic> shipment,
+    Map<String, dynamic> order,
+  ) {
+    for (final Map<String, dynamic> source in [shipment, order]) {
+      for (final String key in [
+        'delivery_address',
+        'full_delivery_address',
+        'shipping_address',
+        'recipient_address',
+        'buyer_address',
+        'address',
+        'delivery_address_details',
+        'shipping_address_details',
+        'address_details',
+      ]) {
+        final String value = AddressFormatter.clean(source[key]);
 
-  String get _sortingStatus {
-    final String value = _parcel.normalizedSortingStatus;
-
-    if (value.isNotEmpty) {
-      return value;
+        if (value.isNotEmpty) return value;
+      }
     }
 
-    final String fallback =
-        _details['sorting_status']
-            ?.toString()
-            .trim()
-            .toLowerCase()
-            .replaceAll(' ', '_')
-            .replaceAll('-', '_') ??
-        '';
+    return '';
+  }
 
-    return fallback.isEmpty ? 'pending' : fallback;
+  String _responseMessage(Map<String, dynamic> response, String fallback) {
+    final String message = _display(response['message'], fallback: '');
+
+    if (message.isNotEmpty) return message;
+
+    final dynamic errors = response['errors'];
+
+    if (errors is Map) {
+      for (final dynamic value in errors.values) {
+        if (value is List && value.isNotEmpty) {
+          return value.first.toString();
+        }
+      }
+    }
+
+    return fallback;
+  }
+
+  // ============================================================
+  // STATUS & WORKFLOW RULES
+  // ============================================================
+
+  String _normalizeStatus(String raw) {
+    return raw.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
+  }
+
+  String get _shipmentStatus => _parcel.normalizedStatus;
+
+  String get _sortingStatus {
+    final String fromParcel = _parcel.normalizedSortingStatus;
+
+    if (fromParcel.isNotEmpty) {
+      return fromParcel;
+    }
+
+    final String fromDetails = _normalizeStatus(
+      _display(_details['sorting_status'], fallback: ''),
+    );
+
+    return fromDetails.isEmpty ? 'pending' : fromDetails;
   }
 
   bool get _isFinished {
-    final String status = _parcel.normalizedStatus;
-
-    return status == 'delivered' ||
-        status == 'completed' ||
-        status == 'cancelled' ||
-        status == 'delivery_failed' ||
-        status == 'failed';
+    return const <String>{
+      'delivered',
+      'completed',
+      'cancelled',
+      'canceled',
+      'delivery_failed',
+      'failed',
+      'failed_return_at_sorting_center',
+    }.contains(_shipmentStatus);
   }
 
-  bool get _isStaged {
-    return _sortingStatus == 'staged' || _parcel.isStaged;
-  }
+  bool get _isStaged => _sortingStatus == 'staged' || _parcel.isStaged;
+
+  bool get _isBusy =>
+      _isFetching || _isProcessing || _isLoadingRiders || _isAssigningRider;
 
   bool get _hasFinalMileRider {
-    if (_parcel.riderName.trim().isNotEmpty) {
-      return true;
-    }
-
     final int riderId =
         int.tryParse(_details['rider_id']?.toString() ?? '') ?? 0;
 
-    return riderId > 0;
-  }
-
-  bool get _canAssignFinalMileRider {
-    return !_isFinished &&
-        _isStaged &&
-        !_requiresLinehaul &&
-        _parcel.isAtDestinationHub &&
-        !_hasFinalMileRider;
+    return riderId > 0 || _parcel.riderName.trim().isNotEmpty;
   }
 
   bool get _requiresLinehaul {
@@ -341,8 +387,56 @@ class _ParcelInformationState extends State<ParcelInformation> {
         _parcel.normalizedRoutingStatus == 'in_hub_transfer';
   }
 
+  // A seller pickup must physically reach the sorting
+  // center before Logistics can mark it as received.
+  //
+  // UI checks are additional safeguards only.
+  // Laravel must enforce this rule independently.
+  bool get _hasArrivedAtSortingCenter {
+    if (_parcel.receivedBySortingCenter) {
+      return true;
+    }
+
+    return const <String>{
+      'at_sorting_center',
+      'received_at_sorting_center',
+    }.contains(_shipmentStatus);
+  }
+
+  bool get _canProcess =>
+      _isVerified && !_isBusy && !_isFinished && _parcel.id > 0;
+
+  String? get _nextProcessAction {
+    if (_isFinished || _isStaged) return null;
+
+    final String status = _sortingStatus;
+
+    if (status == 'pending' ||
+        status == 'assigned' ||
+        status == 'at_sorting_center' ||
+        status == 'ready_for_pickup') {
+      // Do not enable receiving for a parcel that
+      // has never arrived at the sorting center.
+      return _hasArrivedAtSortingCenter ? 'receive' : null;
+    }
+
+    if (status == 'received') return 'scan';
+    if (status == 'scanned') return 'sort';
+    if (status == 'sorted') return 'stage';
+
+    return null;
+  }
+
+  bool get _canAssignFinalMileRider {
+    return _canProcess &&
+        _isStaged &&
+        !_requiresLinehaul &&
+        _parcel.isAtDestinationHub &&
+        !_hasFinalMileRider;
+  }
+
   // ============================================================
-  // DISPLAY HELPERS
+  // USER FEEDBACK
   // ============================================================
 
   String _display(dynamic value, {String fallback = '—'}) {
@@ -356,123 +450,125 @@ class _ParcelInformationState extends State<ParcelInformation> {
   }
 
   String _formatStatus(String value) {
-    final String cleaned = value
+    final String status = value
         .trim()
         .replaceAll('-', '_')
         .replaceAll(' ', '_');
 
-    if (cleaned.isEmpty) {
-      return 'Not available';
-    }
+    if (status.isEmpty) return 'Not available';
 
-    return cleaned
+    return status
         .split('_')
-        .where((String word) => word.isNotEmpty)
+        .where((String part) => part.isNotEmpty)
         .map(
-          (String word) =>
-              '${word[0].toUpperCase()}'
-              '${word.substring(1).toLowerCase()}',
+          (String part) =>
+              '${part[0].toUpperCase()}'
+              '${part.substring(1).toLowerCase()}',
         )
         .join(' ');
   }
 
-  String _formatDate(String value) {
-    final String text = value.trim();
+  String _date(dynamic value) {
+    return DateFormatter.dateTime(value, fallback: '—');
+  }
 
-    if (text.isEmpty || text.toLowerCase() == 'null') {
-      return '—';
-    }
+  void _showMessage(String message, {bool success = false}) {
+    if (!mounted) return;
 
-    final DateTime? parsed = DateTime.tryParse(text);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: success
+              ? LogisticsColors.success
+              : LogisticsColors.danger,
+          content: Text(message),
+        ),
+      );
+  }
 
-    if (parsed == null) {
-      return text;
-    }
+  Future<bool> _confirmAction({
+    required String title,
+    required String message,
+    String confirmLabel = 'Confirm',
+  }) async {
+    final bool? result = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: LogisticsStyle.primaryButton,
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(confirmLabel),
+            ),
+          ],
+        );
+      },
+    );
 
-    final DateTime local = parsed.toLocal();
-
-    const List<String> months = <String>[
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-
-    final String month = months[local.month - 1];
-
-    final int hour = local.hour == 0
-        ? 12
-        : local.hour > 12
-        ? local.hour - 12
-        : local.hour;
-
-    final String minute = local.minute.toString().padLeft(2, '0');
-
-    final String period = local.hour >= 12 ? 'PM' : 'AM';
-
-    return '$month ${local.day}, ${local.year} '
-        '$hour:$minute $period';
+    return result == true;
   }
 
   // ============================================================
-  // PROCESS PARCEL
+  // LOGISTICS PROCESSING
+  // RECEIVE -> SCAN -> SORT -> STAGE
   // ============================================================
 
   Future<void> _process(String action) async {
-    if (_isProcessing || _isFinished) {
+    if (!_canProcess || _nextProcessAction != action) {
       return;
     }
 
     String? deliveryZone;
     String? deliveryType;
-
     String? sortingArea;
     String? rackNumber;
 
     if (action == 'scan') {
-      final Map<String, String>? values = await _showScanDialog();
+      final Map<String, String>? data = await _showScanDialog();
 
-      if (values == null) {
-        return;
-      }
+      if (!mounted || data == null) return;
 
-      deliveryZone = values['delivery_zone'];
-
-      deliveryType = values['delivery_type'];
+      deliveryZone = data['delivery_zone'];
+      deliveryType = data['delivery_type'];
     }
 
     if (action == 'sort') {
-      final Map<String, String>? values = await _showSortDialog();
+      final Map<String, String>? data = await _showSortDialog();
 
-      if (values == null) {
-        return;
-      }
+      if (!mounted || data == null) return;
 
-      sortingArea = values['sorting_area'];
-
-      rackNumber = values['rack_number'];
+      sortingArea = data['sorting_area'];
+      rackNumber = data['rack_number'];
     }
 
-    if (!mounted) {
+    if (!_canProcess || _nextProcessAction != action) {
       return;
     }
 
-    final bool? confirmed = await _confirmProcessAction(action);
+    final bool confirmed = await _confirmAction(
+      title: _processTitle(action),
+      message: _processConfirmation(action),
+      confirmLabel: 'Confirm',
+    );
 
-    if (!mounted || confirmed != true) {
+    if (!mounted || !confirmed || !_canProcess) {
       return;
     }
+
+    if (_nextProcessAction != action) return;
 
     setState(() {
       _isProcessing = true;
+      _isVerified = false;
     });
 
     try {
@@ -484,177 +580,137 @@ class _ParcelInformationState extends State<ParcelInformation> {
             deliveryType: deliveryType,
             sortingArea: sortingArea,
             rackNumber: rackNumber,
-          );
+          ).timeout(_requestTimeout);
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       setState(() {
         _isProcessing = false;
       });
 
-      final String message = result['message']?.toString().trim() ?? '';
+      final bool success = result['success'] == true;
 
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text(
-              message.isNotEmpty
-                  ? message
-                  : result['success'] == true
-                  ? 'Parcel updated successfully.'
-                  : 'Unable to update parcel.',
-            ),
-            backgroundColor: result['success'] == true
-                ? LogisticsColors.success
-                : LogisticsColors.danger,
-          ),
-        );
+      _showMessage(
+        _responseMessage(
+          result,
+          success
+              ? '${_processTitle(action)} completed.'
+              : 'Unable to process the parcel.',
+        ),
+        success: success,
+      );
 
-      if (result['success'] == true) {
-        await _loadDetails(showLoading: false);
-      }
+      await _loadDetails(showLoading: false);
+    } on TimeoutException {
+      if (!mounted) return;
+
+      setState(() {
+        _isProcessing = false;
+      });
+
+      _showMessage(
+        'Request timed out. Check the latest '
+        'parcel status before retrying.',
+      );
+
+      await _loadDetails(showLoading: false);
     } catch (error) {
-      debugPrint('Process logistics parcel error: $error');
+      debugPrint('Logistics process error: $error');
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       setState(() {
         _isProcessing = false;
       });
 
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: LogisticsColors.danger,
-            content: Text(
-              'Unable to process parcel. '
-              'Please try again.',
-            ),
-          ),
-        );
+      _showMessage(
+        'Unable to confirm processing. '
+        'Refreshing the server state.',
+      );
+
+      await _loadDetails(showLoading: false);
     }
   }
 
-  Future<bool?> _confirmProcessAction(String action) {
-    String title;
-    String message;
-
+  String _processTitle(String action) {
     switch (action) {
       case 'receive':
-        title = 'Receive Parcel';
-        message =
-            'Confirm that this parcel has '
-            'physically arrived at the sorting center.';
-        break;
-
+        return 'Receive Parcel';
       case 'scan':
-        title = 'Scan & Classify';
-        message =
-            'Confirm the parcel classification '
-            'and delivery routing information.';
-        break;
-
+        return 'Scan & Classify';
       case 'sort':
-        title = 'Sort Parcel';
-        message =
-            'Confirm the sorting area and '
-            'rack location for this parcel.';
-        break;
-
+        return 'Sort Parcel';
       case 'stage':
-        title = 'Stage Parcel';
-        message =
-            'Confirm that this parcel is fully sorted '
-            'and ready for its next routing step.';
-        break;
-
+        return 'Stage Parcel';
       default:
-        title = 'Process Parcel';
-        message = 'Continue with this parcel operation?';
+        return 'Process Parcel';
     }
+  }
 
-    return showDialog<bool>(
-      context: context,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          title: Text(title),
-          content: Text(message, style: LogisticsStyle.small),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, false);
-              },
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, true);
-              },
-              style: LogisticsStyle.primaryButton,
-              child: const Text('Confirm'),
-            ),
-          ],
-        );
-      },
-    );
+  String _processConfirmation(String action) {
+    switch (action) {
+      case 'receive':
+        return 'Confirm that this parcel was physically '
+            'handed over to the sorting center by the '
+            'pickup rider.';
+      case 'scan':
+        return 'Confirm the selected delivery zone '
+            'and delivery type.';
+      case 'sort':
+        return 'Confirm the sorting area and rack '
+            'location for this parcel.';
+      case 'stage':
+        return 'Confirm that sorting is complete '
+            'and this parcel is ready for routing.';
+      default:
+        return 'Continue processing this parcel?';
+    }
   }
 
   // ============================================================
-  // SCAN DIALOG
+  // SCAN & CLASSIFY INPUT
   // ============================================================
 
   Future<Map<String, String>?> _showScanDialog() async {
     final TextEditingController zoneController = TextEditingController(
-      text: _details['delivery_zone']?.toString() ?? '',
+      text: _display(_details['delivery_zone'], fallback: ''),
     );
 
-    String deliveryType =
-        _details['delivery_type']?.toString().trim().toLowerCase() ??
-        'standard';
+    String type = _normalizeStatus(
+      _display(_details['delivery_type'], fallback: 'standard'),
+    );
 
-    const Set<String> allowedTypes = <String>{
-      'standard',
-      'same_day',
-      'express',
-    };
-
-    if (!allowedTypes.contains(deliveryType)) {
-      deliveryType = 'standard';
+    if (!const <String>{'standard', 'same_day', 'express'}.contains(type)) {
+      type = 'standard';
     }
 
     final Map<String, String>? result = await showDialog<Map<String, String>>(
       context: context,
       builder: (BuildContext dialogContext) {
         return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setDialogState) {
+          builder: (BuildContext context, StateSetter updateDialog) {
             return AlertDialog(
-              title: const Text('Scan & Classify Parcel'),
+              title: const Text('Scan & Classify'),
+              scrollable: true,
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TextField(
                     controller: zoneController,
+                    maxLength: 120,
                     decoration: LogisticsStyle.inputDecoration(
                       hint: 'Delivery zone',
                       icon: Icons.location_on_outlined,
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    initialValue: deliveryType,
+                    initialValue: type,
                     decoration: LogisticsStyle.inputDecoration(
                       hint: 'Delivery type',
                       icon: Icons.local_shipping_outlined,
                     ),
-                    items: const <DropdownMenuItem<String>>[
+                    items: const [
                       DropdownMenuItem(
                         value: 'standard',
                         child: Text('Standard'),
@@ -669,12 +725,10 @@ class _ParcelInformationState extends State<ParcelInformation> {
                       ),
                     ],
                     onChanged: (String? value) {
-                      if (value == null) {
-                        return;
-                      }
+                      if (value == null) return;
 
-                      setDialogState(() {
-                        deliveryType = value;
+                      updateDialog(() {
+                        type = value;
                       });
                     },
                   ),
@@ -682,9 +736,7 @@ class _ParcelInformationState extends State<ParcelInformation> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    Navigator.pop(dialogContext);
-                  },
+                  onPressed: () => Navigator.pop(dialogContext),
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
@@ -692,12 +744,17 @@ class _ParcelInformationState extends State<ParcelInformation> {
                     final String zone = zoneController.text.trim();
 
                     if (zone.isEmpty) {
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        const SnackBar(
+                          content: Text('Please enter a delivery zone.'),
+                        ),
+                      );
                       return;
                     }
 
                     Navigator.pop(dialogContext, <String, String>{
                       'delivery_zone': zone,
-                      'delivery_type': deliveryType,
+                      'delivery_type': type,
                     });
                   },
                   child: const Text('Continue'),
@@ -710,21 +767,20 @@ class _ParcelInformationState extends State<ParcelInformation> {
     );
 
     zoneController.dispose();
-
     return result;
   }
 
   // ============================================================
-  // SORT DIALOG
+  // SORT INPUT
   // ============================================================
 
   Future<Map<String, String>?> _showSortDialog() async {
     final TextEditingController areaController = TextEditingController(
-      text: _details['sorting_area']?.toString() ?? '',
+      text: _display(_details['sorting_area'], fallback: ''),
     );
 
     final TextEditingController rackController = TextEditingController(
-      text: _details['rack_number']?.toString() ?? '',
+      text: _display(_details['rack_number'], fallback: ''),
     );
 
     final Map<String, String>? result = await showDialog<Map<String, String>>(
@@ -732,19 +788,22 @@ class _ParcelInformationState extends State<ParcelInformation> {
       builder: (BuildContext dialogContext) {
         return AlertDialog(
           title: const Text('Sort Parcel'),
+          scrollable: true,
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: areaController,
+                maxLength: 120,
                 decoration: LogisticsStyle.inputDecoration(
                   hint: 'Sorting area',
                   icon: Icons.warehouse_outlined,
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               TextField(
                 controller: rackController,
+                maxLength: 120,
                 decoration: LogisticsStyle.inputDecoration(
                   hint: 'Rack number',
                   icon: Icons.inventory_2_outlined,
@@ -754,9 +813,7 @@ class _ParcelInformationState extends State<ParcelInformation> {
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-              },
+              onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Cancel'),
             ),
             ElevatedButton(
@@ -766,6 +823,14 @@ class _ParcelInformationState extends State<ParcelInformation> {
                 final String rack = rackController.text.trim();
 
                 if (area.isEmpty || rack.isEmpty) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Enter the sorting area '
+                        'and rack number.',
+                      ),
+                    ),
+                  );
                   return;
                 }
 
@@ -788,99 +853,88 @@ class _ParcelInformationState extends State<ParcelInformation> {
   }
 
   // ============================================================
-  // FINAL-MILE RIDER ASSIGNMENT
+  // FINAL-MILE RIDER LOOKUP
   // ============================================================
 
   Future<void> _showAvailableRiders() async {
-    if (_isLoadingRiders || _isAssigningRider || !_canAssignFinalMileRider) {
-      return;
-    }
+    if (!_canAssignFinalMileRider) return;
 
     setState(() {
       _isLoadingRiders = true;
     });
 
     try {
-      final Map<String, dynamic> result =
-          await ApiService.getLogisticsAvailableRiders(shipmentId: _parcel.id);
+      final Map<String, dynamic> response =
+          await ApiService.getLogisticsAvailableRiders(shipmentId: _parcel.id)
+              .timeout(_requestTimeout);
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       setState(() {
         _isLoadingRiders = false;
       });
 
-      if (result['success'] != true) {
-        final String message = result['message']?.toString().trim() ?? '';
-
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: LogisticsColors.danger,
-              content: Text(
-                message.isNotEmpty
-                    ? message
-                    : 'Unable to load available riders.',
-              ),
-            ),
-          );
-
+      if (response['success'] != true) {
+        _showMessage(
+          _responseMessage(response, 'Unable to load eligible riders.'),
+        );
         return;
       }
 
-      final List<Map<String, dynamic>> riders = _extractAvailableRiders(result);
+      final List<Map<String, dynamic>> riders = _extractAvailableRiders(
+        response,
+      );
 
       if (riders.isEmpty) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            const SnackBar(
-              behavior: SnackBarBehavior.floating,
-              content: Text(
-                'No eligible online riders are available '
-                'for this destination right now.',
-              ),
-            ),
-          );
-
+        _showMessage('No eligible final-mile riders are available.');
         return;
       }
 
-      await _showRiderPicker(riders);
-    } catch (error) {
-      debugPrint('Load available riders error: $error');
+      final Map<String, dynamic>? selected = await _showRiderPicker(riders);
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted || selected == null) return;
+
+      if (!_canAssignFinalMileRider) return;
+
+      final bool confirmed = await _confirmAction(
+        title: 'Assign Final-Mile Rider',
+        message:
+            'Assign ${_riderName(selected)} to parcel '
+            '${_display(_parcel.trackingNumber)} '
+            'for final-mile delivery?',
+        confirmLabel: 'Assign Rider',
+      );
+
+      if (!mounted || !confirmed) return;
+
+      if (!_canAssignFinalMileRider) return;
+
+      await _assignFinalMileRider(selected);
+    } on TimeoutException {
+      if (!mounted) return;
 
       setState(() {
         _isLoadingRiders = false;
       });
 
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: LogisticsColors.danger,
-            content: Text(
-              'Unable to load available riders. '
-              'Please try again.',
-            ),
-          ),
-        );
+      _showMessage('Rider lookup timed out. Please retry.');
+    } catch (error) {
+      debugPrint('Available riders error: $error');
+
+      if (!mounted) return;
+
+      setState(() {
+        _isLoadingRiders = false;
+      });
+
+      _showMessage('Unable to retrieve eligible riders.');
     }
   }
 
   List<Map<String, dynamic>> _extractAvailableRiders(
-    Map<String, dynamic> result,
+    Map<String, dynamic> response,
   ) {
-    dynamic raw = result['riders'] ?? result['data'];
+    dynamic raw = response['riders'] ?? response['data'];
 
     if (raw is Map) {
       raw =
@@ -890,145 +944,158 @@ class _ParcelInformationState extends State<ParcelInformation> {
           raw['data'];
     }
 
-    if (raw is! List) {
-      return <Map<String, dynamic>>[];
-    }
+    if (raw is! List) return [];
 
     return raw
         .whereType<Map>()
-        .map((Map item) => Map<String, dynamic>.from(item))
-        .where((Map<String, dynamic> rider) {
-          return _riderId(rider) > 0;
-        })
+        .map((Map rider) => Map<String, dynamic>.from(rider))
+        .where((Map<String, dynamic> rider) => _riderId(rider) > 0)
         .toList();
   }
 
-  Future<void> _showRiderPicker(List<Map<String, dynamic>> riders) async {
-    int? selectedRiderId;
+  Future<Map<String, dynamic>?> _showRiderPicker(
+    List<Map<String, dynamic>> riders,
+  ) {
+    int? selectedId;
 
-    await showModalBottomSheet<void>(
+    return showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (BuildContext sheetContext) {
         return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setSheetState) {
-            return Container(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(context).size.height * 0.82,
-              ),
-              decoration: const BoxDecoration(
-                color: LogisticsColors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-              ),
-              child: SafeArea(
-                top: false,
+          builder: (BuildContext context, StateSetter updateSheet) {
+            return SafeArea(
+              top: false,
+              child: Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * 0.80,
+                ),
+                decoration: const BoxDecoration(
+                  color: LogisticsColors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const SizedBox(height: 10),
-                    Container(
-                      height: 4,
-                      width: 44,
-                      decoration: BoxDecoration(
-                        color: LogisticsColors.border,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
+                    const SizedBox(height: 16),
                     const Padding(
-                      padding: EdgeInsets.fromLTRB(18, 16, 18, 4),
+                      padding: EdgeInsets.symmetric(horizontal: 18),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          'Available Riders',
+                          'Available Final-Mile Riders',
                           style: LogisticsStyle.sectionTitle,
                         ),
                       ),
                     ),
+                    const SizedBox(height: 7),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          '${riders.length} eligible rider'
-                          '${riders.length == 1 ? '' : 's'} '
-                          'for final-mile delivery',
+                          '${riders.length} eligible riders',
                           style: LogisticsStyle.small,
                         ),
                       ),
                     ),
+                    const SizedBox(height: 12),
                     const Divider(height: 1),
                     Flexible(
                       child: ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                        padding: const EdgeInsets.all(16),
                         itemCount: riders.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
+                        separatorBuilder: (_, _) => const SizedBox(height: 9),
                         itemBuilder: (BuildContext context, int index) {
                           final Map<String, dynamic> rider = riders[index];
 
                           final int riderId = _riderId(rider);
 
-                          final bool selected = selectedRiderId == riderId;
+                          final bool selected = selectedId == riderId;
 
-                          return _riderSelectionCard(
-                            rider: rider,
-                            selected: selected,
-                            onTap: () {
-                              setSheetState(() {
-                                selectedRiderId = riderId;
-                              });
-                            },
+                          return Material(
+                            color: selected
+                                ? LogisticsColors.lightPurple
+                                : LogisticsColors.background,
+                            borderRadius: BorderRadius.circular(13),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(13),
+                              onTap: () {
+                                updateSheet(() {
+                                  selectedId = riderId;
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(13),
+                                  border: Border.all(
+                                    color: selected
+                                        ? LogisticsColors.primary
+                                        : LogisticsColors.border,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      selected
+                                          ? Icons.check_circle
+                                          : Icons.person_outline,
+                                      color: LogisticsColors.primary,
+                                    ),
+                                    const SizedBox(width: 11),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            _riderName(rider),
+                                            style: LogisticsStyle.cardTitle,
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            _riderSummary(rider),
+                                            style: LogisticsStyle.small,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                           );
                         },
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
                       child: Row(
                         children: [
                           Expanded(
                             child: OutlinedButton(
-                              onPressed: _isAssigningRider
-                                  ? null
-                                  : () {
-                                      Navigator.pop(sheetContext);
-                                    },
+                              onPressed: () => Navigator.pop(sheetContext),
                               child: const Text('Cancel'),
                             ),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
                             flex: 2,
-                            child: ElevatedButton.icon(
-                              onPressed:
-                                  selectedRiderId == null || _isAssigningRider
-                                  ? null
-                                  : () async {
-                                      final Map<String, dynamic> selected =
-                                          riders.firstWhere(
-                                            (Map<String, dynamic> rider) =>
-                                                _riderId(rider) ==
-                                                selectedRiderId,
-                                          );
-
-                                      final bool? confirmed =
-                                          await _confirmRiderAssignment(
-                                            selected,
-                                          );
-
-                                      if (confirmed != true || !mounted) {
-                                        return;
-                                      }
-
-                                      if (sheetContext.mounted) {
-                                        Navigator.pop(sheetContext);
-                                      }
-
-                                      await _assignFinalMileRider(selected);
-                                    },
-                              icon: const Icon(Icons.delivery_dining_rounded),
-                              label: const Text('Assign Rider'),
+                            child: ElevatedButton(
                               style: LogisticsStyle.primaryButton,
+                              onPressed: selectedId == null
+                                  ? null
+                                  : () {
+                                      final selected = riders.firstWhere(
+                                        (rider) =>
+                                            _riderId(rider) == selectedId,
+                                      );
+
+                                      Navigator.pop(sheetContext, selected);
+                                    },
+                              child: const Text('Select Rider'),
                             ),
                           ),
                         ],
@@ -1044,264 +1111,6 @@ class _ParcelInformationState extends State<ParcelInformation> {
     );
   }
 
-  Widget _riderSelectionCard({
-    required Map<String, dynamic> rider,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    final String name = _riderName(rider);
-
-    final String availability = _riderAvailability(rider);
-
-    final String distance = _riderDistance(rider);
-
-    final int currentLoad =
-        int.tryParse(rider['current_load']?.toString() ?? '') ?? 0;
-
-    final int maxCapacity =
-        int.tryParse(rider['max_capacity']?.toString() ?? '') ?? 0;
-
-    final String hubName = _display(
-      rider['hub_name'] ??
-          (rider['hub'] is Map ? (rider['hub'] as Map)['name'] : null),
-      fallback: _parcel.destinationHubName.trim().isNotEmpty
-          ? _parcel.destinationHubName
-          : 'Destination hub',
-    );
-
-    final bool online =
-        availability == 'online' ||
-        availability == 'available' ||
-        availability == 'active';
-
-    return Material(
-      color: selected
-          ? LogisticsColors.lightPurple
-          : LogisticsColors.background,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: selected
-                  ? LogisticsColors.primary
-                  : LogisticsColors.border,
-              width: selected ? 1.5 : 1,
-            ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                height: 42,
-                width: 42,
-                decoration: BoxDecoration(
-                  color: online
-                      ? LogisticsColors.lightGreen
-                      : LogisticsColors.lightPurple,
-                  shape: BoxShape.circle,
-                ),
-                alignment: Alignment.center,
-                child: Icon(
-                  Icons.person_rounded,
-                  color: online
-                      ? LogisticsColors.success
-                      : LogisticsColors.primary,
-                ),
-              ),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(name, style: LogisticsStyle.cardTitle),
-                        ),
-                        if (selected)
-                          const Icon(
-                            Icons.check_circle_rounded,
-                            color: LogisticsColors.primary,
-                            size: 20,
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Container(
-                          height: 8,
-                          width: 8,
-                          decoration: BoxDecoration(
-                            color: online
-                                ? LogisticsColors.success
-                                : LogisticsColors.textLight,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        Text(
-                          _formatStatus(availability),
-                          style: LogisticsStyle.small,
-                        ),
-                        if (distance.isNotEmpty)
-                          Text('• $distance away', style: LogisticsStyle.small),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      maxCapacity > 0
-                          ? 'Load: $currentLoad / $maxCapacity'
-                          : 'Load: $currentLoad',
-                      style: LogisticsStyle.small,
-                    ),
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.location_city_outlined,
-                          size: 15,
-                          color: LogisticsColors.success,
-                        ),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            '$hubName ✓',
-                            style: LogisticsStyle.small,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<bool?> _confirmRiderAssignment(Map<String, dynamic> rider) {
-    final String name = _riderName(rider);
-
-    return showDialog<bool>(
-      context: context,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          title: const Text('Assign Final-Mile Rider'),
-          content: Text(
-            'Assign $name to parcel '
-            '${_display(_parcel.trackingNumber)} '
-            'for final-mile delivery?',
-            style: LogisticsStyle.small,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, false);
-              },
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, true);
-              },
-              style: LogisticsStyle.primaryButton,
-              child: const Text('Confirm'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _assignFinalMileRider(Map<String, dynamic> rider) async {
-    if (_isAssigningRider) {
-      return;
-    }
-
-    final int riderId = _riderId(rider);
-
-    if (riderId <= 0) {
-      return;
-    }
-
-    setState(() {
-      _isAssigningRider = true;
-    });
-
-    try {
-      final Map<String, dynamic> result =
-          await ApiService.assignLogisticsFinalMileRider(
-            shipmentId: _parcel.id,
-            riderId: riderId,
-          );
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isAssigningRider = false;
-      });
-
-      final String message = result['message']?.toString().trim() ?? '';
-
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: result['success'] == true
-                ? LogisticsColors.success
-                : LogisticsColors.danger,
-            content: Text(
-              message.isNotEmpty
-                  ? message
-                  : result['success'] == true
-                  ? '${_riderName(rider)} assigned successfully.'
-                  : 'Unable to assign rider.',
-            ),
-          ),
-        );
-
-      if (result['success'] == true) {
-        await _loadDetails(showLoading: false);
-      }
-    } catch (error) {
-      debugPrint('Assign final-mile rider error: $error');
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isAssigningRider = false;
-      });
-
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: LogisticsColors.danger,
-            content: Text(
-              'Unable to assign rider. '
-              'Please try again.',
-            ),
-          ),
-        );
-    }
-  }
-
   int _riderId(Map<String, dynamic> rider) {
     return int.tryParse(
           (rider['id'] ?? rider['rider_id'] ?? rider['user_id'])?.toString() ??
@@ -1311,72 +1120,125 @@ class _ParcelInformationState extends State<ParcelInformation> {
   }
 
   String _riderName(Map<String, dynamic> rider) {
-    final dynamic user = rider['user'];
+    final Map<String, dynamic> user = _asMap(rider['user']);
 
     final String direct = _display(
-      rider['name'] ?? rider['full_name'] ?? rider['rider_name'],
+      rider['name'] ??
+          rider['full_name'] ??
+          rider['rider_name'] ??
+          user['name'],
       fallback: '',
     );
 
-    if (direct.isNotEmpty) {
-      return direct;
+    if (direct.isNotEmpty) return direct;
+
+    final String first = _display(
+      rider['first_name'] ?? user['first_name'],
+      fallback: '',
+    );
+
+    final String last = _display(
+      rider['last_name'] ?? user['last_name'],
+      fallback: '',
+    );
+
+    final String fullName = '$first $last'.trim();
+
+    return fullName.isNotEmpty ? fullName : 'Rider #${_riderId(rider)}';
+  }
+
+  String _riderSummary(Map<String, dynamic> rider) {
+    final String availability = _formatStatus(
+      _display(
+        rider['availability_status'] ?? rider['status'],
+        fallback: 'Unknown',
+      ),
+    );
+
+    final String load = _display(rider['current_load'], fallback: '');
+
+    final String capacity = _display(rider['max_capacity'], fallback: '');
+
+    if (load.isNotEmpty && capacity.isNotEmpty) {
+      return '$availability • Load $load / $capacity';
     }
 
-    if (user is Map) {
-      final String userName = _display(
-        user['name'] ?? user['full_name'],
-        fallback: '',
+    return availability;
+  }
+
+  Future<void> _assignFinalMileRider(Map<String, dynamic> rider) async {
+    if (!_canAssignFinalMileRider) return;
+
+    final int riderId = _riderId(rider);
+
+    if (riderId <= 0) return;
+
+    setState(() {
+      _isAssigningRider = true;
+      _isVerified = false;
+    });
+
+    try {
+      final Map<String, dynamic> result =
+          await ApiService.assignLogisticsFinalMileRider(
+            shipmentId: _parcel.id,
+            riderId: riderId,
+          ).timeout(_requestTimeout);
+
+      if (!mounted) return;
+
+      setState(() {
+        _isAssigningRider = false;
+      });
+
+      final bool success = result['success'] == true;
+
+      _showMessage(
+        _responseMessage(
+          result,
+          success
+              ? '${_riderName(rider)} assigned successfully.'
+              : 'Unable to assign rider.',
+        ),
+        success: success,
       );
 
-      if (userName.isNotEmpty) {
-        return userName;
-      }
+      await _loadDetails(showLoading: false);
+    } on TimeoutException {
+      if (!mounted) return;
+
+      setState(() {
+        _isAssigningRider = false;
+      });
+
+      _showMessage(
+        'Assignment request timed out. '
+        'Refresh before attempting again.',
+      );
+
+      await _loadDetails(showLoading: false);
+    } catch (error) {
+      debugPrint('Final-mile assignment error: $error');
+
+      if (!mounted) return;
+
+      setState(() {
+        _isAssigningRider = false;
+      });
+
+      _showMessage('Unable to confirm rider assignment.');
+
+      await _loadDetails(showLoading: false);
     }
-
-    final String firstName = _display(
-      rider['first_name'] ?? (user is Map ? user['first_name'] : null),
-      fallback: '',
-    );
-
-    final String lastName = _display(
-      rider['last_name'] ?? (user is Map ? user['last_name'] : null),
-      fallback: '',
-    );
-
-    final String combined = '$firstName $lastName'.trim();
-
-    return combined.isNotEmpty ? combined : 'Rider #${_riderId(rider)}';
-  }
-
-  String _riderAvailability(Map<String, dynamic> rider) {
-    return _display(
-      rider['availability_status'] ?? rider['status'] ?? rider['online_status'],
-      fallback: 'available',
-    ).toLowerCase();
-  }
-
-  String _riderDistance(Map<String, dynamic> rider) {
-    final dynamic rawDistance =
-        rider['distance_km'] ??
-        rider['distance'] ??
-        rider['estimated_distance_km'];
-
-    final double? value = double.tryParse(rawDistance?.toString() ?? '');
-
-    if (value == null) {
-      return '';
-    }
-
-    return '${value.toStringAsFixed(1)} km';
   }
 
   // ============================================================
-  // BUILD
+  // MAIN UI
   // ============================================================
 
   @override
   Widget build(BuildContext context) {
-    final double width = MediaQuery.of(context).size.width;
+    final double width = MediaQuery.sizeOf(context).width;
 
     final double padding = width < 380 ? 14 : 18;
 
@@ -1385,96 +1247,75 @@ class _ParcelInformationState extends State<ParcelInformation> {
       appBar: AppBar(
         backgroundColor: LogisticsColors.white,
         surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: LogisticsColors.textDark),
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Parcel Information', style: LogisticsStyle.title),
-            SizedBox(height: 2),
-            Text(
-              'Sorting and hub routing details',
-              style: LogisticsStyle.small,
-            ),
-          ],
-        ),
+        title: const Text('Parcel Information', style: LogisticsStyle.title),
         actions: [
-          if (_isRefreshing)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Center(
-                child: SizedBox(
-                  height: 19,
-                  width: 19,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: LogisticsColors.primary,
-                  ),
-                ),
-              ),
-            )
-          else
-            IconButton(
-              tooltip: 'Refresh parcel',
-              onPressed: _isLoading
-                  ? null
-                  : () {
-                      _loadDetails(showLoading: false);
-                    },
-              icon: const Icon(
-                Icons.refresh_rounded,
-                color: LogisticsColors.primary,
-              ),
+          IconButton(
+            tooltip: 'Refresh parcel',
+            onPressed: _isBusy ? null : () => _loadDetails(showLoading: false),
+            icon: const Icon(
+              Icons.refresh_rounded,
+              color: LogisticsColors.primary,
             ),
+          ),
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () {
-          return _loadDetails(showLoading: false);
-        },
+        color: LogisticsColors.primary,
+        onRefresh: () => _loadDetails(showLoading: false),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
-          padding: EdgeInsets.fromLTRB(padding, 14, padding, 30),
+          padding: EdgeInsets.fromLTRB(padding, 16, padding, 30),
           children: [
-            if (_isLoading)
-              const LinearProgressIndicator(color: LogisticsColors.primary),
+            if (_isLoading && !_hasLoaded)
+              const AppLoadingState(
+                message: 'Loading parcel information...',
+                color: LogisticsColors.primary,
+              )
+            else if (!_hasLoaded)
+              AppErrorState(
+                title: 'Unable to Load Parcel',
+                message: _errorMessage ?? 'Please refresh to try again.',
+                color: LogisticsColors.primary,
+                onRetry: _loadDetails,
+              )
+            else ...[
+              if (_isRefreshing) ...[
+                const LinearProgressIndicator(color: LogisticsColors.primary),
+                const SizedBox(height: 14),
+              ],
 
-            if (_errorMessage != null) ...[
-              const SizedBox(height: 12),
-              _errorCard(),
+              if (_errorMessage != null) _notice(_errorMessage!),
+
+              if (!_isVerified) ...[
+                _notice(
+                  'Actions are disabled until the '
+                  'latest data is verified with Laravel.',
+                ),
+                const SizedBox(height: 14),
+              ],
+
+              _statusCard(),
+              const SizedBox(height: 16),
+
+              _parcelDetailsCard(),
+              const SizedBox(height: 16),
+
+              _hubCard(),
+              const SizedBox(height: 16),
+
+              _sortingCard(),
+              const SizedBox(height: 16),
+
+              _linehaulCard(),
+              const SizedBox(height: 16),
+
+              _timelineCard(),
+              const SizedBox(height: 16),
+
+              _processingCard(),
             ],
-
-            const SizedBox(height: 12),
-
-            _statusCard(),
-
-            const SizedBox(height: 16),
-
-            _parcelDetailsCard(),
-
-            const SizedBox(height: 16),
-
-            _hubRoutingCard(),
-
-            const SizedBox(height: 16),
-
-            _linehaulCard(),
-
-            const SizedBox(height: 16),
-
-            _sortingInformationCard(),
-
-            const SizedBox(height: 16),
-
-            _timelineCard(),
-
-            const SizedBox(height: 16),
-
-            _processingCard(),
-
-            const SizedBox(height: 20),
           ],
         ),
       ),
@@ -1482,68 +1323,32 @@ class _ParcelInformationState extends State<ParcelInformation> {
   }
 
   // ============================================================
-  // STATUS CARD
+  // STATUS
   // ============================================================
 
   Widget _statusCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: LogisticsStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Current Status',
-                  style: LogisticsStyle.sectionTitle,
-                ),
-              ),
-              StatusChip(status: _display(_parcel.status, fallback: 'unknown')),
-            ],
-          ),
-
-          if (_parcel.routingStatus.trim().isNotEmpty) ...[
-            const SizedBox(height: 14),
-            _compactStatusRow(
-              icon: Icons.route_outlined,
-              label: 'Routing Status',
-              value: _formatStatus(_parcel.routingStatus),
-            ),
-          ],
-
-          if (_parcel.linehaulStatus.trim().isNotEmpty) ...[
-            const SizedBox(height: 9),
-            _compactStatusRow(
-              icon: Icons.multiple_stop_rounded,
-              label: 'Line-Haul Status',
-              value: _formatStatus(_parcel.linehaulStatus),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _compactStatusRow({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Row(
+    return _card(
+      title: 'Current Status',
+      icon: Icons.inventory_2_outlined,
       children: [
-        Icon(icon, size: 17, color: LogisticsColors.primary),
-        const SizedBox(width: 8),
-        Expanded(child: Text(label, style: LogisticsStyle.small)),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-            style: LogisticsStyle.cardTitle,
-          ),
+        StatusChip(status: _parcel.status),
+        const SizedBox(height: 12),
+        _info(
+          'Sorting Status',
+          _formatStatus(_sortingStatus),
+          Icons.sort_rounded,
         ),
+        _info(
+          'Routing Status',
+          _formatStatus(_parcel.routingStatus),
+          Icons.route_outlined,
+        ),
+        if (_parcel.linehaulStatus.trim().isNotEmpty)
+          _info(
+            'Line-Haul Status',
+            _formatStatus(_parcel.linehaulStatus),
+            Icons.multiple_stop_rounded,
+          ),
       ],
     );
   }
@@ -1553,51 +1358,59 @@ class _ParcelInformationState extends State<ParcelInformation> {
   // ============================================================
 
   Widget _parcelDetailsCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: LogisticsStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Parcel Details', style: LogisticsStyle.sectionTitle),
-
-          const SizedBox(height: 14),
-
-          _info('Tracking Number', _parcel.trackingNumber),
-
-          _info('Order Number', _details['order_number']),
-
-          _info('Customer', _parcel.customerName),
-
-          _info('Phone', _parcel.customerPhone),
-
-          _info('Delivery Address', _parcel.deliveryAddress),
-
-          _info('Pickup Address', _parcel.pickupAddress),
-
-          _info('Seller', _details['seller_name']),
-
+    return _card(
+      title: 'Parcel Details',
+      icon: Icons.receipt_long_outlined,
+      children: [
+        _info(
+          'Tracking Number',
+          _parcel.trackingNumber,
+          Icons.qr_code_2_rounded,
+        ),
+        _info('Order Number', _details['order_number'], Icons.receipt_outlined),
+        _info('Seller', _details['seller_name'], Icons.storefront_outlined),
+        if (_parcel.pickupAddress.trim().isNotEmpty)
           _info(
-            'Final-Mile Rider',
-            _parcel.riderName,
-            fallback: 'Not assigned',
+            'Seller Pickup Address',
+            AddressFormatter.display(
+              _parcel.pickupAddress,
+              fallback: 'Address unavailable',
+            ),
+            Icons.store_outlined,
           ),
-
-          if (_parcel.parcelWeightKg > 0)
-            _info(
-              'Parcel Weight',
-              '${_parcel.parcelWeightKg.toStringAsFixed(2)} kg',
-            ),
-
-          if (_parcel.estimatedDistanceKm > 0)
-            _info(
-              'Est. Distance',
-              '${_parcel.estimatedDistanceKm.toStringAsFixed(1)} km',
-            ),
-
-          _info('Order Date', _formatDate(_parcel.orderDate)),
-        ],
-      ),
+        AppAddressCard(
+          title: 'Delivery Address',
+          recipientName: _parcel.customerName,
+          phoneNumber: _parcel.customerPhone,
+          address: _parcel.deliveryAddress,
+          accentColor: LogisticsColors.primary,
+          compact: true,
+        ),
+        const SizedBox(height: 10),
+        _info(
+          'Final-Mile Rider',
+          _parcel.riderName,
+          Icons.delivery_dining_outlined,
+          fallback: 'Not assigned',
+        ),
+        _info(
+          'Order Date',
+          _date(_parcel.orderDate),
+          Icons.calendar_today_outlined,
+        ),
+        if (_parcel.parcelWeightKg > 0)
+          _info(
+            'Parcel Weight',
+            '${_parcel.parcelWeightKg.toStringAsFixed(2)} kg',
+            Icons.scale_outlined,
+          ),
+        if (_parcel.estimatedDistanceKm > 0)
+          _info(
+            'Estimated Distance',
+            '${_parcel.estimatedDistanceKm.toStringAsFixed(1)} km',
+            Icons.route_outlined,
+          ),
+      ],
     );
   }
 
@@ -1605,200 +1418,30 @@ class _ParcelInformationState extends State<ParcelInformation> {
   // HUB ROUTING
   // ============================================================
 
-  Widget _hubRoutingCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: LogisticsStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Hub Routing', style: LogisticsStyle.sectionTitle),
-
-          const SizedBox(height: 14),
-
-          _routeHubTile(
-            icon: Icons.trip_origin_rounded,
-            title: 'Origin Hub',
-            value: _display(_parcel.originHubName, fallback: 'Not assigned'),
-          ),
-
-          _routeConnector(),
-
-          _routeHubTile(
-            icon: Icons.multiple_stop_rounded,
-            title: 'Current Hub',
-            value: _display(_parcel.currentHubName, fallback: 'Not available'),
-          ),
-
-          _routeConnector(),
-
-          _routeHubTile(
-            icon: Icons.location_city_outlined,
-            title: 'Destination Hub',
-            value: _display(
-              _parcel.destinationHubName,
-              fallback: 'Not assigned',
-            ),
-          ),
-
-          const SizedBox(height: 14),
-
-          _info(
-            'Routing Status',
-            _formatStatus(_parcel.routingStatus),
-            fallback: 'Not available',
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _routeHubTile({
-    required IconData icon,
-    required String title,
-    required String value,
-  }) {
-    return Row(
+  Widget _hubCard() {
+    return _card(
+      title: 'Hub Routing',
+      icon: Icons.hub_outlined,
       children: [
-        Container(
-          height: 38,
-          width: 38,
-          decoration: BoxDecoration(
-            color: LogisticsColors.lightPurple,
-            borderRadius: BorderRadius.circular(11),
-          ),
-          alignment: Alignment.center,
-          child: Icon(icon, color: LogisticsColors.primary, size: 19),
+        _info(
+          'Origin Hub',
+          _parcel.originHubName,
+          Icons.trip_origin_rounded,
+          fallback: 'Not assigned',
         ),
-
-        const SizedBox(width: 11),
-
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: LogisticsStyle.small),
-              const SizedBox(height: 2),
-              Text(value, style: LogisticsStyle.cardTitle),
-            ],
-          ),
+        _info('Current Hub', _parcel.currentHubName, Icons.warehouse_outlined),
+        _info(
+          'Destination Hub',
+          _parcel.destinationHubName,
+          Icons.location_city_outlined,
+          fallback: 'Not assigned',
+        ),
+        _info(
+          'Routing Status',
+          _formatStatus(_parcel.routingStatus),
+          Icons.route_outlined,
         ),
       ],
-    );
-  }
-
-  Widget _routeConnector() {
-    return Container(
-      height: 22,
-      width: 2,
-      margin: const EdgeInsets.only(left: 18),
-      color: LogisticsColors.border,
-    );
-  }
-
-  // ============================================================
-  // LINE HAUL
-  // ============================================================
-
-  Widget _linehaulCard() {
-    final bool hasLinehaulData =
-        _requiresLinehaul ||
-        _parcel.linehaulStatus.trim().isNotEmpty ||
-        _parcel.linehaulRiderName.trim().isNotEmpty ||
-        _parcel.requiredVehicleType.trim().isNotEmpty;
-
-    if (!hasLinehaulData) {
-      return Container(
-        padding: const EdgeInsets.all(18),
-        decoration: LogisticsStyle.card,
-        child: const Row(
-          children: [
-            Icon(Icons.local_shipping_outlined, color: LogisticsColors.success),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'No active inter-hub line-haul '
-                'transfer is shown for this parcel.',
-                style: LogisticsStyle.small,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: LogisticsStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.multiple_stop_rounded, color: LogisticsColors.primary),
-              SizedBox(width: 9),
-              Text('Line-Haul Transfer', style: LogisticsStyle.sectionTitle),
-            ],
-          ),
-
-          const SizedBox(height: 14),
-
-          _info('Status', _formatStatus(_parcel.linehaulStatus)),
-
-          _info(
-            'Assigned Rider',
-            _parcel.linehaulRiderName,
-            fallback: 'Not assigned',
-          ),
-
-          _info(
-            'Required Vehicle',
-            _formatStatus(_parcel.requiredVehicleType),
-            fallback: 'Not specified',
-          ),
-
-          if (_parcel.parcelWeightKg > 0)
-            _info('Weight', '${_parcel.parcelWeightKg.toStringAsFixed(2)} kg'),
-
-          if (_parcel.estimatedDistanceKm > 0)
-            _info(
-              'Distance',
-              '${_parcel.estimatedDistanceKm.toStringAsFixed(1)} km',
-            ),
-
-          const SizedBox(height: 4),
-
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: LogisticsColors.background,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: LogisticsColors.border),
-            ),
-            child: const Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.info_outline_rounded,
-                  size: 18,
-                  color: LogisticsColors.primary,
-                ),
-                SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    'Line-haul assignment and transfer '
-                    'state are controlled by the backend '
-                    'routing workflow. No unsupported '
-                    'manual transfer action is performed here.',
-                    style: LogisticsStyle.small,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1806,161 +1449,161 @@ class _ParcelInformationState extends State<ParcelInformation> {
   // SORTING INFORMATION
   // ============================================================
 
-  Widget _sortingInformationCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: LogisticsStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Sorting Information', style: LogisticsStyle.sectionTitle),
-
-          const SizedBox(height: 14),
-
-          _info('Sorting Status', _formatStatus(_sortingStatus)),
-
-          _info('Delivery Zone', _details['delivery_zone']),
-
-          _info(
-            'Delivery Type',
-            _formatStatus(_details['delivery_type']?.toString() ?? ''),
-          ),
-
-          _info('Sorting Area', _details['sorting_area']),
-
-          _info('Rack Number', _details['rack_number']),
-
-          _info('Received', _parcel.receivedBySortingCenter ? 'Yes' : 'No'),
-
-          _info(
-            'Received At',
-            _formatDate(
-              _details['received_at']?.toString() ??
-                  _parcel.originHubReceivedAt,
-            ),
-          ),
-
-          _info(
-            'Scanned At',
-            _formatDate(_details['scanned_at']?.toString() ?? ''),
-          ),
-
-          _info(
-            'Sorted At',
-            _formatDate(_details['sorted_at']?.toString() ?? ''),
-          ),
-
-          _info('Staged At', _formatDate(_parcel.stagedAt)),
-        ],
-      ),
+  Widget _sortingCard() {
+    return _card(
+      title: 'Sorting Information',
+      icon: Icons.warehouse_outlined,
+      children: [
+        _info(
+          'Sorting Status',
+          _formatStatus(_sortingStatus),
+          Icons.sort_rounded,
+        ),
+        _info(
+          'Delivery Zone',
+          _details['delivery_zone'],
+          Icons.location_on_outlined,
+        ),
+        _info(
+          'Delivery Type',
+          _details['delivery_type'] == null
+              ? null
+              : _formatStatus(_details['delivery_type'].toString()),
+          Icons.local_shipping_outlined,
+        ),
+        _info(
+          'Sorting Area',
+          _details['sorting_area'],
+          Icons.warehouse_outlined,
+        ),
+        _info(
+          'Rack Number',
+          _details['rack_number'],
+          Icons.inventory_2_outlined,
+        ),
+        _info(
+          'Received by Logistics',
+          _parcel.receivedBySortingCenter ? 'Yes' : 'No',
+          Icons.move_to_inbox_rounded,
+        ),
+        _info(
+          'Received At',
+          _date(_details['received_at'] ?? _parcel.originHubReceivedAt),
+          Icons.schedule_outlined,
+        ),
+        _info(
+          'Scanned At',
+          _date(_details['scanned_at']),
+          Icons.qr_code_scanner_rounded,
+        ),
+        _info('Sorted At', _date(_details['sorted_at']), Icons.sort_rounded),
+        _info('Staged At', _date(_parcel.stagedAt), Icons.inventory_2_outlined),
+      ],
     );
   }
 
   // ============================================================
-  // TIMELINE
+  // LINE-HAUL INFORMATION
+  // ============================================================
+
+  Widget _linehaulCard() {
+    final bool hasData =
+        _requiresLinehaul ||
+        _parcel.linehaulStatus.trim().isNotEmpty ||
+        _parcel.linehaulRiderName.trim().isNotEmpty;
+
+    return _card(
+      title: 'Line-Haul Transfer',
+      icon: Icons.multiple_stop_rounded,
+      children: [
+        if (!hasData)
+          const Text(
+            'No inter-hub transfer is recorded.',
+            style: LogisticsStyle.small,
+          )
+        else ...[
+          _info(
+            'Line-Haul Status',
+            _formatStatus(_parcel.linehaulStatus),
+            Icons.compare_arrows_rounded,
+          ),
+          _info(
+            'Assigned Line-Haul Rider',
+            _parcel.linehaulRiderName,
+            Icons.person_outline_rounded,
+            fallback: 'Not assigned',
+          ),
+          _info(
+            'Required Vehicle',
+            _parcel.requiredVehicleType,
+            Icons.local_shipping_outlined,
+          ),
+          _notice(
+            'Inter-hub dispatch and transfers follow '
+            'the Laravel routing workflow.',
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ============================================================
+  // ROUTING TIMELINE
   // ============================================================
 
   Widget _timelineCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: LogisticsStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Routing Timeline', style: LogisticsStyle.sectionTitle),
-
-          const SizedBox(height: 14),
-
-          _timelineItem(title: 'Seller Pickup', value: _parcel.pickedUpAt),
-
-          _timelineItem(
-            title: 'Origin Hub Received',
-            value: _parcel.originHubReceivedAt,
-          ),
-
-          _timelineItem(
-            title: 'Line-Haul Assigned',
-            value: _parcel.linehaulAssignedAt,
-          ),
-
-          _timelineItem(
-            title: 'Transfer Dispatched',
-            value: _parcel.transferDispatchedAt,
-          ),
-
-          _timelineItem(
-            title: 'Line-Haul Started',
-            value: _parcel.linehaulStartedAt,
-          ),
-
-          _timelineItem(
-            title: 'Line-Haul Completed',
-            value: _parcel.linehaulCompletedAt,
-          ),
-
-          _timelineItem(
-            title: 'Destination Hub Received',
-            value: _parcel.destinationHubReceivedAt,
-            isLast: true,
-          ),
-        ],
-      ),
+    return _card(
+      title: 'Routing Timeline',
+      icon: Icons.timeline_outlined,
+      children: [
+        _timelineItem('Seller Picked Up', _parcel.pickedUpAt),
+        _timelineItem('Origin Hub Received', _parcel.originHubReceivedAt),
+        _timelineItem('Line-Haul Assigned', _parcel.linehaulAssignedAt),
+        _timelineItem('Transfer Dispatched', _parcel.transferDispatchedAt),
+        _timelineItem('Line-Haul Started', _parcel.linehaulStartedAt),
+        _timelineItem('Line-Haul Completed', _parcel.linehaulCompletedAt),
+        _timelineItem(
+          'Destination Hub Received',
+          _parcel.destinationHubReceivedAt,
+          last: true,
+        ),
+      ],
     );
   }
 
-  Widget _timelineItem({
-    required String title,
-    required String value,
-    bool isLast = false,
-  }) {
+  Widget _timelineItem(String title, String rawDate, {bool last = false}) {
     final bool completed =
-        value.trim().isNotEmpty && value.trim().toLowerCase() != 'null';
+        rawDate.trim().isNotEmpty && rawDate.trim().toLowerCase() != 'null';
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Column(
           children: [
-            Container(
-              height: 22,
-              width: 22,
-              decoration: BoxDecoration(
-                color: completed
-                    ? LogisticsColors.lightGreen
-                    : LogisticsColors.background,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: completed
-                      ? LogisticsColors.success
-                      : LogisticsColors.border,
-                ),
-              ),
-              child: Icon(
-                completed ? Icons.check_rounded : Icons.circle_outlined,
-                size: 13,
-                color: completed
-                    ? LogisticsColors.success
-                    : LogisticsColors.textLight,
-              ),
+            Icon(
+              completed
+                  ? Icons.check_circle_rounded
+                  : Icons.radio_button_unchecked_rounded,
+              color: completed
+                  ? LogisticsColors.success
+                  : LogisticsColors.textLight,
+              size: 22,
             ),
-
-            if (!isLast)
-              Container(height: 30, width: 2, color: LogisticsColors.border),
+            if (!last)
+              Container(height: 25, width: 2, color: LogisticsColors.border),
           ],
         ),
-
-        const SizedBox(width: 10),
-
+        const SizedBox(width: 12),
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.only(bottom: 13),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: LogisticsStyle.cardTitle),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
                 Text(
-                  completed ? _formatDate(value) : 'Pending',
+                  completed ? _date(rawDate) : 'Pending',
                   style: LogisticsStyle.small,
                 ),
               ],
@@ -1972,343 +1615,252 @@ class _ParcelInformationState extends State<ParcelInformation> {
   }
 
   // ============================================================
-  // ERROR CARD
-  // ============================================================
-
-  Widget _errorCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: LogisticsColors.danger.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: LogisticsColors.danger.withValues(alpha: 0.25),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(
-            Icons.error_outline_rounded,
-            color: LogisticsColors.danger,
-          ),
-
-          const SizedBox(width: 10),
-
-          Expanded(
-            child: Text(
-              _errorMessage ?? 'Unable to load parcel.',
-              style: LogisticsStyle.small,
-            ),
-          ),
-
-          IconButton(
-            tooltip: 'Retry',
-            onPressed: () {
-              _loadDetails();
-            },
-            icon: const Icon(
-              Icons.refresh_rounded,
-              color: LogisticsColors.primary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
-  // PROCESSING CARD
+  // PROCESSING / ASSIGNMENT ACTION
   // ============================================================
 
   Widget _processingCard() {
     if (_isFinished) {
-      return Container(
-        padding: const EdgeInsets.all(18),
-        decoration: LogisticsStyle.card,
-        child: const Row(
-          children: [
-            Icon(
-              Icons.check_circle_outline_rounded,
-              color: LogisticsColors.success,
-            ),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'No further sorting-center action '
-                'is required for this parcel.',
-                style: LogisticsStyle.small,
-              ),
-            ),
-          ],
-        ),
+      return _card(
+        title: 'Parcel Processing',
+        icon: Icons.check_circle_outline_rounded,
+        children: [
+          _notice(
+            'This parcel is finalized. '
+            'No additional sorting action is available.',
+          ),
+        ],
       );
     }
 
     if (_isStaged) {
-      return _stagedParcelCard();
+      return _stagedCard();
     }
 
-    String action;
-    String label;
-    IconData icon;
-    String description;
+    final String? action = _nextProcessAction;
 
-    switch (_sortingStatus) {
-      case 'received':
-        action = 'scan';
-        label = 'Scan & Classify Parcel';
-        icon = Icons.qr_code_scanner_rounded;
-        description =
-            'Parcel has been received. '
-            'Classify its delivery routing next.';
-        break;
+    if (action == null) {
+      final bool waitingForArrival =
+          !_hasArrivedAtSortingCenter &&
+          const <String>{
+            'pending',
+            'assigned',
+            'ready_for_pickup',
+            'at_sorting_center',
+          }.contains(_sortingStatus);
 
-      case 'scanned':
-        action = 'sort';
-        label = 'Sort Parcel';
-        icon = Icons.sort_rounded;
-        description =
-            'Parcel classification is complete. '
-            'Assign its sorting area and rack.';
-        break;
-
-      case 'sorted':
-        action = 'stage';
-        label = 'Stage Parcel';
-        icon = Icons.inventory_2_outlined;
-        description =
-            'Parcel has been sorted and can '
-            'now be staged for routing.';
-        break;
-
-      default:
-        action = 'receive';
-        label = 'Receive Parcel';
-        icon = Icons.move_to_inbox_rounded;
-        description =
-            'Confirm physical receipt of the '
-            'parcel at this sorting center.';
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: LogisticsStyle.card,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      return _card(
+        title: 'Parcel Processing',
+        icon: Icons.info_outline_rounded,
         children: [
-          const Text('Parcel Processing', style: LogisticsStyle.sectionTitle),
-
-          const SizedBox(height: 8),
-
-          Text(description, style: LogisticsStyle.small),
-
-          const SizedBox(height: 14),
-
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: _isProcessing
-                  ? null
-                  : () {
-                      _process(action);
-                    },
-              icon: _isProcessing
-                  ? const SizedBox(
-                      height: 18,
-                      width: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Icon(icon),
-              label: Text(_isProcessing ? 'Processing...' : label),
-              style: LogisticsStyle.primaryButton,
-            ),
+          _notice(
+            waitingForArrival
+                ? 'Waiting for the pickup rider to '
+                      'deliver this parcel to the sorting '
+                      'center. Logistics cannot receive '
+                      'it before the handoff.'
+                : 'No processing action is available '
+                      'for the current status. Refresh '
+                      'to check the latest information.',
           ),
         ],
-      ),
+      );
+    }
+
+    String description;
+    IconData icon;
+
+    switch (action) {
+      case 'receive':
+        description =
+            'Confirm physical handoff from the '
+            'seller pickup rider.';
+        icon = Icons.move_to_inbox_rounded;
+        break;
+      case 'scan':
+        description = 'Enter the parcel delivery zone and type.';
+        icon = Icons.qr_code_scanner_rounded;
+        break;
+      case 'sort':
+        description = 'Record the sorting area and rack.';
+        icon = Icons.sort_rounded;
+        break;
+      case 'stage':
+        description = 'Confirm that the parcel is fully sorted.';
+        icon = Icons.inventory_2_outlined;
+        break;
+      default:
+        description = 'Process parcel.';
+        icon = Icons.inventory_2_outlined;
+    }
+
+    return _card(
+      title: 'Parcel Processing',
+      icon: Icons.inventory_2_outlined,
+      children: [
+        Text(description, style: LogisticsStyle.small),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton.icon(
+            onPressed: _canProcess && _nextProcessAction == action
+                ? () => _process(action)
+                : null,
+            style: LogisticsStyle.primaryButton,
+            icon: Icon(icon),
+            label: Text(_processTitle(action)),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _stagedParcelCard() {
+  Widget _stagedCard() {
     String title;
-    String description;
+    String message;
     IconData icon;
 
     if (_requiresLinehaul) {
       title = 'Ready for Hub Transfer';
-
-      description = _parcel.isLinehaulAssigned
-          ? 'Parcel is staged and already has '
-                'a line-haul assignment. Follow the '
-                'server-managed hub transfer workflow.'
-          : 'Parcel is staged and requires an '
-                'inter-hub transfer before final-mile '
-                'delivery.';
-
+      message =
+          'This parcel requires inter-hub transfer '
+          'before final-mile delivery.';
       icon = Icons.multiple_stop_rounded;
+    } else if (_hasFinalMileRider) {
+      title = 'Final-Mile Rider Assigned';
+      message =
+          '${_display(_parcel.riderName, fallback: 'A rider')} '
+          'has been assigned for final delivery.';
+      icon = Icons.check_circle_outline_rounded;
     } else if (_parcel.isAtDestinationHub) {
-      if (_hasFinalMileRider) {
-        title = 'Final-Mile Rider Assigned';
-
-        description =
-            '${_display(_parcel.riderName, fallback: 'A rider')} '
-            'is assigned to this parcel for final-mile delivery.';
-      } else {
-        title = 'Ready for Final-Mile Assignment';
-
-        description =
-            'Parcel has reached its destination hub. '
-            'Choose an eligible online rider near the '
-            'delivery area for final-mile delivery.';
-      }
-
+      title = 'Ready for Final-Mile Assignment';
+      message =
+          'Select an eligible rider to deliver '
+          'the parcel to the buyer.';
       icon = Icons.delivery_dining_rounded;
     } else {
       title = 'Parcel Staged';
-
-      description =
-          'Parcel is fully sorted and staged. '
-          'The backend routing workflow will '
-          'determine its next assignment.';
-
+      message =
+          'Waiting for the next routing step '
+          'from the Laravel backend.';
       icon = Icons.inventory_2_outlined;
     }
 
+    return _card(
+      title: 'Parcel Processing',
+      icon: Icons.warehouse_outlined,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: LogisticsColors.success, size: 28),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: LogisticsStyle.cardTitle),
+                  const SizedBox(height: 5),
+                  Text(message, style: LogisticsStyle.small),
+                ],
+              ),
+            ),
+          ],
+        ),
+        if (_hasFinalMileRider) ...[
+          const SizedBox(height: 12),
+          _info(
+            'Assigned Rider',
+            _parcel.riderName,
+            Icons.person_outline_rounded,
+          ),
+        ],
+        if (!_requiresLinehaul &&
+            !_hasFinalMileRider &&
+            _parcel.isAtDestinationHub) ...[
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: _canAssignFinalMileRider ? _showAvailableRiders : null,
+              style: LogisticsStyle.primaryButton,
+              icon: const Icon(Icons.person_search_rounded),
+              label: const Text('Assign Final-Mile Rider'),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ============================================================
+  // REUSABLE UI
+  // ============================================================
+
+  Widget _card({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      width: double.infinity,
+      padding: const EdgeInsets.all(17),
       decoration: LogisticsStyle.card,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                height: 44,
-                width: 44,
-                decoration: BoxDecoration(
-                  color: LogisticsColors.lightGreen,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: LogisticsColors.success),
-              ),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: LogisticsStyle.cardTitle),
-                    const SizedBox(height: 4),
-                    Text(description, style: LogisticsStyle.small),
-                  ],
-                ),
-              ),
+              Icon(icon, color: LogisticsColors.primary, size: 22),
+              const SizedBox(width: 9),
+              Expanded(child: Text(title, style: LogisticsStyle.sectionTitle)),
             ],
           ),
-
-          if (_parcel.isAtDestinationHub && _hasFinalMileRider) ...[
-            const SizedBox(height: 14),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: LogisticsColors.background,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: LogisticsColors.border),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.person_pin_circle_outlined,
-                    color: LogisticsColors.primary,
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Assigned Rider',
-                          style: LogisticsStyle.small,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _display(
-                            _parcel.riderName,
-                            fallback: 'Assigned rider',
-                          ),
-                          style: LogisticsStyle.cardTitle,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          if (_canAssignFinalMileRider) ...[
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: _isLoadingRiders || _isAssigningRider
-                    ? null
-                    : _showAvailableRiders,
-                icon: _isLoadingRiders
-                    ? const SizedBox(
-                        height: 18,
-                        width: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.person_search_rounded),
-                label: Text(
-                  _isLoadingRiders
-                      ? 'Finding Riders...'
-                      : 'Assign Final-Mile Rider',
-                ),
-                style: LogisticsStyle.primaryButton,
-              ),
-            ),
-          ],
+          const SizedBox(height: 15),
+          ...children,
         ],
       ),
     );
   }
 
-  // ============================================================
-  // INFO ROW
-  // ============================================================
-
-  Widget _info(String label, dynamic value, {String fallback = '—'}) {
-    String displayValue;
-
-    if (value is String &&
-        (value.trim().isEmpty || value.trim().toLowerCase() == 'null')) {
-      displayValue = fallback;
-    } else {
-      displayValue = _display(value, fallback: fallback);
-    }
-
+  Widget _info(
+    String label,
+    dynamic value,
+    IconData icon, {
+    String fallback = '—',
+  }) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 11),
+      child: AppInfoRow(
+        label: label,
+        value: _display(value, fallback: fallback),
+        icon: icon,
+        iconColor: LogisticsColors.primary,
+        compact: true,
+      ),
+    );
+  }
+
+  Widget _notice(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: LogisticsColors.background,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: LogisticsColors.border),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 120, child: Text(label, style: LogisticsStyle.small)),
-
-          const SizedBox(width: 8),
-
-          Expanded(child: Text(displayValue, style: LogisticsStyle.cardTitle)),
+          const Icon(
+            Icons.info_outline_rounded,
+            color: LogisticsColors.primary,
+            size: 19,
+          ),
+          const SizedBox(width: 9),
+          Expanded(child: Text(message, style: LogisticsStyle.small)),
         ],
       ),
     );

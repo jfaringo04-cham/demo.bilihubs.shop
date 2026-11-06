@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../models/parcel_model.dart';
-import '../../sevices/api_services.dart';
+import '../../services/api_services.dart';
 import '../../styles/rider_style.dart';
+import '../../widgets/app_address_card.dart';
+import '../../widgets/app_info_row.dart';
+import '../../widgets/status_chip.dart';
 
 class RiderScanner extends StatefulWidget {
   final ParcelModel? scannedParcel;
@@ -15,23 +20,33 @@ class RiderScanner extends StatefulWidget {
   State<RiderScanner> createState() => _RiderScannerState();
 }
 
-class _RiderScannerState extends State<RiderScanner> {
+class _RiderScannerState extends State<RiderScanner>
+    with WidgetsBindingObserver {
+  static const Duration _requestTimeout = Duration(seconds: 30);
+
   late final MobileScannerController _scannerController;
 
-  String? _scannedCode;
-
   bool _hasScanned = false;
-  bool _isProcessingScan = false;
+  bool _isProcessing = false;
+  bool _isResetting = false;
+  bool _isCameraRunning = true;
+  bool _serverConfirmed = false;
+  bool _needsStatusCheck = false;
+
+  int _requestId = 0;
 
   String? _scanError;
   String? _scanMessage;
   String? _scanType;
+  String? _trackingNumber;
 
   ParcelModel? _foundParcel;
 
   @override
   void initState() {
     super.initState();
+
+    WidgetsBinding.instance.addObserver(this);
 
     _scannerController = MobileScannerController(
       facing: CameraFacing.back,
@@ -40,30 +55,584 @@ class _RiderScannerState extends State<RiderScanner> {
       formats: const <BarcodeFormat>[BarcodeFormat.qrCode],
       autoZoom: true,
     );
-
-    _foundParcel = widget.scannedParcel;
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _requestId++;
     _scannerController.dispose();
     super.dispose();
   }
 
   // ============================================================
-  // BUILD
+  // CAMERA LIFECYCLE
+  // ============================================================
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) return;
+
+    switch (state) {
+      case AppLifecycleState.resumed:
+        if (!_hasScanned && !_isProcessing && !_isResetting) {
+          _startCamera();
+        }
+        break;
+
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _stopCamera();
+        break;
+    }
+  }
+
+  Future<void> _stopCamera() async {
+    if (!_isCameraRunning) return;
+
+    _isCameraRunning = false;
+
+    try {
+      await _scannerController.stop();
+    } catch (error) {
+      debugPrint('Rider camera stop error: $error');
+    }
+  }
+
+  Future<void> _startCamera() async {
+    if (!mounted ||
+        _isCameraRunning ||
+        _hasScanned ||
+        _isProcessing ||
+        _isResetting) {
+      return;
+    }
+
+    _isCameraRunning = true;
+
+    try {
+      await _scannerController.start();
+    } catch (error) {
+      _isCameraRunning = false;
+      debugPrint('Rider camera start error: $error');
+
+      if (mounted) {
+        setState(() {
+          _scanError = 'Unable to start camera. Check camera permission.';
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleTorch() async {
+    if (_isProcessing || _isResetting || _hasScanned) {
+      return;
+    }
+
+    try {
+      await _scannerController.toggleTorch();
+    } catch (error) {
+      debugPrint('Flashlight error: $error');
+
+      _showMessage('Unable to change flashlight state.', error: true);
+    }
+  }
+
+  // ============================================================
+  // QR SCAN
+  // ============================================================
+
+  Future<void> _handleDetection(BarcodeCapture capture) async {
+    if (!mounted || _hasScanned || _isProcessing || _isResetting) {
+      return;
+    }
+
+    String? payload;
+
+    for (final Barcode barcode in capture.barcodes) {
+      final String raw = barcode.rawValue?.trim() ?? '';
+
+      if (barcode.format == BarcodeFormat.qrCode && raw.isNotEmpty) {
+        payload = raw;
+        break;
+      }
+    }
+
+    if (payload == null) return;
+
+    final int requestId = ++_requestId;
+
+    // Lock immediately to prevent duplicate requests.
+    setState(() {
+      _hasScanned = true;
+      _isProcessing = true;
+      _serverConfirmed = false;
+      _needsStatusCheck = false;
+
+      _foundParcel = null;
+      _scanType = null;
+      _scanMessage = null;
+      _scanError = null;
+      _trackingNumber = null;
+    });
+
+    await _stopCamera();
+
+    if (!mounted || requestId != _requestId) {
+      return;
+    }
+
+    await _submitScan(payload, requestId);
+  }
+
+  // ============================================================
+  // SERVER-SIDE PICKUP CONFIRMATION
+  // ============================================================
+
+  Future<void> _submitScan(String payload, int requestId) async {
+    try {
+      // IMPORTANT:
+      // This endpoint changes shipment state.
+      //
+      // seller_pickup -> in_transit
+      // hub_pickup    -> picked_up
+      //
+      // Send the original QR payload unchanged.
+      // Never use tracking number alone for pickup.
+      final Map<String, dynamic> result = await ApiService.scanRiderWaybill(
+        qrPayload: payload,
+      ).timeout(_requestTimeout);
+
+      if (!mounted || requestId != _requestId) {
+        return;
+      }
+
+      if (result['success'] != true) {
+        _setScanError(
+          requestId,
+          _serverMessage(result, 'QR scan was rejected by BiliHub.'),
+        );
+        return;
+      }
+
+      final String scanType =
+          result['scan_type']?.toString().trim().toLowerCase() ?? '';
+
+      final String message = _serverMessage(
+        result,
+        'QR pickup confirmation completed.',
+      );
+
+      // A successful response means Laravel may
+      // already have committed the status update.
+      if (scanType != 'seller_pickup' && scanType != 'hub_pickup') {
+        _setScanError(
+          requestId,
+          'The server accepted the scan, but returned '
+          'an unexpected scan type. Check My Deliveries.',
+          uncertain: true,
+        );
+        return;
+      }
+
+      final dynamic raw = result['shipment'];
+
+      if (raw is! Map) {
+        _setScanError(
+          requestId,
+          'Pickup may have succeeded, but shipment '
+          'details were missing. Check My Deliveries.',
+          uncertain: true,
+        );
+        return;
+      }
+
+      final ParcelModel parcel;
+
+      try {
+        parcel = ParcelModel.fromJson(
+          _normalizeShipment(Map<String, dynamic>.from(raw)),
+        );
+      } catch (error) {
+        debugPrint('Rider scan response parsing error: $error');
+
+        _setScanError(
+          requestId,
+          'Pickup was accepted by the server, but '
+          'shipment details could not be displayed. '
+          'Open My Deliveries to confirm.',
+          uncertain: true,
+        );
+        return;
+      }
+
+      if (parcel.id <= 0) {
+        _setScanError(
+          requestId,
+          'Pickup was accepted, but the server '
+          'returned an invalid shipment ID. '
+          'Check My Deliveries.',
+          uncertain: true,
+        );
+        return;
+      }
+
+      final String status = parcel.normalizedStatus;
+
+      final bool expectedStatus = scanType == 'seller_pickup'
+          ? status == 'in_transit'
+          : status == 'picked_up';
+
+      if (!expectedStatus) {
+        _setScanError(
+          requestId,
+          'The scan succeeded, but the shipment '
+          'status was unexpected. '
+          'Check My Deliveries before continuing.',
+          uncertain: true,
+        );
+        return;
+      }
+
+      setState(() {
+        _foundParcel = parcel;
+        _trackingNumber = parcel.trackingNumber;
+        _scanType = scanType;
+        _scanMessage = message;
+
+        _serverConfirmed = true;
+        _needsStatusCheck = false;
+        _scanError = null;
+        _isProcessing = false;
+      });
+
+      _showMessage(
+        scanType == 'seller_pickup'
+            ? 'Seller pickup confirmed successfully.'
+            : 'Hub pickup confirmed successfully.',
+      );
+    } on TimeoutException {
+      _setScanError(
+        requestId,
+        'The scan request timed out. '
+        'Laravel may already have recorded the pickup. '
+        'Check My Deliveries before scanning again.',
+        uncertain: true,
+      );
+    } catch (error) {
+      debugPrint('Rider QR scan error: $error');
+
+      _setScanError(
+        requestId,
+        'Unable to confirm the scan result. '
+        'Check My Deliveries before trying again.',
+        uncertain: true,
+      );
+    }
+  }
+
+  void _setScanError(int requestId, String message, {bool uncertain = false}) {
+    if (!mounted || requestId != _requestId) {
+      return;
+    }
+
+    setState(() {
+      _isProcessing = false;
+      _serverConfirmed = false;
+      _needsStatusCheck = uncertain;
+
+      _scanError = message;
+      _scanMessage = null;
+      _scanType = null;
+      _foundParcel = null;
+    });
+
+    _showMessage(message, error: true);
+  }
+
+  // ============================================================
+  // NORMALIZE RESPONSE FOR PARCEL MODEL
+  // ============================================================
+
+  Map<String, dynamic> _normalizeShipment(Map<String, dynamic> raw) {
+    final Map<String, dynamic> data = Map<String, dynamic>.from(raw);
+
+    if (raw['shipment'] is Map) {
+      data.addAll(Map<String, dynamic>.from(raw['shipment']));
+    }
+
+    final Map<String, dynamic> order = _asMap(data['order']);
+
+    final Map<String, dynamic> rider = _asMap(data['rider']);
+
+    final Map<String, dynamic> hub = _asMap(data['hub']);
+
+    data['id'] ??= data['shipment_id'] ?? data['order_id'] ?? 0;
+
+    data['shipment_id'] ??= data['id'];
+
+    data['tracking_number'] ??=
+        data['tracking_code'] ??
+        data['tracking'] ??
+        data['waybill_number'] ??
+        '';
+
+    data['customer_name'] ??=
+        order['customer_name'] ??
+        order['buyer_name'] ??
+        data['recipient_name'] ??
+        '';
+
+    data['customer_phone'] ??=
+        order['customer_phone'] ??
+        order['phone'] ??
+        data['recipient_phone'] ??
+        '';
+
+    data['delivery_address'] ??=
+        order['delivery_address'] ??
+        data['shipping_address'] ??
+        data['address'] ??
+        '';
+
+    data['pickup_address'] ??= data['seller_address'] ?? '';
+
+    data['rider_id'] ??= rider['id'];
+    data['rider_name'] ??= rider['name'] ?? '';
+
+    data['current_hub_id'] ??= hub['id'];
+    data['current_hub_name'] ??= hub['name'] ?? '';
+
+    data['status'] ??= data['shipment_status'] ?? data['delivery_status'] ?? '';
+
+    data['order_date'] ??= data['created_at'] ?? data['assigned_at'] ?? '';
+
+    data['delivery_earnings'] ??= data['earnings'] ?? data['delivery_fee'] ?? 0;
+
+    data['latitude'] ??= data['lat'];
+    data['longitude'] ??= data['lng'] ?? data['lon'];
+
+    return data;
+  }
+
+  Map<String, dynamic> _asMap(dynamic raw) {
+    if (raw is Map) {
+      return Map<String, dynamic>.from(raw);
+    }
+
+    return <String, dynamic>{};
+  }
+
+  // ============================================================
+  // RESET SCANNER
+  // ============================================================
+
+  Future<void> _resetScanner() async {
+    if (!mounted || _isProcessing || _isResetting) {
+      return;
+    }
+
+    if (_needsStatusCheck) {
+      final bool? confirmed = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext dialogContext) {
+          return AlertDialog(
+            title: const Text('Scan Result Uncertain'),
+            content: const Text(
+              'The previous scan may already have '
+              'changed the shipment status. '
+              'Check My Deliveries first to avoid '
+              'scanning an already picked-up parcel.\n\n'
+              'Reset the scanner anyway?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Reset Scanner'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (!mounted || confirmed != true) {
+        return;
+      }
+    }
+
+    _requestId++;
+
+    setState(() {
+      _isResetting = true;
+      _hasScanned = true;
+    });
+
+    try {
+      await _stopCamera();
+
+      if (!mounted) return;
+
+      setState(() {
+        _hasScanned = false;
+        _isProcessing = false;
+        _serverConfirmed = false;
+        _needsStatusCheck = false;
+
+        _foundParcel = null;
+        _scanType = null;
+        _scanMessage = null;
+        _scanError = null;
+        _trackingNumber = null;
+      });
+    } catch (error) {
+      debugPrint('Rider scanner reset error: $error');
+
+      if (mounted) {
+        _showMessage('Unable to reset scanner.', error: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResetting = false;
+        });
+
+        if (!_hasScanned) {
+          await _startCamera();
+        }
+      }
+    }
+  }
+
+  // ============================================================
+  // NAVIGATION
+  // ============================================================
+
+  void _openMyDeliveries() {
+    if (_isProcessing || _isResetting) return;
+
+    if (widget.onOpenDeliveries != null) {
+      widget.onOpenDeliveries!();
+      return;
+    }
+
+    Navigator.of(context).maybePop(_foundParcel);
+  }
+
+  // ============================================================
+  // HELPERS
+  // ============================================================
+
+  String _serverMessage(Map<String, dynamic> result, String fallback) {
+    final String message = result['message']?.toString().trim() ?? '';
+
+    if (message.isNotEmpty) return message;
+
+    final dynamic errors = result['errors'];
+
+    if (errors is Map) {
+      for (final dynamic entry in errors.values) {
+        if (entry is List && entry.isNotEmpty) {
+          return entry.first.toString();
+        }
+      }
+    }
+
+    return fallback;
+  }
+
+  String _display(String value, {String fallback = 'Not available'}) {
+    final String cleaned = value.trim();
+
+    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
+      return fallback;
+    }
+
+    return cleaned;
+  }
+
+  bool get _isSellerPickup => _scanType == 'seller_pickup';
+
+  bool get _isHubPickup => _scanType == 'hub_pickup';
+
+  String get _scannerGuide {
+    if (_isProcessing) {
+      return 'Confirming pickup with BiliHub...';
+    }
+
+    if (_serverConfirmed) {
+      return _isSellerPickup
+          ? 'Seller pickup confirmed'
+          : 'Hub pickup confirmed';
+    }
+
+    if (_needsStatusCheck) {
+      return 'Check shipment status before retrying';
+    }
+
+    if (_scanError != null) {
+      return 'Scan unsuccessful';
+    }
+
+    return 'Place the official BiliHub QR inside the frame';
+  }
+
+  void _showMessage(String message, {bool error = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: error ? RiderColors.danger : RiderColors.success,
+          content: Text(message),
+        ),
+      );
+  }
+
+  // ============================================================
+  // MAIN UI
   // ============================================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: _buildAppBar(),
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Scan Waybill',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            SizedBox(height: 3),
+            Text(
+              'Confirm seller or hub parcel pickup',
+              style: TextStyle(color: Colors.white60, fontSize: 11),
+            ),
+          ],
+        ),
+      ),
       body: SafeArea(
         top: false,
         child: Column(
           children: [
-            Expanded(child: _cameraScanner()),
+            Expanded(child: _scannerCamera()),
             _scannerControls(),
             _bottomPanel(),
           ],
@@ -73,50 +642,30 @@ class _RiderScannerState extends State<RiderScanner> {
   }
 
   // ============================================================
-  // APP BAR
-  // ============================================================
-
-  PreferredSizeWidget _buildAppBar() {
-    return AppBar(
-      backgroundColor: Colors.black,
-      elevation: 0,
-      surfaceTintColor: Colors.transparent,
-      iconTheme: const IconThemeData(color: Colors.white),
-      titleSpacing: 4,
-      title: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Scan Waybill',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          SizedBox(height: 2),
-          Text(
-            'Scan the official BiliHub parcel QR code',
-            style: TextStyle(color: Colors.white60, fontSize: 11),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============================================================
   // CAMERA
   // ============================================================
 
-  Widget _cameraScanner() {
+  Widget _scannerCamera() {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final Size size = constraints.biggest;
 
-        final double scanSize = size.width * 0.64;
+        if (size.width <= 0 || size.height <= 0) {
+          return const SizedBox.shrink();
+        }
+
+        final double maxScanSize = (size.height * 0.72)
+            .clamp(1.0, size.width)
+            .toDouble();
+
+        final double minimum = maxScanSize < 120 ? maxScanSize : 120.0;
+
+        final double scanSize = (size.width * 0.64)
+            .clamp(minimum, maxScanSize)
+            .toDouble();
 
         final Rect scanWindow = Rect.fromCenter(
-          center: Offset(size.width / 2, size.height * 0.43),
+          center: Offset(size.width / 2, size.height * 0.44),
           width: scanSize,
           height: scanSize,
         );
@@ -145,60 +694,31 @@ class _RiderScannerState extends State<RiderScanner> {
             ),
 
             Positioned(
-              left: 0,
-              right: 0,
-              top: scanWindow.bottom + 18,
-              child: Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.45),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      _scannerGuideText,
-                      style: TextStyle(
-                        color: _foundParcel != null
-                            ? Colors.greenAccent
-                            : _scanError != null
-                            ? Colors.orangeAccent
-                            : Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+              top: scanWindow.bottom + 14,
+              left: 12,
+              right: 12,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.70),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _scannerGuide,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: _serverConfirmed
+                        ? Colors.greenAccent
+                        : _scanError != null
+                        ? Colors.orangeAccent
+                        : Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
                   ),
-
-                  if (_scannedCode != null) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      constraints: BoxConstraints(maxWidth: size.width * 0.80),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.55),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        _displayQrValue(_scannedCode!),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
+                ),
               ),
             ),
           ],
@@ -207,479 +727,40 @@ class _RiderScannerState extends State<RiderScanner> {
     );
   }
 
-  String get _scannerGuideText {
-    if (_isProcessingScan) {
-      return 'Verifying BiliHub QR...';
-    }
-
-    if (_foundParcel != null) {
-      return 'Waybill verified';
-    }
-
-    if (_scanError != null) {
-      return 'Unable to verify QR code';
-    }
-
-    if (_hasScanned) {
-      return 'QR code detected';
-    }
-
-    return 'Place the BiliHub QR code inside the frame';
-  }
-
-  // ============================================================
-  // QR DETECTION
-  // ============================================================
-
-  Future<void> _handleDetection(BarcodeCapture capture) async {
-    if (_hasScanned || _isProcessingScan || capture.barcodes.isEmpty) {
-      return;
-    }
-
-    final Barcode barcode = capture.barcodes.first;
-
-    if (barcode.format != BarcodeFormat.qrCode) {
-      return;
-    }
-
-    final String? rawValue = barcode.rawValue;
-
-    if (rawValue == null || rawValue.trim().isEmpty) {
-      return;
-    }
-
-    final String qrPayload = rawValue.trim();
-
-    setState(() {
-      _scannedCode = qrPayload;
-
-      _hasScanned = true;
-      _isProcessingScan = true;
-
-      _scanError = null;
-      _scanMessage = null;
-      _scanType = null;
-
-      _foundParcel = null;
-    });
-
-    try {
-      await _scannerController.stop();
-    } catch (error) {
-      debugPrint('Unable to stop scanner: $error');
-    }
-
-    /*
-     * IMPORTANT:
-     *
-     * Send the COMPLETE QR payload to Laravel.
-     *
-     * Do not manually extract only the tracking
-     * number here.
-     *
-     * Laravel is responsible for validating the
-     * QR token, tracking number, shipment and
-     * rider assignment.
-     */
-
-    await _processScannedWaybill(qrPayload);
-  }
-
-  // ============================================================
-  // SEND QR TO LARAVEL
-  // ============================================================
-
-  Future<void> _processScannedWaybill(String qrPayload) async {
-    try {
-      final Map<String, dynamic> result = await ApiService.scanRiderWaybill(
-        qrPayload: qrPayload,
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      if (result['success'] != true) {
-        final String message = result['message']?.toString().trim() ?? '';
-
-        setState(() {
-          _isProcessingScan = false;
-
-          _foundParcel = null;
-
-          _scanError = message.isNotEmpty
-              ? message
-              : 'Unable to verify the scanned '
-                    'BiliHub QR code.';
-        });
-
-        _showScanError(_scanError!);
-
-        return;
-      }
-
-      final dynamic rawShipment = result['shipment'];
-
-      if (rawShipment is! Map) {
-        setState(() {
-          _isProcessingScan = false;
-
-          _foundParcel = null;
-
-          _scanError =
-              'The QR code was verified, but '
-              'the server returned invalid '
-              'shipment information.';
-        });
-
-        _showScanError(_scanError!);
-
-        return;
-      }
-
-      final Map<String, dynamic> shipmentData = _normalizeShipment(
-        Map<String, dynamic>.from(rawShipment),
-      );
-
-      final ParcelModel parcel = ParcelModel.fromJson(shipmentData);
-
-      final String message = result['message']?.toString().trim() ?? '';
-
-      final String scanType = result['scan_type']?.toString().trim() ?? '';
-
-      setState(() {
-        _foundParcel = parcel;
-
-        _isProcessingScan = false;
-
-        _scanError = null;
-
-        _scanMessage = message.isNotEmpty
-            ? message
-            : 'Waybill verified successfully.';
-
-        _scanType = scanType.isNotEmpty
-            ? scanType
-            : parcel.assignmentType.trim().isNotEmpty
-            ? parcel.assignmentType.trim()
-            : null;
-      });
-
-      _showScanSuccess(parcel.trackingNumber, _scanMessage!);
-    } catch (error) {
-      debugPrint('Rider scanner error: $error');
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isProcessingScan = false;
-
-        _foundParcel = null;
-
-        _scanError =
-            'Unable to process the scanned '
-            'QR code. Please try again.';
-      });
-
-      _showScanError(_scanError!);
-    }
-  }
-
-  // ============================================================
-  // NORMALIZE SHIPMENT RESPONSE
-  // ============================================================
-
-  Map<String, dynamic> _normalizeShipment(Map<String, dynamic> raw) {
-    final Map<String, dynamic> data = Map<String, dynamic>.from(raw);
-
-    final dynamic nestedShipment = raw['shipment'];
-
-    if (nestedShipment is Map) {
-      data.addAll(Map<String, dynamic>.from(nestedShipment));
-    }
-
-    final dynamic order = raw['order'];
-
-    if (order is Map) {
-      final Map<String, dynamic> orderMap = Map<String, dynamic>.from(order);
-
-      data['customer_name'] ??=
-          orderMap['customer_name'] ??
-          orderMap['buyer_name'] ??
-          orderMap['name'];
-
-      data['customer_phone'] ??=
-          orderMap['customer_phone'] ??
-          orderMap['phone'] ??
-          orderMap['mobile_number'];
-
-      data['delivery_address'] ??=
-          orderMap['delivery_address'] ?? orderMap['address'];
-
-      data['order_date'] ??= orderMap['order_date'] ?? orderMap['created_at'];
-    }
-
-    data['id'] ??= data['shipment_id'] ?? data['order_id'] ?? 0;
-
-    data['shipment_id'] ??= data['id'];
-
-    data['tracking_number'] ??=
-        data['tracking'] ??
-        data['tracking_code'] ??
-        data['waybill_number'] ??
-        '';
-
-    data['customer_name'] ??=
-        data['recipient_name'] ?? data['buyer_name'] ?? '';
-
-    data['customer_phone'] ??=
-        data['phone'] ?? data['mobile_number'] ?? data['recipient_phone'] ?? '';
-
-    data['delivery_address'] ??=
-        data['address'] ??
-        data['shipping_address'] ??
-        data['recipient_address'] ??
-        '';
-
-    data['pickup_address'] ??= data['seller_address'] ?? '';
-
-    final dynamic rider = data['rider'];
-
-    if (rider is Map) {
-      data['rider_name'] ??= rider['name'];
-
-      data['rider_id'] ??= rider['id'];
-    }
-
-    final dynamic linehaulRider = data['linehaul_rider'];
-
-    if (linehaulRider is Map) {
-      data['linehaul_rider_name'] ??= linehaulRider['name'];
-
-      data['linehaul_rider_id'] ??= linehaulRider['id'];
-    }
-
-    final dynamic originHub = data['origin_hub'];
-
-    if (originHub is Map) {
-      data['origin_hub_id'] ??= originHub['id'];
-
-      data['origin_hub_name'] ??= originHub['name'];
-    }
-
-    final dynamic destinationHub = data['destination_hub'];
-
-    if (destinationHub is Map) {
-      data['destination_hub_id'] ??= destinationHub['id'];
-
-      data['destination_hub_name'] ??= destinationHub['name'];
-    }
-
-    final dynamic hub = data['hub'];
-
-    if (hub is Map) {
-      data['current_hub_id'] ??= hub['id'];
-
-      data['current_hub_name'] ??= hub['name'];
-    }
-
-    data['rider_name'] ??= '';
-
-    data['status'] ??= data['shipment_status'] ?? data['delivery_status'] ?? '';
-
-    data['order_date'] ??= data['created_at'] ?? data['assigned_at'] ?? '';
-
-    data['delivery_earnings'] ??= data['earnings'] ?? data['delivery_fee'] ?? 0;
-
-    data['latitude'] ??= data['lat'];
-
-    data['longitude'] ??= data['lng'] ?? data['lon'];
-
-    return data;
-  }
-
-  // ============================================================
-  // QR DISPLAY
-  // ============================================================
-
-  String _displayQrValue(String rawValue) {
-    final String value = rawValue.trim();
-
-    if (value.isEmpty) {
-      return 'BiliHub QR';
-    }
-
-    /*
-     * Display only.
-     *
-     * The COMPLETE original QR payload is still
-     * sent to Laravel.
-     */
-
-    try {
-      final Uri? uri = Uri.tryParse(value);
-
-      if (uri != null &&
-          (uri.scheme.toLowerCase() == 'http' ||
-              uri.scheme.toLowerCase() == 'https')) {
-        return 'BiliHub Website QR';
-      }
-    } catch (_) {
-      // Continue with normal display handling.
-    }
-
-    if (value.startsWith('{') && value.endsWith('}')) {
-      return 'BiliHub Waybill QR';
-    }
-
-    return value;
-  }
-
-  // ============================================================
-  // SUCCESS MESSAGE
-  // ============================================================
-
-  void _showScanSuccess(String trackingNumber, String message) {
-    if (!mounted) {
-      return;
-    }
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: RiderColors.success,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          content: Row(
-            children: [
-              const Icon(Icons.check_circle_rounded, color: Colors.white),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      trackingNumber.trim().isNotEmpty
-                          ? trackingNumber
-                          : 'BiliHub Waybill',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      message,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-  }
-
-  // ============================================================
-  // ERROR MESSAGE
-  // ============================================================
-
-  void _showScanError(String message) {
-    if (!mounted) {
-      return;
-    }
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: RiderColors.danger,
-          content: Text(message),
-        ),
-      );
-  }
-
-  // ============================================================
-  // CAMERA ERROR
-  // ============================================================
-
   Widget _cameraError(MobileScannerException error) {
-    return Container(
-      color: Colors.black,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(30),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            height: 64,
-            width: 64,
-            decoration: BoxDecoration(
-              color: RiderColors.lightPurple,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: const Icon(
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
               Icons.camera_alt_outlined,
-              color: RiderColors.primary,
-              size: 32,
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Camera unavailable',
-            style: TextStyle(
               color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
+              size: 48,
             ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Please allow camera permission '
-            'and try again.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: () async {
-              try {
-                await _scannerController.start();
-              } catch (scanError) {
-                debugPrint(
-                  'Scanner start error: '
-                  '$scanError',
-                );
-              }
-            },
-            icon: const Icon(Icons.refresh_rounded),
-            label: const Text('Try Again'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: RiderColors.primary,
-              foregroundColor: Colors.white,
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+            const SizedBox(height: 12),
+            const Text(
+              'Camera Unavailable',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            const Text(
+              'Allow camera permission and try again.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _resetScanner,
+              child: const Text('Try Again'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -703,57 +784,54 @@ class _RiderScannerState extends State<RiderScanner> {
                   MobileScannerState state,
                   Widget? child,
                 ) {
-                  return _scannerControlButton(
+                  return _controlButton(
                     icon: state.torchState == TorchState.on
                         ? Icons.flash_on_rounded
                         : Icons.flash_off_rounded,
                     label: 'Flash',
-                    onTap: _toggleTorch,
+                    onPressed: _hasScanned || _isProcessing || _isResetting
+                        ? null
+                        : _toggleTorch,
                   );
                 },
           ),
-          const SizedBox(width: 18),
-          _scannerControlButton(
+          const SizedBox(width: 16),
+          _controlButton(
             icon: Icons.refresh_rounded,
             label: 'Reset',
-            onTap: _resetScanner,
+            onPressed: _isProcessing || _isResetting ? null : _resetScanner,
           ),
         ],
       ),
     );
   }
 
-  Future<void> _toggleTorch() async {
-    try {
-      await _scannerController.toggleTorch();
-    } catch (error) {
-      debugPrint('Torch error: $error');
-    }
-  }
-
-  Widget _scannerControlButton({
+  Widget _controlButton({
     required IconData icon,
     required String label,
-    required VoidCallback onTap,
+    required VoidCallback? onPressed,
   }) {
     return Material(
       color: Colors.white.withValues(alpha: 0.10),
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
-        onTap: onTap,
+        onTap: onPressed,
         borderRadius: BorderRadius.circular(14),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
           child: Row(
             children: [
-              Icon(icon, color: Colors.white, size: 20),
-              const SizedBox(width: 7),
+              Icon(
+                icon,
+                color: onPressed == null ? Colors.white38 : Colors.white,
+              ),
+              const SizedBox(width: 8),
               Text(
                 label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
+                style: TextStyle(
+                  color: onPressed == null ? Colors.white38 : Colors.white,
                   fontWeight: FontWeight.w700,
+                  fontSize: 12,
                 ),
               ),
             ],
@@ -764,68 +842,15 @@ class _RiderScannerState extends State<RiderScanner> {
   }
 
   // ============================================================
-  // RESET
-  // ============================================================
-
-  Future<void> _resetScanner() async {
-    if (_isProcessingScan) {
-      return;
-    }
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _scannedCode = null;
-
-      _hasScanned = false;
-
-      _foundParcel = null;
-
-      _scanError = null;
-      _scanMessage = null;
-      _scanType = null;
-
-      _isProcessingScan = false;
-    });
-
-    try {
-      await _scannerController.start();
-    } catch (error) {
-      debugPrint('Scanner reset error: $error');
-    }
-  }
-
-  // ============================================================
-  // OPEN MY DELIVERIES
-  // ============================================================
-
-  void _openMyDeliveries() {
-    final ParcelModel? parcel = _foundParcel;
-
-    if (!_hasScanned || parcel == null) {
-      return;
-    }
-
-    final VoidCallback? onOpenDeliveries = widget.onOpenDeliveries;
-
-    if (onOpenDeliveries != null) {
-      onOpenDeliveries();
-      return;
-    }
-
-    Navigator.of(context).maybePop(parcel);
-  }
-
-  // ============================================================
-  // BOTTOM PANEL
+  // BOTTOM RESULT PANEL
   // ============================================================
 
   Widget _bottomPanel() {
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(maxHeight: 430),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.48,
+      ),
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
       decoration: const BoxDecoration(
         color: RiderColors.white,
@@ -833,123 +858,114 @@ class _RiderScannerState extends State<RiderScanner> {
       ),
       child: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
-        child: _isProcessingScan
-            ? _checkingPanel()
-            : _foundParcel != null
-            ? _parcelFoundPanel(_foundParcel!)
+        child: _isProcessing
+            ? _loadingPanel()
+            : _serverConfirmed && _foundParcel != null
+            ? _successPanel(_foundParcel!)
+            : _scanError != null
+            ? _errorPanel()
             : _waitingPanel(),
       ),
     );
   }
 
-  // ============================================================
-  // CHECKING PANEL
-  // ============================================================
-
-  Widget _checkingPanel() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 18),
-      child: Column(
-        children: [
-          CircularProgressIndicator(color: RiderColors.primary),
-          SizedBox(height: 12),
-          Text('Verifying BiliHub QR...', style: RiderStyle.cardTitle),
-          SizedBox(height: 3),
-          Text(
-            'Please wait while BiliHub securely '
-            'verifies the waybill and rider assignment.',
-            textAlign: TextAlign.center,
-            style: RiderStyle.small,
+  Widget _loadingPanel() {
+    return const Column(
+      children: [
+        SizedBox(
+          height: 32,
+          width: 32,
+          child: CircularProgressIndicator(
+            strokeWidth: 3,
+            color: RiderColors.primary,
           ),
-        ],
-      ),
+        ),
+        SizedBox(height: 14),
+        Text('Confirming Pickup...', style: RiderStyle.sectionTitle),
+        SizedBox(height: 6),
+        Text(
+          'Checking the QR code and updating '
+          'the shipment with BiliHub.',
+          textAlign: TextAlign.center,
+          style: RiderStyle.small,
+        ),
+      ],
     );
   }
-
-  // ============================================================
-  // WAITING PANEL
-  // ============================================================
 
   Widget _waitingPanel() {
     return Column(
       children: [
-        Container(
-          height: 4,
-          width: 42,
-          decoration: BoxDecoration(
-            color: RiderColors.border,
-            borderRadius: BorderRadius.circular(10),
-          ),
+        const Icon(
+          Icons.qr_code_scanner_rounded,
+          size: 46,
+          color: RiderColors.primary,
         ),
-        const SizedBox(height: 14),
-        Container(
-          height: 48,
-          width: 48,
-          decoration: BoxDecoration(
-            color: RiderColors.lightPurple,
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: Icon(
-            _scanError != null
-                ? Icons.error_outline_rounded
-                : Icons.qr_code_scanner_rounded,
-            color: _scanError != null
-                ? RiderColors.danger
-                : RiderColors.primary,
-            size: 27,
-          ),
-        ),
-        const SizedBox(height: 9),
-        Text(
-          _scanError != null ? 'Unable to Scan' : 'Ready to Scan',
-          style: RiderStyle.cardTitle,
-        ),
-        const SizedBox(height: 3),
-        Text(
-          _scanError ??
-              'Point your camera at the '
-                  'original BiliHub waybill QR code.',
+        const SizedBox(height: 10),
+        const Text('Ready to Scan', style: RiderStyle.sectionTitle),
+        const SizedBox(height: 6),
+        const Text(
+          'Scan the original BiliHub QR code '
+          'to confirm physical pickup.',
           textAlign: TextAlign.center,
           style: RiderStyle.small,
         ),
-        if (_scannedCode != null) ...[
-          const SizedBox(height: 10),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: RiderColors.background,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              children: [
-                const Text('Scanned QR', style: RiderStyle.cardTitle),
-                const SizedBox(height: 4),
-                Text(
-                  _displayQrValue(_scannedCode!),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: RiderStyle.small,
-                ),
-              ],
-            ),
+        if (widget.scannedParcel != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            'Selected parcel: '
+            '${_display(widget.scannedParcel!.trackingNumber)}',
+            textAlign: TextAlign.center,
+            style: RiderStyle.small,
           ),
         ],
-        if (_scanError != null) ...[
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton.icon(
-              onPressed: _resetScanner,
-              style: RiderStyle.primaryButton,
-              icon: const Icon(
-                Icons.qr_code_scanner_rounded,
-                color: Colors.white,
-              ),
-              label: const Text('Scan Again', style: RiderStyle.buttonText),
+      ],
+    );
+  }
+
+  Widget _errorPanel() {
+    return Column(
+      children: [
+        Icon(
+          _needsStatusCheck
+              ? Icons.warning_amber_rounded
+              : Icons.error_outline_rounded,
+          size: 40,
+          color: RiderColors.danger,
+        ),
+        const SizedBox(height: 10),
+        Text(
+          _needsStatusCheck ? 'Scan Result Uncertain' : 'QR Scan Unsuccessful',
+          style: RiderStyle.sectionTitle,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _scanError ?? 'Unable to scan the parcel.',
+          textAlign: TextAlign.center,
+          style: RiderStyle.small,
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _openMyDeliveries,
+            style: RiderStyle.primaryButton,
+            icon: const Icon(
+              Icons.local_shipping_outlined,
+              color: Colors.white,
             ),
+            label: const Text(
+              'CHECK MY DELIVERIES',
+              style: RiderStyle.buttonText,
+            ),
+          ),
+        ),
+        if (!_needsStatusCheck) ...[
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _resetScanner,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Scan Another QR'),
           ),
         ],
       ],
@@ -957,283 +973,160 @@ class _RiderScannerState extends State<RiderScanner> {
   }
 
   // ============================================================
-  // PARCEL VERIFIED
+  // SUCCESS PANEL
   // ============================================================
 
-  Widget _parcelFoundPanel(ParcelModel parcel) {
-    final bool sellerPickup = parcel.isSellerPickupAssignment;
-
-    final bool linehaul = parcel.isLinehaulAssignment;
-
-    final bool finalMile = parcel.isFinalMileAssignment;
+  Widget _successPanel(ParcelModel parcel) {
+    final bool sellerPickup = _isSellerPickup;
+    final bool hubPickup = _isHubPickup;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Center(
-          child: Container(
-            height: 4,
-            width: 42,
-            decoration: BoxDecoration(
-              color: RiderColors.border,
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        const Row(
+        Row(
           children: [
-            Icon(
-              Icons.check_circle_outline_rounded,
+            const Icon(
+              Icons.check_circle_rounded,
               color: RiderColors.success,
-              size: 28,
+              size: 32,
             ),
-            SizedBox(width: 10),
+            const SizedBox(width: 10),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Waybill Verified', style: RiderStyle.sectionTitle),
-                  SizedBox(height: 2),
-                  Text(
-                    'The secure BiliHub QR has '
-                    'been verified successfully.',
-                    style: RiderStyle.small,
-                  ),
-                ],
+              child: Text(
+                sellerPickup
+                    ? 'Seller Pickup Confirmed'
+                    : 'Hub Pickup Confirmed',
+                style: RiderStyle.sectionTitle,
               ),
             ),
           ],
         ),
-
-        if (_scanMessage != null) ...[
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(11),
-            decoration: BoxDecoration(
-              color: RiderColors.lightPurple,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(_scanMessage!, style: RiderStyle.small),
-          ),
-        ],
-
+        const SizedBox(height: 8),
+        Text(
+          _scanMessage ?? 'Pickup confirmed by BiliHub.',
+          style: RiderStyle.small,
+        ),
         const SizedBox(height: 14),
-
-        _infoRow('Tracking Number', _displayValue(parcel.trackingNumber)),
-
-        _infoRow('Assignment', parcel.assignmentLabel),
-
-        if (sellerPickup && parcel.pickupAddress.trim().isNotEmpty)
-          _infoRow('Pickup Address', parcel.pickupAddress),
-
-        if (linehaul) ...[
-          if (parcel.originHubName.trim().isNotEmpty)
-            _infoRow('Origin Hub', parcel.originHubName),
-
-          if (parcel.destinationHubName.trim().isNotEmpty)
-            _infoRow('Destination Hub', parcel.destinationHubName),
-
-          if (parcel.linehaulStatus.trim().isNotEmpty)
-            _infoRow('Line-Haul Status', _formatStatus(parcel.linehaulStatus)),
-
-          if (parcel.routingStatus.trim().isNotEmpty)
-            _infoRow('Routing Status', _formatStatus(parcel.routingStatus)),
-
-          if (parcel.requiredVehicleType.trim().isNotEmpty)
-            _infoRow(
-              'Required Vehicle',
-              _formatStatus(parcel.requiredVehicleType),
-            ),
-        ],
-
-        if (finalMile) ...[
-          _infoRow('Customer', _displayValue(parcel.customerName)),
-          _infoRow('Delivery Address', _displayValue(parcel.deliveryAddress)),
-        ] else if (!linehaul) ...[
-          _infoRow('Customer', _displayValue(parcel.customerName)),
-          _infoRow('Address', _displayValue(parcel.deliveryAddress)),
-        ],
-
-        _infoRow('Shipment Status', _formatStatus(parcel.status)),
-
-        if (_scanType != null)
-          _infoRow('Scan Type', _formatScanType(_scanType!)),
-
-        if (linehaul) ...[
-          const SizedBox(height: 2),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: RiderColors.background,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: RiderColors.border),
-            ),
-            child: const Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.info_outline_rounded,
-                  size: 18,
-                  color: RiderColors.primary,
-                ),
-                SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    'Line-haul dispatch and '
-                    'destination-hub receipt are '
-                    'controlled by Logistics.',
-                    style: RiderStyle.small,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-
+        AppInfoRow(
+          label: 'Tracking Number',
+          value: _display(_trackingNumber ?? parcel.trackingNumber),
+          icon: Icons.qr_code_2_rounded,
+          iconColor: RiderColors.primary,
+          selectable: true,
+          compact: true,
+        ),
+        AppInfoRow(
+          label: 'Scan Type',
+          value: sellerPickup ? 'Seller Pickup' : 'Final-Mile Hub Pickup',
+          icon: Icons.qr_code_scanner_rounded,
+          iconColor: RiderColors.primary,
+          compact: true,
+        ),
+        AppInfoRow(
+          label: 'New Shipment Status',
+          value: sellerPickup ? 'In Transit' : 'Picked Up',
+          icon: Icons.inventory_2_outlined,
+          iconColor: RiderColors.primary,
+          compact: true,
+        ),
+        const SizedBox(height: 7),
+        StatusChip(status: parcel.status),
         const SizedBox(height: 12),
-
-        // Only appears after an actual successful QR scan.
-        if (_hasScanned) ...[
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: _openMyDeliveries,
-              style: RiderStyle.primaryButton,
-              icon: const Icon(Icons.add_task_rounded, color: Colors.white),
-              label: const Text(
-                'Add to My Deliveries',
-                style: RiderStyle.buttonText,
-              ),
-            ),
+        if (sellerPickup && parcel.pickupAddress.trim().isNotEmpty)
+          AppInfoRow(
+            label: 'Seller Pickup Address',
+            value: parcel.pickupAddress,
+            icon: Icons.storefront_outlined,
+            iconColor: RiderColors.primary,
+            compact: true,
           ),
-          const SizedBox(height: 10),
-        ],
-
+        if (hubPickup && parcel.currentHubName.trim().isNotEmpty)
+          AppInfoRow(
+            label: 'Pickup Hub',
+            value: parcel.currentHubName,
+            icon: Icons.warehouse_outlined,
+            iconColor: RiderColors.primary,
+            compact: true,
+          ),
+        AppAddressCard(
+          recipientName: parcel.customerName,
+          phoneNumber: parcel.customerPhone,
+          address: parcel.deliveryAddress,
+          title: 'Delivery Address',
+          accentColor: RiderColors.primary,
+          compact: true,
+        ),
+        const SizedBox(height: 14),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            color: RiderColors.lightPurple,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: RiderColors.border),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                sellerPickup
+                    ? Icons.warehouse_outlined
+                    : Icons.delivery_dining_rounded,
+                color: RiderColors.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  sellerPickup
+                      ? 'Next: Deliver this parcel to '
+                            'the sorting center. In My Deliveries, '
+                            'confirm Arrived at Sorting Center. '
+                            'Logistics must still receive it.'
+                      : 'Next: Open My Deliveries, '
+                            'choose Manage Delivery, then '
+                            'Mark Out for Delivery. '
+                            'Upload proof after handing '
+                            'the parcel to the receiver.',
+                  style: RiderStyle.small,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
-          height: 50,
+          height: 48,
+          child: ElevatedButton.icon(
+            onPressed: _openMyDeliveries,
+            style: RiderStyle.primaryButton,
+            icon: const Icon(
+              Icons.local_shipping_outlined,
+              color: Colors.white,
+            ),
+            label: Text(
+              sellerPickup ? 'GO TO SELLER PICKUPS' : 'GO TO MY DELIVERIES',
+              style: RiderStyle.buttonText,
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
           child: OutlinedButton.icon(
             onPressed: _resetScanner,
-            icon: const Icon(
-              Icons.qr_code_scanner_rounded,
-              color: RiderColors.primary,
-            ),
-            label: const Text(
-              'Scan Another Parcel',
-              style: TextStyle(
-                color: RiderColors.primary,
-                fontWeight: FontWeight.w700,
+            icon: const Icon(Icons.qr_code_scanner_rounded),
+            label: const Text('Scan Another Parcel'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: RiderColors.primary,
+              side: const BorderSide(color: RiderColors.primary),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
             ),
           ),
         ),
       ],
     );
-  }
-
-  // ============================================================
-  // STATUS FORMATTER
-  // ============================================================
-
-  String _formatStatus(String status) {
-    final String value = status
-        .trim()
-        .toLowerCase()
-        .replaceAll('-', '_')
-        .replaceAll(' ', '_');
-
-    if (value.isEmpty) {
-      return 'Not available';
-    }
-
-    return value
-        .split('_')
-        .where((String part) => part.trim().isNotEmpty)
-        .map(
-          (String part) =>
-              '${part[0].toUpperCase()}'
-              '${part.substring(1).toLowerCase()}',
-        )
-        .join(' ');
-  }
-
-  // ============================================================
-  // SCAN TYPE FORMATTER
-  // ============================================================
-
-  String _formatScanType(String type) {
-    final String normalized = type
-        .trim()
-        .toLowerCase()
-        .replaceAll('-', '_')
-        .replaceAll(' ', '_');
-
-    switch (normalized) {
-      case 'seller_pickup':
-        return 'Seller Pickup';
-
-      case 'hub_pickup':
-        return 'Hub Pickup';
-
-      case 'linehaul':
-      case 'line_haul':
-        return 'Line Haul';
-
-      case 'final_mile':
-        return 'Final-Mile Delivery';
-
-      case 'pickup_and_delivery':
-        return 'Pickup & Final-Mile';
-
-      case 'pickup_and_linehaul':
-        return 'Pickup & Line Haul';
-
-      case 'linehaul_and_delivery':
-        return 'Line Haul & Final-Mile';
-
-      case 'pickup_linehaul_and_delivery':
-        return 'Pickup / Line Haul / Final-Mile';
-
-      default:
-        return _formatStatus(type);
-    }
-  }
-
-  // ============================================================
-  // INFO ROW
-  // ============================================================
-
-  Widget _infoRow(String title, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 9),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(width: 112, child: Text(title, style: RiderStyle.small)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              value.trim().isNotEmpty ? value : 'Not available',
-              softWrap: true,
-              style: RiderStyle.cardTitle,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _displayValue(String value, {String fallback = 'Not available'}) {
-    final String cleaned = value.trim();
-
-    if (cleaned.isEmpty || cleaned.toLowerCase() == 'null') {
-      return fallback;
-    }
-
-    return cleaned;
   }
 }

@@ -1,8 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/parcel_model.dart';
-import '../../sevices/api_services.dart';
+import '../../services/api_services.dart';
 import '../../styles/logistics_style.dart';
+import '../../utils/address_formatter.dart';
+import '../../utils/date_formatter.dart';
+import '../../widgets/app_empty_state.dart';
+import '../../widgets/app_error_state.dart';
+import '../../widgets/app_info_row.dart';
+import '../../widgets/app_skeleton.dart';
 import '../../widgets/parcel_card.dart';
 
 import 'parcel_information.dart';
@@ -15,29 +23,75 @@ class ParcelList extends StatefulWidget {
 }
 
 class _ParcelListState extends State<ParcelList> {
+  static const Duration _requestTimeout = Duration(seconds: 25);
+
   final TextEditingController _searchController = TextEditingController();
 
-  final List<ParcelModel> _parcels = <ParcelModel>[];
+  List<ParcelModel> _parcels = <ParcelModel>[];
 
   String _searchQuery = '';
   String _selectedStatus = 'all';
 
   bool _isLoading = true;
   bool _isRefreshing = false;
+  bool _hasLoaded = false;
 
   String? _errorMessage;
+  int _requestId = 0;
+
+  static const List<_ParcelFilterOption> _filterOptions = [
+    _ParcelFilterOption(
+      value: 'all',
+      title: 'All Parcels',
+      icon: Icons.inventory_2_outlined,
+    ),
+    _ParcelFilterOption(
+      value: 'pending',
+      title: 'Pending',
+      icon: Icons.schedule_rounded,
+    ),
+    _ParcelFilterOption(
+      value: 'sorting_center',
+      title: 'Sorting Center',
+      icon: Icons.warehouse_outlined,
+    ),
+    _ParcelFilterOption(
+      value: 'linehaul',
+      title: 'Line Haul',
+      icon: Icons.multiple_stop_rounded,
+    ),
+    _ParcelFilterOption(
+      value: 'destination_hub',
+      title: 'Destination Hub',
+      icon: Icons.location_city_outlined,
+    ),
+    _ParcelFilterOption(
+      value: 'out_for_delivery',
+      title: 'Out for Delivery',
+      icon: Icons.delivery_dining_rounded,
+    ),
+    _ParcelFilterOption(
+      value: 'delivered',
+      title: 'Delivered',
+      icon: Icons.check_circle_outline_rounded,
+    ),
+    _ParcelFilterOption(
+      value: 'cancelled',
+      title: 'Cancelled / Failed',
+      icon: Icons.cancel_outlined,
+    ),
+  ];
 
   @override
   void initState() {
     super.initState();
-
     _loadParcels();
   }
 
   @override
   void dispose() {
+    _requestId++;
     _searchController.dispose();
-
     super.dispose();
   }
 
@@ -46,136 +100,107 @@ class _ParcelListState extends State<ParcelList> {
   // ============================================================
 
   Future<void> _loadParcels({bool showLoading = true}) async {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted || _isRefreshing) return;
+
+    // Avoid overlapping initial requests.
+    if (_isLoading && _requestId > 0) return;
+
+    final int requestId = ++_requestId;
 
     setState(() {
-      if (showLoading) {
-        _isLoading = true;
-      } else {
-        _isRefreshing = true;
-      }
-
+      _isLoading = !_hasLoaded && showLoading;
+      _isRefreshing = _hasLoaded || !showLoading;
       _errorMessage = null;
     });
 
     try {
       final Map<String, dynamic> result =
-          await ApiService.getLogisticsShipments(perPage: 100);
+          await ApiService.getLogisticsShipments(perPage: 100)
+              .timeout(_requestTimeout);
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted || requestId != _requestId) return;
 
       if (result['success'] != true) {
         final String message = result['message']?.toString().trim() ?? '';
 
-        setState(() {
-          _isLoading = false;
-          _isRefreshing = false;
-
-          _errorMessage = message.isNotEmpty
-              ? message
-              : 'Unable to load logistics parcels.';
-        });
-
+        _setLoadError(
+          requestId,
+          message.isNotEmpty ? message : 'Unable to load logistics parcels.',
+        );
         return;
       }
 
-      final List<Map<String, dynamic>> items = _extractShipmentMaps(result);
+      final List<Map<String, dynamic>> rawItems = _extractShipmentMaps(result);
 
       final List<ParcelModel> loadedParcels = <ParcelModel>[];
 
-      for (final Map<String, dynamic> item in items) {
+      for (final Map<String, dynamic> item in rawItems) {
         try {
-          final Map<String, dynamic> normalized = _normalizeShipment(item);
-
-          loadedParcels.add(ParcelModel.fromJson(normalized));
+          loadedParcels.add(ParcelModel.fromJson(_normalizeShipment(item)));
         } catch (error) {
           debugPrint('Unable to parse logistics parcel: $error');
         }
       }
 
-      loadedParcels.sort((ParcelModel a, ParcelModel b) {
-        final DateTime? aDate = _activityDate(a);
-        final DateTime? bDate = _activityDate(b);
+      loadedParcels.sort(_compareParcels);
 
-        if (aDate != null && bDate != null) {
-          final int comparison = bDate.compareTo(aDate);
-
-          if (comparison != 0) {
-            return comparison;
-          }
-        } else if (aDate != null) {
-          return -1;
-        } else if (bDate != null) {
-          return 1;
-        }
-
-        return b.id.compareTo(a.id);
-      });
+      if (!mounted || requestId != _requestId) return;
 
       setState(() {
-        _parcels
-          ..clear()
-          ..addAll(loadedParcels);
-
+        _parcels = loadedParcels;
+        _hasLoaded = true;
         _isLoading = false;
         _isRefreshing = false;
         _errorMessage = null;
       });
+    } on TimeoutException {
+      _setLoadError(
+        requestId,
+        'The server took too long to respond. '
+        'Please check your connection and retry.',
+      );
     } catch (error) {
       debugPrint('Logistics parcel list error: $error');
 
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isLoading = false;
-        _isRefreshing = false;
-
-        _errorMessage =
-            'Unable to load logistics parcels. '
-            'Please check your connection and try again.';
-      });
+      _setLoadError(
+        requestId,
+        'Unable to connect to the BiliHub server. '
+        'Please check your internet connection.',
+      );
     }
   }
 
+  Future<void> _refreshParcels() {
+    return _loadParcels(showLoading: false);
+  }
+
+  void _setLoadError(int requestId, String message) {
+    if (!mounted || requestId != _requestId) return;
+
+    setState(() {
+      _isLoading = false;
+      _isRefreshing = false;
+      _errorMessage = message;
+    });
+  }
+
   // ============================================================
-  // EXTRACT SHIPMENT LIST
+  // EXTRACT SHIPMENT API DATA
   // ============================================================
 
   List<Map<String, dynamic>> _extractShipmentMaps(Map<String, dynamic> result) {
-    for (final String key in <String>[
-      'data',
-      'shipments',
-      'parcels',
-      'orders',
-    ]) {
-      final List<Map<String, dynamic>> list = _toMapList(result[key]);
-
-      if (list.isNotEmpty) {
-        return list;
+    for (final String key in ['data', 'shipments', 'parcels', 'orders']) {
+      if (result[key] is List) {
+        return _toMapList(result[key]);
       }
     }
 
     final dynamic rawData = result['data'];
 
     if (rawData is Map) {
-      final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
-
-      for (final String key in <String>[
-        'data',
-        'shipments',
-        'parcels',
-        'orders',
-      ]) {
-        final List<Map<String, dynamic>> list = _toMapList(data[key]);
-
-        if (list.isNotEmpty) {
-          return list;
+      for (final String key in ['data', 'shipments', 'parcels', 'orders']) {
+        if (rawData[key] is List) {
+          return _toMapList(rawData[key]);
         }
       }
     }
@@ -188,17 +213,10 @@ class _ParcelListState extends State<ParcelList> {
       return <Map<String, dynamic>>[];
     }
 
-    final List<Map<String, dynamic>> list = <Map<String, dynamic>>[];
-
-    for (final dynamic item in value) {
-      if (item is Map<String, dynamic>) {
-        list.add(Map<String, dynamic>.from(item));
-      } else if (item is Map) {
-        list.add(Map<String, dynamic>.from(item));
-      }
-    }
-
-    return list;
+    return value
+        .whereType<Map>()
+        .map((Map item) => Map<String, dynamic>.from(item))
+        .toList();
   }
 
   // ============================================================
@@ -214,63 +232,39 @@ class _ParcelListState extends State<ParcelList> {
       data.addAll(Map<String, dynamic>.from(nestedShipment));
     }
 
-    final dynamic order = raw['order'];
+    final Map<String, dynamic> order = _asMap(raw['order']);
 
-    if (order is Map) {
-      final Map<String, dynamic> orderMap = Map<String, dynamic>.from(order);
+    data['customer_name'] ??=
+        order['customer_name'] ?? order['buyer_name'] ?? order['name'];
 
-      data['customer_name'] ??=
-          orderMap['customer_name'] ??
-          orderMap['buyer_name'] ??
-          orderMap['name'];
+    data['customer_phone'] ??= order['customer_phone'] ?? order['phone'];
 
-      data['customer_phone'] ??=
-          orderMap['customer_phone'] ?? orderMap['phone'];
+    data['order_date'] ??= order['order_date'] ?? order['created_at'];
 
-      data['delivery_address'] ??=
-          orderMap['delivery_address'] ?? orderMap['address'];
+    final Map<String, dynamic> rider = _asMap(data['rider']);
 
-      data['order_date'] ??= orderMap['order_date'] ?? orderMap['created_at'];
-    }
+    data['rider_id'] ??= rider['id'];
+    data['rider_name'] ??= rider['name'];
 
-    final dynamic rider = data['rider'];
+    final Map<String, dynamic> linehaulRider = _asMap(data['linehaul_rider']);
 
-    if (rider is Map) {
-      data['rider_id'] ??= rider['id'];
-      data['rider_name'] ??= rider['name'];
-    }
+    data['linehaul_rider_id'] ??= linehaulRider['id'];
+    data['linehaul_rider_name'] ??= linehaulRider['name'];
 
-    final dynamic linehaulRider = data['linehaul_rider'];
+    final Map<String, dynamic> originHub = _asMap(data['origin_hub']);
 
-    if (linehaulRider is Map) {
-      data['linehaul_rider_id'] ??= linehaulRider['id'];
+    data['origin_hub_id'] ??= originHub['id'];
+    data['origin_hub_name'] ??= originHub['name'];
 
-      data['linehaul_rider_name'] ??= linehaulRider['name'];
-    }
+    final Map<String, dynamic> destinationHub = _asMap(data['destination_hub']);
 
-    final dynamic originHub = data['origin_hub'];
+    data['destination_hub_id'] ??= destinationHub['id'];
+    data['destination_hub_name'] ??= destinationHub['name'];
 
-    if (originHub is Map) {
-      data['origin_hub_id'] ??= originHub['id'];
+    final Map<String, dynamic> currentHub = _asMap(data['hub']);
 
-      data['origin_hub_name'] ??= originHub['name'];
-    }
-
-    final dynamic destinationHub = data['destination_hub'];
-
-    if (destinationHub is Map) {
-      data['destination_hub_id'] ??= destinationHub['id'];
-
-      data['destination_hub_name'] ??= destinationHub['name'];
-    }
-
-    final dynamic currentHub = data['hub'];
-
-    if (currentHub is Map) {
-      data['current_hub_id'] ??= currentHub['id'];
-
-      data['current_hub_name'] ??= currentHub['name'];
-    }
+    data['current_hub_id'] ??= currentHub['id'];
+    data['current_hub_name'] ??= currentHub['name'];
 
     data['id'] ??= data['shipment_id'] ?? data['order_id'] ?? 0;
 
@@ -287,13 +281,11 @@ class _ParcelListState extends State<ParcelList> {
 
     data['customer_phone'] ??= data['phone'] ?? data['recipient_phone'] ?? '';
 
-    data['delivery_address'] ??=
-        data['shipping_address'] ??
-        data['recipient_address'] ??
-        data['address'] ??
-        '';
+    data['delivery_address'] = _resolveDeliveryAddress(data, raw, order);
 
-    data['pickup_address'] ??= data['seller_address'] ?? '';
+    data['pickup_address'] = AddressFormatter.clean(
+      data['pickup_address'] ?? data['seller_address'],
+    );
 
     data['rider_name'] ??= '';
 
@@ -305,18 +297,53 @@ class _ParcelListState extends State<ParcelList> {
     data['delivery_earnings'] ??= data['earnings'] ?? data['delivery_fee'] ?? 0;
 
     data['latitude'] ??= data['lat'];
-
     data['longitude'] ??= data['lng'] ?? data['lon'];
 
     return data;
   }
 
+  Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map) {
+      return Map<String, dynamic>.from(value);
+    }
+
+    return <String, dynamic>{};
+  }
+
+  String _resolveDeliveryAddress(
+    Map<String, dynamic> shipment,
+    Map<String, dynamic> raw,
+    Map<String, dynamic> order,
+  ) {
+    for (final Map<String, dynamic> source in [shipment, raw, order]) {
+      for (final String key in [
+        'delivery_address',
+        'full_delivery_address',
+        'shipping_address',
+        'recipient_address',
+        'buyer_address',
+        'address',
+        'delivery_address_details',
+        'shipping_address_details',
+        'address_details',
+      ]) {
+        final String address = AddressFormatter.clean(source[key]);
+
+        if (address.isNotEmpty) {
+          return address;
+        }
+      }
+    }
+
+    return '';
+  }
+
   // ============================================================
-  // ACTIVITY DATE
+  // SORT PARCELS
   // ============================================================
 
   DateTime? _activityDate(ParcelModel parcel) {
-    final List<String> candidates = <String>[
+    final List<String> dates = [
       parcel.updatedAt,
       parcel.destinationHubReceivedAt,
       parcel.linehaulCompletedAt,
@@ -329,31 +356,45 @@ class _ParcelListState extends State<ParcelList> {
       parcel.orderDate,
     ];
 
-    for (final String value in candidates) {
-      final String text = value.trim();
+    for (final String raw in dates) {
+      final String value = raw.trim();
 
-      if (text.isEmpty || text.toLowerCase() == 'null') {
+      if (value.isEmpty || value.toLowerCase() == 'null') {
         continue;
       }
 
-      final DateTime? parsed = DateTime.tryParse(text);
+      final DateTime? parsed = DateFormatter.value(value);
 
-      if (parsed != null) {
-        return parsed;
-      }
+      if (parsed != null) return parsed;
     }
 
     return null;
   }
 
+  int _compareParcels(ParcelModel a, ParcelModel b) {
+    final DateTime? aDate = _activityDate(a);
+    final DateTime? bDate = _activityDate(b);
+
+    if (aDate != null && bDate != null) {
+      final int result = bDate.compareTo(aDate);
+      if (result != 0) return result;
+    } else if (aDate != null) {
+      return -1;
+    } else if (bDate != null) {
+      return 1;
+    }
+
+    return b.id.compareTo(a.id);
+  }
+
   // ============================================================
-  // FILTERED PARCELS
+  // SEARCH AND FILTER
   // ============================================================
 
   List<ParcelModel> get _filteredParcels {
-    return _parcels.where((ParcelModel parcel) {
-      final String search = _searchQuery.trim().toLowerCase();
+    final String search = _searchQuery.trim().toLowerCase();
 
+    return _parcels.where((ParcelModel parcel) {
       final bool matchesSearch =
           search.isEmpty ||
           parcel.trackingNumber.toLowerCase().contains(search) ||
@@ -367,23 +408,17 @@ class _ParcelListState extends State<ParcelList> {
           parcel.riderName.toLowerCase().contains(search) ||
           parcel.linehaulRiderName.toLowerCase().contains(search);
 
-      if (!matchesSearch) {
-        return false;
-      }
-
-      if (_selectedStatus == 'all') {
-        return true;
-      }
+      if (!matchesSearch) return false;
 
       final String status = parcel.normalizedStatus;
-
-      final String routingStatus = parcel.normalizedRoutingStatus;
-
-      final String linehaulStatus = parcel.normalizedLinehaulStatus;
-
-      final String sortingStatus = parcel.normalizedSortingStatus;
+      final String routing = parcel.normalizedRoutingStatus;
+      final String linehaul = parcel.normalizedLinehaulStatus;
+      final String sorting = parcel.normalizedSortingStatus;
 
       switch (_selectedStatus) {
+        case 'all':
+          return true;
+
         case 'pending':
           return status == 'pending' ||
               status == 'assigned' ||
@@ -393,25 +428,25 @@ class _ParcelListState extends State<ParcelList> {
           return status == 'at_sorting_center' ||
               status == 'sorted' ||
               status == 'staged' ||
-              sortingStatus == 'received' ||
-              sortingStatus == 'sorting' ||
-              sortingStatus == 'sorted' ||
-              sortingStatus == 'staged' ||
-              routingStatus == 'at_origin_hub';
+              sorting == 'received' ||
+              sorting == 'sorting' ||
+              sorting == 'sorted' ||
+              sorting == 'staged' ||
+              routing == 'at_origin_hub';
 
         case 'linehaul':
           return parcel.requiresHubTransfer ||
               parcel.isLinehaulAwaitingAssignment ||
               parcel.isLinehaulAssigned ||
               parcel.isLinehaulInTransit ||
-              routingStatus == 'in_hub_transfer' ||
-              linehaulStatus == 'assigned' ||
-              linehaulStatus == 'in_transit';
+              routing == 'in_hub_transfer' ||
+              linehaul == 'assigned' ||
+              linehaul == 'in_transit';
 
         case 'destination_hub':
           return parcel.isAtDestinationHub ||
-              linehaulStatus == 'completed' ||
-              routingStatus == 'at_destination_hub';
+              linehaul == 'completed' ||
+              routing == 'at_destination_hub';
 
         case 'out_for_delivery':
           return status == 'out_for_delivery';
@@ -421,8 +456,10 @@ class _ParcelListState extends State<ParcelList> {
 
         case 'cancelled':
           return status == 'cancelled' ||
+              status == 'canceled' ||
               status == 'delivery_failed' ||
-              status == 'failed';
+              status == 'failed' ||
+              status == 'failed_return_at_sorting_center';
 
         default:
           return true;
@@ -430,38 +467,40 @@ class _ParcelListState extends State<ParcelList> {
     }).toList();
   }
 
-  // ============================================================
-  // COUNTERS
-  // ============================================================
+  int get _linehaulCount => _parcels.where((ParcelModel parcel) {
+    return parcel.requiresHubTransfer ||
+        parcel.isLinehaulAssigned ||
+        parcel.isLinehaulInTransit;
+  }).length;
 
-  int get _linehaulCount {
-    return _parcels.where((ParcelModel parcel) {
-      return parcel.requiresHubTransfer ||
-          parcel.isLinehaulAssigned ||
-          parcel.isLinehaulInTransit;
-    }).length;
+  int get _sortingCenterCount => _parcels.where((ParcelModel parcel) {
+    return parcel.isAtSortingCenter ||
+        parcel.isStaged ||
+        parcel.normalizedStatus == 'at_sorting_center';
+  }).length;
+
+  int get _deliveredCount => _parcels.where((ParcelModel parcel) {
+    return parcel.isDelivered;
+  }).length;
+
+  bool get _hasFilters =>
+      _searchQuery.trim().isNotEmpty || _selectedStatus != 'all';
+
+  void _clearFilters() {
+    _searchController.clear();
+
+    setState(() {
+      _searchQuery = '';
+      _selectedStatus = 'all';
+    });
   }
 
-  int get _sortingCenterCount {
-    return _parcels.where((ParcelModel parcel) {
-      return parcel.isAtSortingCenter ||
-          parcel.isStaged ||
-          parcel.normalizedStatus == 'at_sorting_center';
-    }).length;
-  }
+  void _clearSearch() {
+    _searchController.clear();
 
-  int get _deliveredCount {
-    return _parcels.where((ParcelModel parcel) {
-      return parcel.isDelivered;
-    }).length;
-  }
-
-  // ============================================================
-  // REFRESH
-  // ============================================================
-
-  Future<void> _refreshParcels() async {
-    await _loadParcels(showLoading: false);
+    setState(() {
+      _searchQuery = '';
+    });
   }
 
   // ============================================================
@@ -470,8 +509,7 @@ class _ParcelListState extends State<ParcelList> {
 
   @override
   Widget build(BuildContext context) {
-    final double width = MediaQuery.of(context).size.width;
-
+    final double width = MediaQuery.sizeOf(context).width;
     final double horizontalPadding = width < 380 ? 14 : 18;
 
     final List<ParcelModel> filteredParcels = _filteredParcels;
@@ -503,29 +541,23 @@ class _ParcelListState extends State<ParcelList> {
           ],
         ),
         actions: [
-          if (_isRefreshing)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Center(
-                child: SizedBox(
-                  height: 19,
-                  width: 19,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
+          IconButton(
+            tooltip: 'Refresh parcels',
+            onPressed: _isLoading || _isRefreshing ? null : _refreshParcels,
+            icon: _isRefreshing
+                ? const SizedBox(
+                    width: 19,
+                    height: 19,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: LogisticsColors.primary,
+                    ),
+                  )
+                : const Icon(
+                    Icons.refresh_rounded,
                     color: LogisticsColors.primary,
                   ),
-                ),
-              ),
-            )
-          else
-            IconButton(
-              onPressed: _isLoading ? null : _refreshParcels,
-              tooltip: 'Refresh',
-              icon: const Icon(
-                Icons.refresh_rounded,
-                color: LogisticsColors.primary,
-              ),
-            ),
+          ),
           const SizedBox(width: 6),
         ],
       ),
@@ -547,57 +579,53 @@ class _ParcelListState extends State<ParcelList> {
                     'Manage Parcels',
                     style: LogisticsStyle.sectionTitle,
                   ),
-
                   const SizedBox(height: 4),
-
                   const Text(
                     'Monitor sorting, hub transfer, '
                     'line-haul, and final delivery.',
                     style: LogisticsStyle.small,
                   ),
-
                   const SizedBox(height: 16),
-
                   _searchAndFilter(),
+                  const SizedBox(height: 14),
+
+                  if (_hasLoaded)
+                    _summaryChips()
+                  else if (_isLoading)
+                    _summarySkeleton(),
 
                   const SizedBox(height: 14),
 
-                  _summaryChips(),
-
-                  const SizedBox(height: 18),
-
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        _selectedStatus == 'all'
-                            ? 'All Parcels'
-                            : _filterTitle(_selectedStatus),
-                        style: LogisticsStyle.sectionTitle,
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: LogisticsColors.lightPurple,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
+                      Expanded(
                         child: Text(
-                          '${filteredParcels.length} '
-                          'parcel'
-                          '${filteredParcels.length == 1 ? '' : 's'}',
-                          style: const TextStyle(
-                            color: LogisticsColors.primary,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
+                          _filterTitle(_selectedStatus),
+                          style: LogisticsStyle.sectionTitle,
+                        ),
+                      ),
+                      if (_hasLoaded)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: LogisticsColors.lightPurple,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            '${filteredParcels.length} '
+                            '${filteredParcels.length == 1 ? 'parcel' : 'parcels'}',
+                            style: const TextStyle(
+                              color: LogisticsColors.primary,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
-                      ),
                     ],
                   ),
-
                   const SizedBox(height: 10),
                 ],
               ),
@@ -605,6 +633,7 @@ class _ParcelListState extends State<ParcelList> {
 
             Expanded(
               child: RefreshIndicator(
+                color: LogisticsColors.primary,
                 onRefresh: _refreshParcels,
                 child: _buildParcelBody(horizontalPadding, filteredParcels),
               ),
@@ -616,7 +645,7 @@ class _ParcelListState extends State<ParcelList> {
   }
 
   // ============================================================
-  // SEARCH + FILTER
+  // SEARCH BAR
   // ============================================================
 
   Widget _searchAndFilter() {
@@ -628,13 +657,6 @@ class _ParcelListState extends State<ParcelList> {
               color: LogisticsColors.white,
               borderRadius: BorderRadius.circular(15),
               border: Border.all(color: LogisticsColors.border),
-              boxShadow: <BoxShadow>[
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.025),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
             ),
             child: TextField(
               controller: _searchController,
@@ -662,13 +684,8 @@ class _ParcelListState extends State<ParcelList> {
                 ),
                 suffixIcon: _searchQuery.isNotEmpty
                     ? IconButton(
-                        onPressed: () {
-                          _searchController.clear();
-
-                          setState(() {
-                            _searchQuery = '';
-                          });
-                        },
+                        tooltip: 'Clear search',
+                        onPressed: _clearSearch,
                         icon: const Icon(Icons.close_rounded, size: 19),
                       )
                     : null,
@@ -678,17 +695,15 @@ class _ParcelListState extends State<ParcelList> {
             ),
           ),
         ),
-
         const SizedBox(width: 10),
-
         Material(
           color: Colors.transparent,
           child: InkWell(
             onTap: _showFilterOptions,
             borderRadius: BorderRadius.circular(15),
             child: Container(
-              height: 50,
               width: 50,
+              height: 50,
               decoration: BoxDecoration(
                 color: LogisticsColors.white,
                 borderRadius: BorderRadius.circular(15),
@@ -706,16 +721,12 @@ class _ParcelListState extends State<ParcelList> {
                     color: LogisticsColors.primary,
                   ),
                   if (_selectedStatus != 'all')
-                    Positioned(
+                    const Positioned(
                       top: 8,
                       right: 8,
-                      child: Container(
-                        height: 7,
-                        width: 7,
-                        decoration: const BoxDecoration(
-                          color: LogisticsColors.warning,
-                          shape: BoxShape.circle,
-                        ),
+                      child: CircleAvatar(
+                        radius: 3.5,
+                        backgroundColor: LogisticsColors.warning,
                       ),
                     ),
                 ],
@@ -728,8 +739,35 @@ class _ParcelListState extends State<ParcelList> {
   }
 
   // ============================================================
-  // SUMMARY CHIPS
+  // SUMMARY
   // ============================================================
+
+  Widget _summarySkeleton() {
+    final Color placeholder = Theme.of(context)
+        .colorScheme
+        .surfaceContainerHighest;
+
+    return SizedBox(
+      height: 33,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: 4,
+        separatorBuilder: (BuildContext context, int index) {
+          return const SizedBox(width: 8);
+        },
+        itemBuilder: (BuildContext context, int index) {
+          return Container(
+            width: 100,
+            decoration: BoxDecoration(
+              color: placeholder,
+              borderRadius: BorderRadius.circular(20),
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   Widget _summaryChips() {
     return SingleChildScrollView(
@@ -739,7 +777,7 @@ class _ParcelListState extends State<ParcelList> {
         children: [
           _summaryChip(
             icon: Icons.inventory_2_outlined,
-            label: '${_parcels.length} Total',
+            label: '${_parcels.length} Loaded',
           ),
           const SizedBox(width: 8),
           _summaryChip(
@@ -788,65 +826,173 @@ class _ParcelListState extends State<ParcelList> {
   }
 
   // ============================================================
-  // BODY
+  // PARCEL BODY AND SKELETON LOADING
   // ============================================================
 
   Widget _buildParcelBody(
     double horizontalPadding,
     List<ParcelModel> filteredParcels,
   ) {
-    if (_isLoading) {
+    if (_isLoading && !_hasLoaded) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(
+          horizontalPadding,
+          12,
+          horizontalPadding,
+          24,
+        ),
         children: const [
-          SizedBox(height: 110),
-          Center(
-            child: CircularProgressIndicator(color: LogisticsColors.primary),
+          AppSkeleton(
+            type: AppSkeletonType.parcel,
+            itemCount: 4,
+            color: LogisticsColors.primary,
           ),
         ],
       );
     }
 
-    if (_errorMessage != null) {
-      return _errorState();
+    if (!_hasLoaded) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
+          const SizedBox(height: 70),
+          AppErrorState(
+            title: 'Unable to Load Parcels',
+            message: _errorMessage ?? 'The shipment list is unavailable.',
+            color: LogisticsColors.primary,
+            onRetry: _loadParcels,
+          ),
+        ],
+      );
     }
 
     if (_parcels.isEmpty) {
-      return _emptyState();
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
+          if (_isRefreshing) _refreshIndicator(),
+          if (_errorMessage != null) _refreshWarning(),
+          const SizedBox(height: 75),
+          const AppEmptyState(
+            title: 'No Parcels Yet',
+            message:
+                'There are currently no shipments '
+                'assigned to this logistics account.',
+            icon: Icons.inventory_2_outlined,
+            color: LogisticsColors.primary,
+          ),
+        ],
+      );
     }
 
     if (filteredParcels.isEmpty) {
-      return _noSearchResults();
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
+          if (_isRefreshing) _refreshIndicator(),
+          if (_errorMessage != null) _refreshWarning(),
+          const SizedBox(height: 65),
+          AppEmptyState(
+            title: 'No Parcels Found',
+            message: _searchQuery.isNotEmpty
+                ? 'No loaded parcels match "$_searchQuery".'
+                : 'No loaded parcels match this filter.',
+            icon: Icons.search_off_rounded,
+            color: LogisticsColors.primary,
+            actionLabel: _hasFilters ? 'Clear Filters' : null,
+            onAction: _hasFilters ? _clearFilters : null,
+          ),
+        ],
+      );
     }
 
-    return _parcelList(horizontalPadding, filteredParcels);
-  }
-
-  // ============================================================
-  // PARCEL LIST
-  // ============================================================
-
-  Widget _parcelList(double horizontalPadding, List<ParcelModel> parcels) {
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(
         parent: BouncingScrollPhysics(),
       ),
       padding: EdgeInsets.fromLTRB(horizontalPadding, 4, horizontalPadding, 24),
-      itemCount: parcels.length,
+      itemCount:
+          filteredParcels.length +
+          (_isRefreshing ? 1 : 0) +
+          (_errorMessage != null ? 1 : 0),
       itemBuilder: (BuildContext context, int index) {
-        final ParcelModel parcel = parcels[index];
+        int adjustedIndex = index;
 
-        return _parcelItem(parcel);
+        if (_isRefreshing) {
+          if (adjustedIndex == 0) {
+            return _refreshIndicator();
+          }
+          adjustedIndex--;
+        }
+
+        if (_errorMessage != null) {
+          if (adjustedIndex == 0) {
+            return _refreshWarning();
+          }
+          adjustedIndex--;
+        }
+
+        return _parcelItem(filteredParcels[adjustedIndex]);
       },
     );
   }
 
+  Widget _refreshIndicator() {
+    return const Padding(
+      padding: EdgeInsets.only(bottom: 12),
+      child: LinearProgressIndicator(
+        color: LogisticsColors.primary,
+        minHeight: 2,
+      ),
+    );
+  }
+
+  Widget _refreshWarning() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(13),
+      decoration: LogisticsStyle.card,
+      child: Row(
+        children: [
+          const Icon(
+            Icons.wifi_off_rounded,
+            color: LogisticsColors.warning,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Showing previously loaded parcels. '
+              '${_errorMessage ?? 'Refresh failed.'}',
+              style: LogisticsStyle.small,
+            ),
+          ),
+          TextButton(
+            onPressed: _isLoading || _isRefreshing ? null : _refreshParcels,
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // PARCEL ITEM
+  // ============================================================
+
   Widget _parcelItem(ParcelModel parcel) {
-    final bool showRouting =
+    final bool hasRoute =
         parcel.originHubName.trim().isNotEmpty ||
-        parcel.destinationHubName.trim().isNotEmpty ||
-        parcel.linehaulStatus.trim().isNotEmpty ||
-        parcel.routingStatus.trim().isNotEmpty;
+        parcel.destinationHubName.trim().isNotEmpty;
+
+    final bool showRouting =
+        hasRoute ||
+        parcel.routingStatus.trim().isNotEmpty ||
+        parcel.linehaulStatus.trim().isNotEmpty;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -855,59 +1001,47 @@ class _ParcelListState extends State<ParcelList> {
           ParcelCard(
             parcel: parcel,
             buttonText: 'View',
-            onButtonPressed: () {
-              _openParcel(parcel);
-            },
+            onButtonPressed: () => _openParcel(parcel),
           ),
-
           if (showRouting)
             Container(
               width: double.infinity,
-              margin: const EdgeInsets.only(top: 2),
+              margin: const EdgeInsets.only(top: 3),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: LogisticsColors.white,
-                borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(14),
-                ),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: LogisticsColors.border),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (parcel.originHubName.trim().isNotEmpty ||
-                      parcel.destinationHubName.trim().isNotEmpty)
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(
-                          Icons.route_outlined,
-                          color: LogisticsColors.primary,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: Text(
-                            _routeText(parcel),
-                            style: LogisticsStyle.small,
-                          ),
-                        ),
-                      ],
+                  if (hasRoute)
+                    AppInfoRow(
+                      label: 'Hub Route',
+                      value: _routeText(parcel),
+                      icon: Icons.route_outlined,
+                      iconColor: LogisticsColors.primary,
+                      compact: true,
                     ),
-
                   if (parcel.routingStatus.trim().isNotEmpty) ...[
                     const SizedBox(height: 7),
-                    _routeStatusRow(
-                      label: 'Routing',
-                      value: parcel.routingStatus,
+                    AppInfoRow(
+                      label: 'Routing Status',
+                      value: _formatStatus(parcel.routingStatus),
+                      icon: Icons.hub_outlined,
+                      iconColor: LogisticsColors.primary,
+                      compact: true,
                     ),
                   ],
-
                   if (parcel.linehaulStatus.trim().isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    _routeStatusRow(
-                      label: 'Line Haul',
-                      value: parcel.linehaulStatus,
+                    const SizedBox(height: 7),
+                    AppInfoRow(
+                      label: 'Line-Haul Status',
+                      value: _formatStatus(parcel.linehaulStatus),
+                      icon: Icons.multiple_stop_rounded,
+                      iconColor: LogisticsColors.primary,
+                      compact: true,
                     ),
                   ],
                 ],
@@ -918,37 +1052,15 @@ class _ParcelListState extends State<ParcelList> {
     );
   }
 
-  Widget _routeStatusRow({required String label, required String value}) {
-    return Row(
-      children: [
-        SizedBox(width: 72, child: Text(label, style: LogisticsStyle.small)),
-        Expanded(
-          child: Text(
-            _formatStatus(value),
-            style: const TextStyle(
-              color: LogisticsColors.textDark,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   String _routeText(ParcelModel parcel) {
     final String origin = parcel.originHubName.trim();
-
     final String destination = parcel.destinationHubName.trim();
 
     if (origin.isNotEmpty && destination.isNotEmpty) {
       return '$origin → $destination';
     }
 
-    if (origin.isNotEmpty) {
-      return 'Origin: $origin';
-    }
-
+    if (origin.isNotEmpty) return 'Origin: $origin';
     if (destination.isNotEmpty) {
       return 'Destination: $destination';
     }
@@ -957,207 +1069,7 @@ class _ParcelListState extends State<ParcelList> {
   }
 
   // ============================================================
-  // ERROR STATE
-  // ============================================================
-
-  Widget _errorState() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 30),
-      children: [
-        const SizedBox(height: 50),
-
-        Center(
-          child: Container(
-            height: 100,
-            width: 100,
-            decoration: const BoxDecoration(
-              color: LogisticsColors.lightPurple,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.cloud_off_rounded,
-              color: LogisticsColors.primary,
-              size: 46,
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 22),
-
-        const Text(
-          'Unable to Load Parcels',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: LogisticsColors.textDark,
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-
-        const SizedBox(height: 8),
-
-        Text(
-          _errorMessage ?? 'Unable to load parcels.',
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: LogisticsColors.textGrey,
-            fontSize: 13,
-            height: 1.5,
-          ),
-        ),
-
-        const SizedBox(height: 22),
-
-        Center(
-          child: OutlinedButton.icon(
-            onPressed: () {
-              _loadParcels();
-            },
-            icon: const Icon(Icons.refresh_rounded, size: 19),
-            label: const Text('Try Again'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: LogisticsColors.primary,
-              backgroundColor: LogisticsColors.white,
-              side: const BorderSide(color: LogisticsColors.primary),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(13),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ============================================================
-  // EMPTY STATE
-  // ============================================================
-
-  Widget _emptyState() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 30),
-      children: const [
-        SizedBox(height: 50),
-
-        Center(
-          child: SizedBox(
-            height: 100,
-            width: 100,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: LogisticsColors.lightPurple,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.inventory_2_outlined,
-                color: LogisticsColors.primary,
-                size: 46,
-              ),
-            ),
-          ),
-        ),
-
-        SizedBox(height: 22),
-
-        Text(
-          'No Parcels Yet',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: LogisticsColors.textDark,
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-
-        SizedBox(height: 8),
-
-        Text(
-          'There are currently no shipments '
-          'assigned to this logistics account.',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: LogisticsColors.textGrey,
-            fontSize: 13,
-            height: 1.5,
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ============================================================
-  // NO SEARCH RESULTS
-  // ============================================================
-
-  Widget _noSearchResults() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(30),
-      children: [
-        const SizedBox(height: 70),
-
-        Center(
-          child: Container(
-            height: 80,
-            width: 80,
-            decoration: const BoxDecoration(
-              color: LogisticsColors.lightPurple,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.search_off_rounded,
-              color: LogisticsColors.primary,
-              size: 36,
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 18),
-
-        const Text(
-          'No Parcels Found',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: LogisticsColors.textDark,
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-
-        const SizedBox(height: 7),
-
-        Text(
-          _searchQuery.isNotEmpty
-              ? 'No parcel matches "$_searchQuery".'
-              : 'No parcels match the selected filter.',
-          textAlign: TextAlign.center,
-          style: LogisticsStyle.small,
-        ),
-
-        const SizedBox(height: 18),
-
-        Center(
-          child: TextButton(
-            onPressed: () {
-              _searchController.clear();
-
-              setState(() {
-                _searchQuery = '';
-                _selectedStatus = 'all';
-              });
-            },
-            style: LogisticsStyle.textButton,
-            child: const Text('Clear Filters'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ============================================================
-  // FILTER OPTIONS
+  // FILTER BOTTOM SHEET
   // ============================================================
 
   void _showFilterOptions() {
@@ -1168,104 +1080,46 @@ class _ParcelListState extends State<ParcelList> {
       builder: (BuildContext sheetContext) {
         return SafeArea(
           child: Container(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.8,
+            ),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
             decoration: const BoxDecoration(
-              color: Colors.white,
+              color: LogisticsColors.white,
               borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
             ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    height: 4,
-                    width: 42,
-                    decoration: BoxDecoration(
-                      color: LogisticsColors.border,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  height: 4,
+                  width: 42,
+                  decoration: BoxDecoration(
+                    color: LogisticsColors.border,
+                    borderRadius: BorderRadius.circular(10),
                   ),
+                ),
+                const SizedBox(height: 18),
+                const Row(
+                  children: [
+                    Icon(Icons.tune_rounded, color: LogisticsColors.primary),
+                    SizedBox(width: 10),
+                    Text('Filter Parcels', style: LogisticsStyle.sectionTitle),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _filterOptions.length,
+                    itemBuilder: (BuildContext context, int index) {
+                      final _ParcelFilterOption option = _filterOptions[index];
 
-                  const SizedBox(height: 18),
-
-                  const Row(
-                    children: [
-                      Icon(Icons.tune_rounded, color: LogisticsColors.primary),
-                      SizedBox(width: 10),
-                      Text(
-                        'Filter Parcels',
-                        style: LogisticsStyle.sectionTitle,
-                      ),
-                    ],
+                      return _filterOption(sheetContext, option);
+                    },
                   ),
-
-                  const SizedBox(height: 18),
-
-                  _filterOption(
-                    sheetContext,
-                    icon: Icons.inventory_2_outlined,
-                    title: 'All Parcels',
-                    value: 'all',
-                    color: LogisticsColors.primary,
-                  ),
-
-                  _filterOption(
-                    sheetContext,
-                    icon: Icons.schedule_rounded,
-                    title: 'Pending',
-                    value: 'pending',
-                    color: LogisticsColors.warning,
-                  ),
-
-                  _filterOption(
-                    sheetContext,
-                    icon: Icons.warehouse_outlined,
-                    title: 'Sorting Center',
-                    value: 'sorting_center',
-                    color: LogisticsColors.primary,
-                  ),
-
-                  _filterOption(
-                    sheetContext,
-                    icon: Icons.multiple_stop_rounded,
-                    title: 'Line Haul',
-                    value: 'linehaul',
-                    color: LogisticsColors.primary,
-                  ),
-
-                  _filterOption(
-                    sheetContext,
-                    icon: Icons.location_city_outlined,
-                    title: 'Destination Hub',
-                    value: 'destination_hub',
-                    color: LogisticsColors.primary,
-                  ),
-
-                  _filterOption(
-                    sheetContext,
-                    icon: Icons.delivery_dining_rounded,
-                    title: 'Out for Delivery',
-                    value: 'out_for_delivery',
-                    color: LogisticsColors.primary,
-                  ),
-
-                  _filterOption(
-                    sheetContext,
-                    icon: Icons.check_circle_outline_rounded,
-                    title: 'Delivered',
-                    value: 'delivered',
-                    color: Colors.green,
-                  ),
-
-                  _filterOption(
-                    sheetContext,
-                    icon: Icons.cancel_outlined,
-                    title: 'Cancelled / Failed',
-                    value: 'cancelled',
-                    color: Colors.red,
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         );
@@ -1273,14 +1127,8 @@ class _ParcelListState extends State<ParcelList> {
     );
   }
 
-  Widget _filterOption(
-    BuildContext sheetContext, {
-    required IconData icon,
-    required String title,
-    required String value,
-    required Color color,
-  }) {
-    final bool isSelected = _selectedStatus == value;
+  Widget _filterOption(BuildContext sheetContext, _ParcelFilterOption option) {
+    final bool isSelected = _selectedStatus == option.value;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -1291,7 +1139,7 @@ class _ParcelListState extends State<ParcelList> {
             Navigator.pop(sheetContext);
 
             setState(() {
-              _selectedStatus = value;
+              _selectedStatus = option.value;
             });
           },
           borderRadius: BorderRadius.circular(14),
@@ -1314,26 +1162,27 @@ class _ParcelListState extends State<ParcelList> {
                   height: 38,
                   width: 38,
                   decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.10),
+                    color: LogisticsColors.lightPurple,
                     borderRadius: BorderRadius.circular(11),
                   ),
-                  child: Icon(icon, color: color, size: 20),
-                ),
-
-                const SizedBox(width: 12),
-
-                Expanded(child: Text(title, style: LogisticsStyle.cardTitle)),
-
-                if (isSelected)
-                  const Icon(
-                    Icons.check_rounded,
+                  child: Icon(
+                    option.icon,
                     color: LogisticsColors.primary,
-                  )
-                else
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: LogisticsColors.textLight,
+                    size: 20,
                   ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(option.title, style: LogisticsStyle.cardTitle),
+                ),
+                Icon(
+                  isSelected
+                      ? Icons.check_rounded
+                      : Icons.chevron_right_rounded,
+                  color: isSelected
+                      ? LogisticsColors.primary
+                      : LogisticsColors.textLight,
+                ),
               ],
             ),
           ),
@@ -1343,44 +1192,26 @@ class _ParcelListState extends State<ParcelList> {
   }
 
   String _filterTitle(String value) {
-    switch (value) {
-      case 'pending':
-        return 'Pending Parcels';
-
-      case 'sorting_center':
-        return 'Sorting Center';
-
-      case 'linehaul':
-        return 'Line Haul';
-
-      case 'destination_hub':
-        return 'Destination Hub';
-
-      case 'out_for_delivery':
-        return 'Out for Delivery';
-
-      case 'delivered':
-        return 'Delivered';
-
-      case 'cancelled':
-        return 'Cancelled / Failed';
-
-      default:
-        return 'All Parcels';
+    for (final _ParcelFilterOption option in _filterOptions) {
+      if (option.value == value) {
+        return option.title;
+      }
     }
+
+    return 'All Parcels';
   }
 
   String _formatStatus(String value) {
-    final String cleaned = value
+    final String normalized = value
         .trim()
         .replaceAll('-', '_')
         .replaceAll(' ', '_');
 
-    if (cleaned.isEmpty) {
+    if (normalized.isEmpty) {
       return 'Not available';
     }
 
-    return cleaned
+    return normalized
         .split('_')
         .where((String part) => part.isNotEmpty)
         .map(
@@ -1392,7 +1223,7 @@ class _ParcelListState extends State<ParcelList> {
   }
 
   // ============================================================
-  // OPEN PARCEL INFORMATION
+  // OPEN PARCEL DETAILS
   // ============================================================
 
   Future<void> _openParcel(ParcelModel parcel) async {
@@ -1405,10 +1236,20 @@ class _ParcelListState extends State<ParcelList> {
       ),
     );
 
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
-    await _loadParcels(showLoading: false);
+    await _refreshParcels();
   }
+}
+
+class _ParcelFilterOption {
+  final String value;
+  final String title;
+  final IconData icon;
+
+  const _ParcelFilterOption({
+    required this.value,
+    required this.title,
+    required this.icon,
+  });
 }

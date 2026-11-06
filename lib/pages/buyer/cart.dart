@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../sevices/cart_service.dart';
+import '../../services/cart_service.dart';
 import '../../styles/buyer_style.dart';
+import '../../utils/money_formatter.dart';
 
 import 'checkout.dart';
 
@@ -173,7 +174,10 @@ class _CartPageState extends State<CartPage> {
         ..showSnackBar(
           const SnackBar(
             behavior: SnackBarBehavior.floating,
-            content: Text('Please select at least one product to checkout.'),
+            content: Text(
+              'Please select at least one product '
+              'to checkout.',
+            ),
           ),
         );
 
@@ -253,6 +257,7 @@ class _CartPageState extends State<CartPage> {
                             activeColor: BuyerColors.primary,
                             onChanged: _toggleSelectAll,
                           ),
+
                           const Text(
                             'Select All',
                             style: TextStyle(
@@ -261,11 +266,14 @@ class _CartPageState extends State<CartPage> {
                               color: BuyerColors.textDark,
                             ),
                           ),
+
                           const Spacer(),
+
                           Text(
                             '${_selectedItems.length} selected',
                             style: BuyerStyle.small,
                           ),
+
                           const SizedBox(width: 8),
                         ],
                       ),
@@ -364,7 +372,9 @@ class _CartPageState extends State<CartPage> {
                                       const SizedBox(height: 6),
 
                                       Text(
-                                        '₱${product.sellingPrice.toStringAsFixed(2)}',
+                                        MoneyFormatter.peso(
+                                          product.sellingPrice,
+                                        ),
                                         style: const TextStyle(
                                           color: BuyerColors.primary,
                                           fontSize: 16,
@@ -375,7 +385,7 @@ class _CartPageState extends State<CartPage> {
                                       if (product.hasDiscount) ...[
                                         const SizedBox(height: 2),
                                         Text(
-                                          '₱${product.price.toStringAsFixed(2)}',
+                                          MoneyFormatter.peso(product.price),
                                           style: const TextStyle(
                                             color: BuyerColors.textGrey,
                                             fontSize: 12,
@@ -440,7 +450,8 @@ class _CartPageState extends State<CartPage> {
                                       const SizedBox(height: 8),
 
                                       Text(
-                                        'Subtotal: ₱${item.subtotal.toStringAsFixed(2)}',
+                                        'Subtotal: '
+                                        '${MoneyFormatter.peso(item.subtotal)}',
                                         style: const TextStyle(
                                           fontSize: 12,
                                           fontWeight: FontWeight.w600,
@@ -533,7 +544,7 @@ class _CartPageState extends State<CartPage> {
                                   style: BuyerStyle.sectionTitle,
                                 ),
                                 Text(
-                                  '₱${_selectedTotal.toStringAsFixed(2)}',
+                                  MoneyFormatter.peso(_selectedTotal),
                                   style: const TextStyle(
                                     color: BuyerColors.primary,
                                     fontSize: 20,
