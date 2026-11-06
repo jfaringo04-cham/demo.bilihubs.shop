@@ -39,6 +39,25 @@ class CodRemittanceController extends Controller
             ->orderBy('id')
             ->get();
 
+        $deadlineStatuses = $availablePayments->mapWithKeys(
+            fn (Payment $payment) => [
+                $payment->id =>
+                    \App\Services\CodRemittanceDeadlineService::forUnsubmitted(
+                        $payment
+                    ),
+            ]
+        );
+
+        $overduePayments = $availablePayments->filter(
+            fn (Payment $payment) =>
+                $deadlineStatuses[$payment->id]['overdue']
+        );
+
+        $overdueCount = $overduePayments->count();
+
+        $overdueTotalMinor = (int) $overduePayments
+            ->sum('amount_minor');
+
         $remittances = CodRemittance::query()
             ->with('payments')
             ->where('rider_user_id', $riderId)
@@ -48,6 +67,9 @@ class CodRemittanceController extends Controller
         // Temporary JSON response while the Blade UI is being built.
         return view('rider.cod-remittances', [
             'availablePayments' => $availablePayments,
+            'deadlineStatuses' => $deadlineStatuses,
+            'overdueCount' => $overdueCount,
+            'overdueTotalMinor' => $overdueTotalMinor,
             'remittances' => $remittances,
         ]);
     }

@@ -64,6 +64,35 @@
         </div>
     </div>
 
+    {{-- COD deadline monitoring --}}
+    <div class="alert alert-info mb-4">
+        <strong>COD Remittance Deadline: 24 Hours</strong>
+        <div class="small mt-1">
+            Submit COD cash within 24 hours after collection.
+            Late remittances are still accepted for confirmation.
+        </div>
+    </div>
+
+    @if($overdueCount > 0)
+        <div class="alert alert-danger mb-4">
+            <strong>Overdue COD Remittance</strong>
+
+            <p class="mb-1 mt-2">
+                {{ $overdueCount }}
+                COD collections exceeded the 24-hour deadline.
+            </p>
+
+            <strong>
+                Amount:
+                PHP {{ number_format($overdueTotalMinor / 100, 2) }}
+            </strong>
+
+            <div class="small mt-2">
+                Please remit the overdue cash as soon as possible.
+            </div>
+        </div>
+    @endif
+
     <div id="remittanceFeedback" class="alert d-none" role="alert"></div>
 
     <div class="card border-0 shadow-sm mb-4">
@@ -106,6 +135,20 @@
                                 </td>
                                 <td>
                                     {{ $payment->paid_at?->format('M d, Y') ?? '—' }}
+                                    <div class="small text-muted mt-1">
+                                        Due:
+                                        {{ $deadlineStatuses[$payment->id]['due_at']->format('M d, Y h:i A') }}
+                                    </div>
+
+                                    @if($deadlineStatuses[$payment->id]['overdue'])
+                                        <span class="badge bg-danger mt-1">
+                                            Overdue
+                                        </span>
+                                    @else
+                                        <span class="badge bg-success mt-1">
+                                            Within Deadline
+                                        </span>
+                                    @endif
                                 </td>
                                 <td class="text-end fw-semibold pe-4">
                                     ₱{{ number_format($payment->amount_minor / 100, 2) }}

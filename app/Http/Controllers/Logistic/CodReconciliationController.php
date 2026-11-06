@@ -62,6 +62,48 @@ class CodReconciliationController extends Controller
             ->orderBy('u.name')
             ->get();
 
+        // Overdue COD is unsubmitted cash past 24 hours.
+        // Pending/confirmed remittances are excluded.
+        // Rejected remittances remain eligible for monitoring.
+        $overdueRows = DB::table('payments as p')
+            ->join('shipments as s', 's.id', '=', 'p.shipment_id')
+            ->where('s.logistic_id', $logistic->id)
+            ->whereColumn('s.rider_id', 'p.collected_by')
+            ->where('s.status', 'delivered')
+            ->where('p.method', 'cod')
+            ->where('p.status', 'paid')
+            ->whereNotNull('p.paid_at')
+            ->where('p.paid_at', '<=', now()->subHours(
+                \App\Services\CodRemittanceDeadlineService::DEADLINE_HOURS
+            ))
+            ->where('p.amount_minor', '>', 0)
+            ->whereNotExists(function ($query) {
+                $query->selectRaw('1')
+                    ->from('cod_remittance_payments as cri')
+                    ->join(
+                        'cod_remittances as cr',
+                        'cr.id',
+                        '=',
+                        'cri.cod_remittance_id'
+                    )
+                    ->whereColumn('cri.payment_id', 'p.id')
+                    ->whereIn('cr.status', [
+                        'pending',
+                        'confirmed',
+                    ]);
+            })
+            ->groupBy('p.collected_by')
+            ->select('p.collected_by')
+            ->selectRaw('COUNT(*) as payment_count')
+            ->selectRaw('SUM(p.amount_minor) as total_minor')
+            ->get();
+
+        $overdueStats = [
+            'rider_count' => $overdueRows->count(),
+            'payment_count' => (int) $overdueRows->sum('payment_count'),
+            'total_minor' => (int) $overdueRows->sum('total_minor'),
+        ];
+
         $totals = [
             'collected_minor' => $balances->sum('collected_minor'),
             'unsubmitted_minor' => $balances->sum('unsubmitted_minor'),
@@ -71,7 +113,7 @@ class CodReconciliationController extends Controller
 
         return view(
             'logistic.cod-reconciliation',
-            compact('logistic', 'balances', 'totals')
+            compact('logistic', 'balances', 'totals', 'overdueStats')
         );
     }
 

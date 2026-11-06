@@ -331,4 +331,149 @@ class CodReconciliationTest extends TestCase
             $this->assertEquals(0, $value);
         }
     }
+
+    public function test_overdue_dashboard_counts_only_late_unsubmitted_cash(): void
+    {
+        [$rider, $owner, $logisticId] = $this->setupActors();
+
+        $late = $this->payment($rider->id, $logisticId, 15000);
+        $recent = $this->payment($rider->id, $logisticId, 5000);
+
+        DB::table('payments')
+            ->where('id', $late)
+            ->update([
+                'paid_at' => now()->subHours(25),
+            ]);
+
+        DB::table('payments')
+            ->where('id', $recent)
+            ->update([
+                'paid_at' => now()->subHours(2),
+            ]);
+
+        $response = $this->actingAs($owner)
+            ->get(route('logistic.cod-reconciliation.index'))
+            ->assertOk();
+
+        $stats = $response->viewData('overdueStats');
+
+        $this->assertEquals(1, $stats['rider_count']);
+        $this->assertEquals(1, $stats['payment_count']);
+        $this->assertEquals(15000, $stats['total_minor']);
+    }
+
+    public function test_overdue_dashboard_excludes_pending_and_confirmed_but_counts_rejected(): void
+    {
+        [$rider, $owner, $logisticId] = $this->setupActors();
+
+        $pending = $this->payment($rider->id, $logisticId, 10000);
+        $confirmed = $this->payment($rider->id, $logisticId, 20000);
+        $rejected = $this->payment($rider->id, $logisticId, 30000);
+
+        foreach ([$pending, $confirmed, $rejected] as $id) {
+            DB::table('payments')
+                ->where('id', $id)
+                ->update([
+                    'paid_at' => now()->subHours(30),
+                ]);
+        }
+
+        $this->remit($pending, $rider->id, $logisticId, 'pending');
+        $this->remit($confirmed, $rider->id, $logisticId, 'confirmed');
+        $this->remit($rejected, $rider->id, $logisticId, 'rejected');
+
+        $response = $this->actingAs($owner)
+            ->get(route('logistic.cod-reconciliation.index'))
+            ->assertOk();
+
+        $stats = $response->viewData('overdueStats');
+
+        $this->assertEquals(1, $stats['rider_count']);
+        $this->assertEquals(1, $stats['payment_count']);
+        $this->assertEquals(30000, $stats['total_minor']);
+
+        // Once resubmitted, the same cash must not be counted overdue.
+        $this->remit($rejected, $rider->id, $logisticId, 'pending');
+
+        $after = $this->actingAs($owner)
+            ->get(route('logistic.cod-reconciliation.index'))
+            ->assertOk()
+            ->viewData('overdueStats');
+
+        $this->assertEquals(0, $after['rider_count']);
+        $this->assertEquals(0, $after['payment_count']);
+        $this->assertEquals(0, $after['total_minor']);
+    }
+
+    public function test_overdue_dashboard_groups_riders_and_excludes_other_logistics(): void
+    {
+        [$rider, $owner, $logisticId] = $this->setupActors();
+
+        $secondRider = $this->user(
+            'deadline-second-rider@example.com',
+            1,
+            $logisticId
+        );
+
+        $first = $this->payment($rider->id, $logisticId, 10000);
+        $second = $this->payment($secondRider->id, $logisticId, 25000);
+        $third = $this->payment($secondRider->id, $logisticId, 5000);
+
+        foreach ([$first, $second, $third] as $id) {
+            DB::table('payments')
+                ->where('id', $id)
+                ->update([
+                    'paid_at' => now()->subHours(26),
+                ]);
+        }
+
+        $otherOwner = $this->user(
+            'deadline-other-owner@example.com',
+            2
+        );
+
+        $otherLogisticId = DB::table('logistics')->insertGetId([
+            'owner_user_id' => $otherOwner->id,
+            'company_name' => 'Another Delivery Company',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $otherRider = $this->user(
+            'deadline-other-rider@example.com',
+            1,
+            $otherLogisticId
+        );
+
+        $foreignPayment = $this->payment(
+            $otherRider->id,
+            $otherLogisticId,
+            99000
+        );
+
+        DB::table('payments')
+            ->where('id', $foreignPayment)
+            ->update([
+                'paid_at' => now()->subHours(30),
+            ]);
+
+        $firstStats = $this->actingAs($owner)
+            ->get(route('logistic.cod-reconciliation.index'))
+            ->assertOk()
+            ->viewData('overdueStats');
+
+        $this->assertEquals(2, $firstStats['rider_count']);
+        $this->assertEquals(3, $firstStats['payment_count']);
+        $this->assertEquals(40000, $firstStats['total_minor']);
+
+        $otherStats = $this->actingAs($otherOwner)
+            ->get(route('logistic.cod-reconciliation.index'))
+            ->assertOk()
+            ->viewData('overdueStats');
+
+        $this->assertEquals(1, $otherStats['rider_count']);
+        $this->assertEquals(1, $otherStats['payment_count']);
+        $this->assertEquals(99000, $otherStats['total_minor']);
+    }
 }

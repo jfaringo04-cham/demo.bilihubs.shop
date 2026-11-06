@@ -1,6 +1,70 @@
 @extends('layouts.logistic')
 
 @section('content')
+
+    {{-- Logistics COD Deadline Monitoring --}}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body p-4">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                <h5 class="fw-bold mb-0">
+                    <i class="bi bi-clock-history me-2"></i>
+                    COD Remittance Deadline Monitoring
+                </h5>
+                <span class="badge bg-secondary">24-hour policy</span>
+            </div>
+
+            <p class="text-muted small">
+                Unsubmitted COD cash is overdue 24 hours after collection.
+                Pending logistics confirmation is not counted as unsubmitted.
+            </p>
+
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-2">
+                            Overdue Riders
+                        </div>
+                        <h3 class="fw-bold mb-0">
+                            {{ $overdueStats['rider_count'] }}
+                        </h3>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-2">
+                            Overdue Collections
+                        </div>
+                        <h3 class="fw-bold mb-0">
+                            {{ $overdueStats['payment_count'] }}
+                        </h3>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-2">
+                            Overdue COD Amount
+                        </div>
+                        <h3 class="fw-bold text-danger mb-0">
+                            PHP {{ number_format($overdueStats['total_minor'] / 100, 2) }}
+                        </h3>
+                    </div>
+                </div>
+            </div>
+
+            @if($overdueStats['payment_count'] > 0)
+                <div class="alert alert-warning mt-3 mb-0">
+                    Some riders have unsubmitted COD collections past
+                    the deadline. Review rider cash balances for follow-up.
+                </div>
+            @else
+                <div class="alert alert-success mt-3 mb-0">
+                    No overdue unsubmitted COD collections detected.
+                </div>
+            @endif
+        </div>
+    </div>
 <div class="container-fluid py-4">
 
     {{-- Page Header --}}
