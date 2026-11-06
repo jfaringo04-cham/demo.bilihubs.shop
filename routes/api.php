@@ -1,6 +1,11 @@
+
 <?php
 
 use Illuminate\Support\Facades\Route;
+
+// ============================================================
+// GENERAL MOBILE API CONTROLLERS
+// ============================================================
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProductController;
@@ -12,7 +17,7 @@ use App\Http\Controllers\Api\ShipmentController;
 use App\Http\Controllers\Api\AddressApiController;
 
 // ============================================================
-// MOBILE RIDER API CONTROLLERS
+// RIDER MOBILE API CONTROLLERS
 // ============================================================
 
 use App\Http\Controllers\Api\Rider\DashboardController as RiderDashboardController;
@@ -20,9 +25,11 @@ use App\Http\Controllers\Api\Rider\OrderController as RiderOrderController;
 use App\Http\Controllers\Api\Rider\ScannerController as RiderScannerController;
 use App\Http\Controllers\Api\Rider\EarningsController as RiderEarningsController;
 use App\Http\Controllers\Api\Rider\NotificationController as RiderNotificationController;
+use App\Http\Controllers\Api\Rider\PickupOfferController as RiderPickupOfferController;
+use App\Http\Controllers\Api\Rider\CodCollectionController as RiderCodCollectionController;
 
 // ============================================================
-// MOBILE LOGISTICS API CONTROLLERS
+// LOGISTICS MOBILE API CONTROLLERS
 // ============================================================
 
 use App\Http\Controllers\Api\Logistic\DashboardController as LogisticDashboardController;
@@ -30,15 +37,21 @@ use App\Http\Controllers\Api\Logistic\ShipmentController as LogisticShipmentCont
 
 /*
 |--------------------------------------------------------------------------
-| API Routes
+| BILIHUB MOBILE API ROUTES
 |--------------------------------------------------------------------------
 |
-| These routes are used by the BiliHub mobile application.
+| General API routes for:
+| - Authentication
+| - Buyer
+| - Rider
+| - Logistics
+|
+| COD collection is restricted to authenticated riders.
 |
 */
 
 // ============================================================
-// PUBLIC ROUTES
+// PUBLIC API TEST
 // ============================================================
 
 Route::get('/test', function () {
@@ -50,66 +63,65 @@ Route::get('/test', function () {
 });
 
 // ============================================================
-// AUTH
+// PUBLIC AUTH ROUTES
 // ============================================================
 
-Route::post('/auth/register', [
-    AuthController::class,
-    'register',
-]);
+Route::post(
+    '/auth/register',
+    [AuthController::class, 'register']
+);
 
-Route::post('/auth/login', [
-    AuthController::class,
-    'login',
-]);
+Route::post(
+    '/auth/login',
+    [AuthController::class, 'login']
+);
 
-Route::post('/auth/social/google', [
-    AuthController::class,
-    'googleLogin',
-]);
+Route::post(
+    '/auth/social/google',
+    [AuthController::class, 'googleLogin']
+);
 
-Route::post('/auth/social/facebook', [
-    AuthController::class,
-    'facebookLogin',
-]);
+Route::post(
+    '/auth/social/facebook',
+    [AuthController::class, 'facebookLogin']
+);
 
-Route::post('/auth/forgot-password', [
-    AuthController::class,
-    'forgotPassword',
-]);
+Route::post(
+    '/auth/forgot-password',
+    [AuthController::class, 'forgotPassword']
+);
 
-Route::post('/auth/reset-password', [
-    AuthController::class,
-    'resetPassword',
-]);
-
-// ============================================================
-// PUBLIC PRODUCT BROWSING
-// ============================================================
-
-Route::get('/products', [
-    ProductController::class,
-    'index',
-]);
-
-Route::get('/products/categories', [
-    ProductController::class,
-    'categories',
-]);
-
-Route::get('/products/sizes', [
-    ProductController::class,
-    'sizes',
-]);
-
-Route::get('/products/{product}', [
-    ProductController::class,
-    'show',
-]);
+Route::post(
+    '/auth/reset-password',
+    [AuthController::class, 'resetPassword']
+);
 
 // ============================================================
-// PUBLIC ADDRESS API
-// Philippine geographic data
+// PUBLIC PRODUCT ROUTES
+// ============================================================
+
+Route::get(
+    '/products',
+    [ProductController::class, 'index']
+);
+
+Route::get(
+    '/products/categories',
+    [ProductController::class, 'categories']
+);
+
+Route::get(
+    '/products/sizes',
+    [ProductController::class, 'sizes']
+);
+
+Route::get(
+    '/products/{product}',
+    [ProductController::class, 'show']
+);
+
+// ============================================================
+// PUBLIC PHILIPPINE ADDRESS API
 // ============================================================
 
 Route::prefix('addresses')
@@ -221,166 +233,168 @@ Route::prefix('addresses')
 // PROTECTED GENERAL MOBILE ROUTES
 // ============================================================
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth:sanctum')
+    ->group(function () {
 
-    // ========================================================
-    // AUTH
-    // ========================================================
+        // ====================================================
+        // AUTHENTICATED USER
+        // ====================================================
 
-    Route::post('/auth/logout', [
-        AuthController::class,
-        'logout',
-    ]);
+        Route::post(
+            '/auth/logout',
+            [AuthController::class, 'logout']
+        );
 
-    Route::post('/auth/logout-all', [
-        AuthController::class,
-        'logoutAll',
-    ]);
+        Route::post(
+            '/auth/logout-all',
+            [AuthController::class, 'logoutAll']
+        );
 
-    Route::post('/auth/refresh', [
-        AuthController::class,
-        'refresh',
-    ]);
+        Route::post(
+            '/auth/refresh',
+            [AuthController::class, 'refresh']
+        );
 
-    Route::get('/auth/user', [
-        AuthController::class,
-        'user',
-    ]);
+        Route::get(
+            '/auth/user',
+            [AuthController::class, 'user']
+        );
 
-    Route::put('/auth/profile', [
-        AuthController::class,
-        'updateProfile',
-    ]);
+        Route::put(
+            '/auth/profile',
+            [AuthController::class, 'updateProfile']
+        );
 
-    Route::put('/auth/password', [
-        AuthController::class,
-        'updatePassword',
-    ]);
+        Route::put(
+            '/auth/password',
+            [AuthController::class, 'updatePassword']
+        );
 
-    Route::post('/auth/device', [
-        AuthController::class,
-        'registerDevice',
-    ]);
+        Route::post(
+            '/auth/device',
+            [AuthController::class, 'registerDevice']
+        );
 
-    // ========================================================
-    // ADDRESSES
-    // ========================================================
+        // ====================================================
+        // BUYER ADDRESSES
+        // ====================================================
 
-    Route::apiResource(
-        'addresses',
-        AddressController::class
-    )->only([
-        'index',
-        'store',
-        'show',
-        'update',
-        'destroy',
-    ]);
+        Route::apiResource(
+            'addresses',
+            AddressController::class
+        )->only([
+            'index',
+            'store',
+            'show',
+            'update',
+            'destroy',
+        ]);
 
-    Route::post(
-        '/addresses/{address}/set-default',
-        [AddressController::class, 'setDefault']
-    );
+        Route::post(
+            '/addresses/{address}/set-default',
+            [AddressController::class, 'setDefault']
+        );
 
-    // ========================================================
-    // CART
-    // ========================================================
+        // ====================================================
+        // BUYER CART
+        // ====================================================
 
-    Route::get('/cart', [
-        CartController::class,
-        'index',
-    ]);
+        Route::get(
+            '/cart',
+            [CartController::class, 'index']
+        );
 
-    Route::post('/cart', [
-        CartController::class,
-        'store',
-    ]);
+        Route::post(
+            '/cart',
+            [CartController::class, 'store']
+        );
 
-    Route::put('/cart/{cartItem}', [
-        CartController::class,
-        'update',
-    ]);
+        Route::put(
+            '/cart/{cartItem}',
+            [CartController::class, 'update']
+        );
 
-    Route::delete('/cart/{cartItem}', [
-        CartController::class,
-        'destroy',
-    ]);
+        Route::delete(
+            '/cart/{cartItem}',
+            [CartController::class, 'destroy']
+        );
 
-    Route::delete('/cart', [
-        CartController::class,
-        'clear',
-    ]);
+        Route::delete(
+            '/cart',
+            [CartController::class, 'clear']
+        );
 
-    Route::post('/buy-now', [
-        CartController::class,
-        'buyNow',
-    ]);
+        Route::post(
+            '/buy-now',
+            [CartController::class, 'buyNow']
+        );
 
-    // ========================================================
-    // ORDERS
-    // ========================================================
+        // ====================================================
+        // BUYER ORDERS
+        // ====================================================
 
-    Route::get('/orders', [
-        OrderController::class,
-        'index',
-    ]);
+        Route::get(
+            '/orders',
+            [OrderController::class, 'index']
+        );
 
-    Route::post('/orders', [
-        OrderController::class,
-        'store',
-    ]);
+        Route::post(
+            '/orders',
+            [OrderController::class, 'store']
+        );
 
-    Route::get('/orders/{order}', [
-        OrderController::class,
-        'show',
-    ]);
+        Route::get(
+            '/orders/{order}',
+            [OrderController::class, 'show']
+        );
 
-    Route::post('/orders/{order}/cancel', [
-        OrderController::class,
-        'cancel',
-    ]);
+        Route::post(
+            '/orders/{order}/cancel',
+            [OrderController::class, 'cancel']
+        );
 
-    Route::post('/orders/{order}/rate', [
-        OrderController::class,
-        'rate',
-    ]);
+        Route::post(
+            '/orders/{order}/rate',
+            [OrderController::class, 'rate']
+        );
 
-    // ========================================================
-    // NOTIFICATIONS
-    // ========================================================
+        // ====================================================
+        // GENERAL NOTIFICATIONS
+        // ====================================================
 
-    Route::get('/notifications', [
-        NotificationController::class,
-        'index',
-    ]);
+        Route::get(
+            '/notifications',
+            [NotificationController::class, 'index']
+        );
 
-    Route::post(
-        '/notifications/{notification}/read',
-        [NotificationController::class, 'markAsRead']
-    );
+        Route::post(
+            '/notifications/{notification}/read',
+            [NotificationController::class, 'markAsRead']
+        );
 
-    Route::post(
-        '/notifications/read-all',
-        [NotificationController::class, 'markAllAsRead']
-    );
+        Route::post(
+            '/notifications/read-all',
+            [NotificationController::class, 'markAllAsRead']
+        );
 
-    // ========================================================
-    // SHIPMENTS / TRACKING
-    // ========================================================
+        // ====================================================
+        // SHIPMENT TRACKING
+        // ====================================================
 
-    Route::get(
-        '/shipments/{shipment}/track',
-        [ShipmentController::class, 'track']
-    );
+        Route::get(
+            '/shipments/{shipment}/track',
+            [ShipmentController::class, 'track']
+        );
 
-    Route::get(
-        '/orders/{order}/shipment',
-        [ShipmentController::class, 'showForOrder']
-    );
-});
+        Route::get(
+            '/orders/{order}/shipment',
+            [ShipmentController::class, 'showForOrder']
+        );
+    });
 
 // ============================================================
-// MOBILE RIDER API
+// RIDER MOBILE API
+// AUTHENTICATION + RIDER ROLE REQUIRED
 // ============================================================
 
 Route::middleware([
@@ -399,6 +413,25 @@ Route::middleware([
             '/dashboard',
             [RiderDashboardController::class, 'index']
         )->name('dashboard');
+
+        // ====================================================
+        // RIDER PICKUP OFFERS
+        // ====================================================
+
+        Route::get(
+            '/pickup-offers',
+            [RiderPickupOfferController::class, 'index']
+        )->name('pickup-offers.index');
+
+        Route::post(
+            '/pickup-offers/{pickupRequest}/accept',
+            [RiderPickupOfferController::class, 'accept']
+        )->name('pickup-offers.accept');
+
+        Route::post(
+            '/pickup-offers/{pickupRequest}/decline',
+            [RiderPickupOfferController::class, 'decline']
+        )->name('pickup-offers.decline');
 
         // ====================================================
         // RIDER DELIVERIES
@@ -429,7 +462,16 @@ Route::middleware([
         )->name('orders.proof');
 
         // ====================================================
-        // RIDER SELLER PICKUP
+        // SELLER PICKUP WORKFLOW
+        // ====================================================
+        //
+        // The picked-up endpoint is retained for
+        // compatibility, but the revised controller
+        // rejects manual pickup confirmation.
+        //
+        // Actual seller pickup is completed using
+        // the authenticated QR scanner.
+        //
         // ====================================================
 
         Route::post(
@@ -443,13 +485,45 @@ Route::middleware([
         )->name('pickups.deliver-to-sorting-center');
 
         // ====================================================
-        // RIDER WAYBILL QR SCANNER
+        // SELLER / HUB QR SCANNER
         // ====================================================
 
         Route::post(
             '/scan',
             [RiderScannerController::class, 'scan']
         )->name('scan');
+
+        // ====================================================
+        // RIDER COD COLLECTION
+        // ====================================================
+        //
+        // IMPORTANT:
+        //
+        // These endpoints MUST stay inside the
+        // protected Rider middleware group.
+        //
+        // GET: Retrieve COD payment details
+        // POST: Record physically collected cash
+        //
+        // The controller validates:
+        // - Authenticated rider
+        // - Final-mile assignment
+        // - Shipment status
+        // - Hub QR confirmation
+        // - Exact shipment amount
+        // - Existing payments / duplicates
+        //
+        // ====================================================
+
+        Route::get(
+            '/shipments/{shipment}/cod',
+            [RiderCodCollectionController::class, 'show']
+        )->name('shipments.cod.show');
+
+        Route::post(
+            '/shipments/{shipment}/collect',
+            [RiderCodCollectionController::class, 'collect']
+        )->name('shipments.cod.collect');
 
         // ====================================================
         // RIDER EARNINGS
@@ -482,7 +556,7 @@ Route::middleware([
 
 // ============================================================
 // SELLER MOBILE API
-// TODO
+// NOT YET IMPLEMENTED
 // ============================================================
 
 // Route::middleware([
@@ -611,7 +685,7 @@ Route::middleware([
         )->name('shipments.stage');
 
         // ====================================================
-        // ASSIGN RIDER
+        // ASSIGN FINAL-MILE RIDER
         // ====================================================
 
         Route::post(
@@ -622,7 +696,7 @@ Route::middleware([
 
 // ============================================================
 // ADMIN MOBILE API
-// TODO
+// NOT YET IMPLEMENTED
 // ============================================================
 
 // Route::middleware([
@@ -697,5 +771,10 @@ Route::middleware([
 //             ]
 //         );
 //     });
+
+// ============================================================
+// FREE CRON ROUTES
+// KEEP EXISTING SCHEDULED TASK ROUTES INTACT
+// ============================================================
 
 require __DIR__ . '/free_cron_routes.php';

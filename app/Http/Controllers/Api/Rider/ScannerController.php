@@ -6,23 +6,36 @@ use App\Http\Controllers\Controller;
 use App\Models\Notification;
 use App\Models\PickupRequest;
 use App\Models\Shipment;
+use App\Services\OrderFlowSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class ScannerController extends Controller
 {
-    /**
-     * Scan a shipment waybill QR from the Rider mobile application.
-     *
-     * POST /api/rider/scan
-     *
-     * Expected body:
-     *
-     * {
-     *     "qr_payload": "{\"t\":\"TRACKING\",\"q\":\"TOKEN\",\"so\":123}"
-     * }
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | SCAN BILIHUB WAYBILL QR
+    |--------------------------------------------------------------------------
+    |
+    | POST /api/rider/scan
+    |
+    | Body:
+    | {
+    |   "qr_payload": "{\"t\":\"TRACKING\",\"q\":\"TOKEN\",\"so\":123}"
+    | }
+    |
+    | Seller pickup:
+    |   assigned -> in_transit
+    |
+    | Final-mile hub pickup:
+    |   assigned/staged/at_sorting_center -> picked_up
+    |
+    | A scan is a status-changing operation.
+    | All authorization is enforced on the server.
+    |
+    */
+
     public function scan(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -36,307 +49,270 @@ class ScannerController extends Controller
         $rider = $request->user();
 
         if (!$rider) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthenticated.',
-            ], 401);
+            return $this->error(
+                'Unauthenticated.',
+                401
+            );
         }
 
         if (!$rider->isRider()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'This account is not a rider account.',
-            ], 403);
+            return $this->error(
+                'This account is not a rider account.',
+                403
+            );
         }
 
-        // ============================================================
-        // READ / NORMALIZE QR PAYLOAD
-        // ============================================================
-
-        $rawPayload = trim(
-            (string) $validated['qr_payload']
+        $parsed = $this->parseQrPayload(
+            trim($validated['qr_payload'])
         );
 
-        $parsedPayload = $this->parseQrPayload(
-            $rawPayload
-        );
-
-        if (!$parsedPayload['success']) {
-            return response()->json([
-                'success' => false,
-                'message' => $parsedPayload['message'],
-            ], 422);
+        if (!$parsed['success']) {
+            return $this->error(
+                $parsed['message'],
+                422
+            );
         }
 
-        $trackingNumber =
-            $parsedPayload['tracking_number'];
-
-        $qrToken =
-            $parsedPayload['qr_token'];
-
-        $sellerOrderId =
-            $parsedPayload['seller_order_id'];
-
-        // ============================================================
-        // LOCATE SHIPMENT
-        // ============================================================
-
-        $shipment = Shipment::query()
-            ->where(
-                'tracking_number',
-                $trackingNumber
-            )
-            ->where(
-                'seller_order_id',
-                $sellerOrderId
-            )
-            ->where(
-                'qr_token',
-                $qrToken
-            )
-            ->first();
-
-        if (!$shipment) {
-            return response()->json([
-                'success' => false,
-                'message' =>
-                    'Shipment was not found or the QR code is invalid.',
-            ], 404);
-        }
+        $tracking = $parsed['tracking_number'];
+        $token = $parsed['qr_token'];
+        $sellerOrderId = $parsed['seller_order_id'];
 
         try {
-            $result = DB::transaction(
-                function () use (
-                    $shipment,
-                    $rider,
-                    $trackingNumber,
-                    $qrToken,
-                    $sellerOrderId
-                ) {
-                    // ====================================================
-                    // LOCK SHIPMENT
-                    // ====================================================
+            /*
+            |--------------------------------------------------------------
+            | IDENTIFY THE EXACT SHIPMENT
+            |--------------------------------------------------------------
+            */
 
-                    $locked = Shipment::query()
-                        ->whereKey(
-                            $shipment->id
-                        )
-                        ->lockForUpdate()
-                        ->firstOrFail();
+            $shipment = Shipment::query()
+                ->where('tracking_number', $tracking)
+                ->where('seller_order_id', $sellerOrderId)
+                ->where('qr_token', $token)
+                ->first();
 
-                    $locked->load([
-                        'sellerOrder.order.user',
-                        'sellerOrder.seller',
-                        'logistic',
-                        'hub',
-                    ]);
+            if (!$shipment) {
+                return $this->error(
+                    'Shipment not found or invalid BiliHub QR code.',
+                    404
+                );
+            }
 
-                    $sellerOrder =
-                        $locked->sellerOrder;
+            /*
+            |--------------------------------------------------------------
+            | LOCK + VERIFY + UPDATE
+            |--------------------------------------------------------------
+            */
 
-                    $order =
-                        $sellerOrder?->order;
-
-                    if (
-                        !$sellerOrder ||
-                        !$order
-                    ) {
-                        return [
-                            'success' => false,
-
-                            'status_code' => 422,
-
-                            'message' =>
-                                'Shipment is not linked to a valid order.',
-                        ];
-                    }
-
-                    // ====================================================
-                    // VERIFY QR BELONGS TO THIS SHIPMENT
-                    // ====================================================
-
-                    if (
-                        !hash_equals(
-                            (string) $locked->tracking_number,
-                            $trackingNumber
-                        ) ||
-                        (int) $locked->seller_order_id !==
-                            (int) $sellerOrderId
-                    ) {
-                        return [
-                            'success' => false,
-
-                            'status_code' => 422,
-
-                            'message' =>
-                                'QR code does not belong to this shipment.',
-                        ];
-                    }
-
-                    if (
-                        !$locked->qr_token ||
-                        !hash_equals(
-                            strtoupper(
-                                (string) $locked->qr_token
-                            ),
-                            strtoupper(
-                                $qrToken
-                            )
-                        )
-                    ) {
-                        return [
-                            'success' => false,
-
-                            'status_code' => 422,
-
-                            'message' =>
-                                'Invalid QR token for this shipment.',
-                        ];
-                    }
-
-                    // ====================================================
-                    // DETERMINE RIDER SCAN TYPE
-                    // ====================================================
-
-                    $isPickupRider =
-                        $locked->pickup_rider_id !== null &&
-                        (int) $locked->pickup_rider_id ===
-                            (int) $rider->id;
-
-                    $isFinalMileRider =
-                        $locked->rider_id !== null &&
-                        (int) $locked->rider_id ===
-                            (int) $rider->id;
-
-                    if (
-                        !$isPickupRider &&
-                        !$isFinalMileRider
-                    ) {
-                        return [
-                            'success' => false,
-
-                            'status_code' => 403,
-
-                            'message' =>
-                                'This parcel is not assigned to you.',
-                        ];
-                    }
-
-                    // ====================================================
-                    // SELLER PICKUP SCAN
-                    // ====================================================
-
-                    if (
-                        $isPickupRider &&
-                        !$locked->received_by_sorting_center
-                    ) {
-                        return $this
-                            ->processSellerPickup(
-                                shipment: $locked,
-                                rider: $rider,
-                                sellerOrder: $sellerOrder,
-                                order: $order,
-                            );
-                    }
-
-                    // ====================================================
-                    // FINAL-MILE HUB PICKUP SCAN
-                    // ====================================================
-
-                    if ($isFinalMileRider) {
-                        return $this
-                            ->processHubPickup(
-                                shipment: $locked,
-                                rider: $rider,
-                                order: $order,
-                            );
-                    }
-
-                    return [
-                        'success' => false,
-
-                        'status_code' => 422,
-
-                        'message' =>
-                            'This shipment cannot be scanned at its current stage.',
-                    ];
-                }
-            );
-
-            if (
-                !isset($result['success']) ||
-                $result['success'] !== true
+            $result = DB::transaction(function () use (
+                $shipment,
+                $rider,
+                $tracking,
+                $token,
+                $sellerOrderId
             ) {
-                return response()->json(
-                    [
-                        'success' => false,
+                $locked = Shipment::query()
+                    ->whereKey($shipment->id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
 
-                        'message' =>
-                            $result['message'] ??
-                            'Unable to scan shipment.',
-                    ],
+                $locked->load([
+                    'sellerOrder.order.user',
+                    'sellerOrder.seller',
+                    'logistic',
+                    'hub',
+                    'rider',
+                ]);
+
+                $sellerOrder = $locked->sellerOrder;
+                $order = $sellerOrder?->order;
+
+                if (!$sellerOrder || !$order) {
+                    return $this->failure(
+                        'Shipment is not linked to a valid order.',
+                        422
+                    );
+                }
+
+                /*
+                |----------------------------------------------------------
+                | VERIFY QR CONTENT AGAIN UNDER LOCK
+                |----------------------------------------------------------
+                */
+
+                if (
+                    !hash_equals(
+                        (string) $locked->tracking_number,
+                        $tracking
+                    ) ||
+                    (int) $locked->seller_order_id !==
+                        (int) $sellerOrderId ||
+                    !$locked->qr_token ||
+                    !hash_equals(
+                        strtoupper((string) $locked->qr_token),
+                        strtoupper($token)
+                    )
+                ) {
+                    return $this->failure(
+                        'The QR code does not match this shipment.',
+                        422
+                    );
+                }
+
+                /*
+                |----------------------------------------------------------
+                | IDENTIFY RIDER ASSIGNMENT
+                |----------------------------------------------------------
+                */
+
+                $isPickupRider =
+                    $locked->pickup_rider_id !== null &&
+                    (int) $locked->pickup_rider_id ===
+                        (int) $rider->id;
+
+                $isFinalMileRider =
+                    $locked->rider_id !== null &&
+                    (int) $locked->rider_id ===
+                        (int) $rider->id;
+
+                if (!$isPickupRider && !$isFinalMileRider) {
+                    return $this->failure(
+                        'This parcel is not assigned to you.',
+                        403
+                    );
+                }
+
+                if ($this->isFinalized($locked)) {
+                    return $this->failure(
+                        'This shipment is already finalized.',
+                        422
+                    );
+                }
+
+                /*
+                |----------------------------------------------------------
+                | SELLER PICKUP
+                |----------------------------------------------------------
+                |
+                | Even if the same rider later handles final-mile,
+                | first pickup is processed before Logistics receives
+                | the shipment.
+                |
+                */
+
+                if (
+                    $isPickupRider &&
+                    !$locked->received_by_sorting_center
+                ) {
+                    return $this->processSellerPickup(
+                        shipment: $locked,
+                        rider: $rider,
+                        sellerOrder: $sellerOrder,
+                        order: $order
+                    );
+                }
+
+                /*
+                |----------------------------------------------------------
+                | FINAL-MILE HUB PICKUP
+                |----------------------------------------------------------
+                */
+
+                if ($isFinalMileRider) {
+                    return $this->processHubPickup(
+                        shipment: $locked,
+                        rider: $rider,
+                        order: $order
+                    );
+                }
+
+                return $this->failure(
+                    'This shipment cannot be scanned at its current stage.',
+                    422
+                );
+            });
+
+            if (($result['success'] ?? false) !== true) {
+                return $this->error(
+                    $result['message'] ??
+                        'Unable to process the scanned waybill.',
                     $result['status_code'] ?? 422
                 );
             }
 
-            // ============================================================
-            // CREATE NOTIFICATIONS
-            // ============================================================
+            /*
+            |--------------------------------------------------------------
+            | NOTIFICATIONS
+            |--------------------------------------------------------------
+            |
+            | Shipment update is committed before notifications.
+            | Notification failure should not turn a successful
+            | pickup into an apparent failed scan.
+            |
+            */
 
-            $this->createScanNotifications(
-                $result,
-                $rider
-            );
+            try {
+                $this->createScanNotifications(
+                    $result,
+                    $rider
+                );
+            } catch (\Throwable $notificationError) {
+                report($notificationError);
+            }
 
             return response()->json([
                 'success' => true,
-
-                'message' =>
-                    $result['message'],
-
-                'scan_type' =>
-                    $result['scan_type'],
-
-                'shipment' =>
-                    $result['shipment'],
+                'message' => $result['message'],
+                'scan_type' => $result['scan_type'],
+                'shipment' => $result['shipment'],
             ], 200);
         } catch (\Throwable $e) {
             report($e);
 
-            return response()->json([
-                'success' => false,
-
-                'message' =>
-                    'Unable to process the scanned waybill.',
-            ], 500);
+            return $this->error(
+                'Unable to process the scanned waybill.',
+                500
+            );
         }
     }
 
-    // ============================================================
-    // PARSE QR PAYLOAD
-    // ============================================================
+    /*
+    |--------------------------------------------------------------------------
+    | PARSE SECURE BILIHUB QR
+    |--------------------------------------------------------------------------
+    |
+    | Supported:
+    |
+    | JSON:
+    | {"t":"TRACKING","q":"TOKEN","so":123}
+    |
+    | URL:
+    | https://site.com/track?t=TRACKING&q=TOKEN&so=123
+    |
+    | URL Path:
+    | https://site.com/track/TRACKING/TOKEN/123
+    |
+    | Query String:
+    | t=TRACKING&q=TOKEN&so=123
+    |
+    | Tracking number alone is NOT accepted.
+    |
+    */
 
     private function parseQrPayload(
         string $rawPayload
     ): array {
         if ($rawPayload === '') {
-            return [
-                'success' => false,
-                'message' => 'QR code is empty.',
-            ];
+            return $this->failure(
+                'QR code is empty.',
+                422
+            );
         }
 
-        // ------------------------------------------------------------
-        // 1. ORIGINAL BILIHUB JSON QR
-        //
-        // Shipment.php:
-        //
-        // {
-        //     "t": "TRACKING",
-        //     "q": "QR_TOKEN",
-        //     "so": 123
-        // }
-        // ------------------------------------------------------------
+        /*
+        |--------------------------------------------------------------
+        | JSON QR
+        |--------------------------------------------------------------
+        */
 
         $decoded = json_decode(
             $rawPayload,
@@ -344,26 +320,14 @@ class ScannerController extends Controller
         );
 
         if (is_array($decoded)) {
-            return $this
-                ->normalizeParsedQrData(
-                    $decoded
-                );
+            return $this->normalizeParsedQrData($decoded);
         }
 
-        // ------------------------------------------------------------
-        // 2. WEBSITE URL QR
-        //
-        // Examples:
-        //
-        // https://site.com/track?t=TRACKING&q=TOKEN&so=123
-        //
-        // or
-        //
-        // https://site.com/track?
-        // tracking_number=TRACKING
-        // &qr_token=TOKEN
-        // &seller_order_id=123
-        // ------------------------------------------------------------
+        /*
+        |--------------------------------------------------------------
+        | WEBSITE URL QR
+        |--------------------------------------------------------------
+        */
 
         if (
             filter_var(
@@ -371,12 +335,28 @@ class ScannerController extends Controller
                 FILTER_VALIDATE_URL
             )
         ) {
+            $scheme = strtolower(
+                (string) parse_url(
+                    $rawPayload,
+                    PHP_URL_SCHEME
+                )
+            );
+
+            if (!in_array(
+                $scheme,
+                ['http', 'https'],
+                true
+            )) {
+                return $this->failure(
+                    'Invalid QR URL scheme.',
+                    422
+                );
+            }
+
             $queryString = parse_url(
                 $rawPayload,
                 PHP_URL_QUERY
             );
-
-            $query = [];
 
             if (
                 is_string($queryString) &&
@@ -386,46 +366,21 @@ class ScannerController extends Controller
                     $queryString,
                     $query
                 );
-            }
 
-            if (!empty($query)) {
-                $normalized = [
-                    't' =>
-                        $query['t'] ??
-                        $query['tracking_number'] ??
-                        $query['tracking'] ??
-                        $query['tracking_code'] ??
-                        null,
-
-                    'q' =>
-                        $query['q'] ??
-                        $query['qr_token'] ??
-                        $query['token'] ??
-                        null,
-
-                    'so' =>
-                        $query['so'] ??
-                        $query['seller_order_id'] ??
-                        null,
-                ];
-
-                $result =
-                    $this->normalizeParsedQrData(
-                        $normalized
-                    );
+                $result = $this->normalizeParsedQrData(
+                    $query
+                );
 
                 if ($result['success']) {
                     return $result;
                 }
             }
 
-            // --------------------------------------------------------
-            // URL PATH SUPPORT
-            //
-            // Example:
-            //
-            // /track/TRACKING/TOKEN/123
-            // --------------------------------------------------------
+            /*
+            |----------------------------------------------------------
+            | URL PATH QR
+            |----------------------------------------------------------
+            */
 
             $path = parse_url(
                 $rawPayload,
@@ -440,22 +395,21 @@ class ScannerController extends Controller
                     array_filter(
                         explode(
                             '/',
-                            trim(
-                                $path,
-                                '/'
-                            )
+                            trim($path, '/')
                         ),
                         fn ($segment) =>
                             trim((string) $segment) !== ''
                     )
                 );
 
+                $lowerSegments = array_map(
+                    'strtolower',
+                    $segments
+                );
+
                 $trackIndex = array_search(
                     'track',
-                    array_map(
-                        'strtolower',
-                        $segments
-                    ),
+                    $lowerSegments,
                     true
                 );
 
@@ -467,180 +421,139 @@ class ScannerController extends Controller
                         $segments[$trackIndex + 3]
                     )
                 ) {
-                    $result =
-                        $this->normalizeParsedQrData([
-                            't' =>
-                                urldecode(
-                                    $segments[
-                                        $trackIndex + 1
-                                    ]
-                                ),
-
-                            'q' =>
-                                urldecode(
-                                    $segments[
-                                        $trackIndex + 2
-                                    ]
-                                ),
-
-                            'so' =>
-                                urldecode(
-                                    $segments[
-                                        $trackIndex + 3
-                                    ]
-                                ),
-                        ]);
-
-                    if ($result['success']) {
-                        return $result;
-                    }
+                    return $this->normalizeParsedQrData([
+                        't' => urldecode(
+                            $segments[$trackIndex + 1]
+                        ),
+                        'q' => urldecode(
+                            $segments[$trackIndex + 2]
+                        ),
+                        'so' => urldecode(
+                            $segments[$trackIndex + 3]
+                        ),
+                    ]);
                 }
             }
 
-            return [
-                'success' => false,
-
-                'message' =>
-                    'The website QR is missing the secure BiliHub '
-                    . 'tracking number, QR token, or seller order ID.',
-            ];
+            return $this->failure(
+                'Website QR is missing tracking number, QR token, or seller order ID.',
+                422
+            );
         }
 
-        // ------------------------------------------------------------
-        // 3. QUERY STRING STYLE WITHOUT FULL URL
-        //
-        // t=TRACKING&q=TOKEN&so=123
-        // ------------------------------------------------------------
+        /*
+        |--------------------------------------------------------------
+        | QUERY STRING QR
+        |--------------------------------------------------------------
+        */
 
         if (
-            str_contains(
-                $rawPayload,
-                '='
-            ) &&
-            str_contains(
-                $rawPayload,
-                '&'
-            )
+            str_contains($rawPayload, '=') &&
+            str_contains($rawPayload, '&')
         ) {
-            $query = [];
-
             parse_str(
-                ltrim(
-                    $rawPayload,
-                    '?'
-                ),
+                ltrim($rawPayload, '?'),
                 $query
             );
 
-            if (!empty($query)) {
-                $result =
-                    $this->normalizeParsedQrData([
-                        't' =>
-                            $query['t'] ??
-                            $query['tracking_number'] ??
-                            $query['tracking'] ??
-                            $query['tracking_code'] ??
-                            null,
+            $result = $this->normalizeParsedQrData(
+                $query
+            );
 
-                        'q' =>
-                            $query['q'] ??
-                            $query['qr_token'] ??
-                            $query['token'] ??
-                            null,
-
-                        'so' =>
-                            $query['so'] ??
-                            $query['seller_order_id'] ??
-                            null,
-                    ]);
-
-                if ($result['success']) {
-                    return $result;
-                }
+            if ($result['success']) {
+                return $result;
             }
         }
 
-        // ------------------------------------------------------------
-        // TRACKING NUMBER ONLY IS NOT ACCEPTED
-        //
-        // Important:
-        //
-        // A Rider scan changes the shipment state.
-        // Because of that, we require the secure qr_token and
-        // seller_order_id instead of trusting only a tracking number.
-        // ------------------------------------------------------------
-
-        return [
-            'success' => false,
-
-            'message' =>
-                'Invalid BiliHub QR code. Please scan the original '
-                . 'waybill QR generated by BiliHub.',
-        ];
+        return $this->failure(
+            'Invalid BiliHub QR code. Scan the original secure waybill QR.',
+            422
+        );
     }
 
-    // ============================================================
-    // NORMALIZE PARSED QR DATA
-    // ============================================================
+    /*
+    |--------------------------------------------------------------------------
+    | NORMALIZE QR DATA
+    |--------------------------------------------------------------------------
+    */
 
     private function normalizeParsedQrData(
         array $data
     ): array {
-        $trackingNumber = trim(
-            (string) (
-                $data['t'] ??
-                $data['tracking_number'] ??
-                $data['tracking'] ??
-                $data['tracking_code'] ??
-                ''
-            )
-        );
+        $tracking = trim((string) (
+            $data['t'] ??
+            $data['tracking_number'] ??
+            $data['tracking'] ??
+            $data['tracking_code'] ??
+            ''
+        ));
 
-        $qrToken = trim(
-            (string) (
-                $data['q'] ??
-                $data['qr_token'] ??
-                $data['token'] ??
-                ''
-            )
-        );
+        $token = trim((string) (
+            $data['q'] ??
+            $data['qr_token'] ??
+            $data['token'] ??
+            ''
+        ));
 
-        $sellerOrderId = (int) (
+        $sellerOrderId = filter_var(
             $data['so'] ??
-            $data['seller_order_id'] ??
-            0
+                $data['seller_order_id'] ??
+                null,
+            FILTER_VALIDATE_INT,
+            [
+                'options' => [
+                    'min_range' => 1,
+                ],
+            ]
         );
 
         if (
-            $trackingNumber === '' ||
-            $qrToken === '' ||
-            $sellerOrderId <= 0
+            $tracking === '' ||
+            $token === '' ||
+            $sellerOrderId === false
         ) {
-            return [
-                'success' => false,
+            return $this->failure(
+                'Incomplete BiliHub waybill QR code.',
+                422
+            );
+        }
 
-                'message' =>
-                    'Incomplete BiliHub waybill QR code.',
-            ];
+        if (
+            strlen($tracking) > 150 ||
+            strlen($token) > 255
+        ) {
+            return $this->failure(
+                'Invalid BiliHub waybill QR fields.',
+                422
+            );
         }
 
         return [
             'success' => true,
-
-            'tracking_number' =>
-                $trackingNumber,
-
-            'qr_token' =>
-                $qrToken,
-
-            'seller_order_id' =>
-                $sellerOrderId,
+            'tracking_number' => $tracking,
+            'qr_token' => $token,
+            'seller_order_id' => (int) $sellerOrderId,
         ];
     }
 
-    // ============================================================
-    // SELLER PICKUP
-    // ============================================================
+    /*
+    |--------------------------------------------------------------------------
+    | SELLER PICKUP SCAN
+    |--------------------------------------------------------------------------
+    |
+    | Requires:
+    | - Assigned pickup rider
+    | - Accepted pickup offer, when requests exist
+    | - Status = assigned
+    | - Parcel not received by Logistics
+    |
+    | Effect:
+    | - status = in_transit
+    | - picked_up_at
+    | - seller_scan_confirmed_at
+    | - scanned_at_seller
+    |
+    */
 
     private function processSellerPickup(
         Shipment $shipment,
@@ -648,203 +561,156 @@ class ScannerController extends Controller
         $sellerOrder,
         $order
     ): array {
-        // ========================================================
-        // ALREADY RECEIVED BY SORTING CENTER
-        // ========================================================
-
-        if (
-            $shipment->received_by_sorting_center
-        ) {
-            return [
-                'success' => false,
-
-                'status_code' => 422,
-
-                'message' =>
-                    'This parcel has already been received by the sorting center.',
-            ];
+        if ($shipment->received_by_sorting_center) {
+            return $this->failure(
+                'Parcel already received by the sorting center.',
+                422
+            );
         }
 
-        // ========================================================
-        // VERIFY PICKUP ASSIGNMENT
-        // ========================================================
-
         if (
-            $shipment->pickup_rider_id === null ||
-            (int) $shipment->pickup_rider_id !==
-                (int) $rider->id
+            (int) ($shipment->pickup_rider_id ?? 0)
+                !== (int) $rider->id
         ) {
-            return [
-                'success' => false,
-
-                'status_code' => 403,
-
-                'message' =>
-                    'This parcel is not assigned to you for seller pickup.',
-            ];
+            return $this->failure(
+                'This parcel is not assigned to you for seller pickup.',
+                403
+            );
         }
 
-        // ========================================================
-        // PICKUP REQUEST
-        // ========================================================
+        /*
+        |--------------------------------------------------------------
+        | ACCEPTED PICKUP OFFER
+        |--------------------------------------------------------------
+        */
 
-        $hasPickupRequests =
-            PickupRequest::query()
+        $hasPickupRequests = PickupRequest::query()
+            ->where(
+                'shipment_id',
+                $shipment->id
+            )
+            ->exists();
+
+        if ($hasPickupRequests) {
+            $hasAcceptedOffer = PickupRequest::query()
                 ->where(
                     'shipment_id',
                     $shipment->id
                 )
+                ->where(
+                    'rider_id',
+                    $rider->id
+                )
+                ->where(
+                    'status',
+                    'accepted'
+                )
                 ->exists();
 
-        if ($hasPickupRequests) {
-            $hasAcceptedOffer =
-                PickupRequest::query()
-                    ->where(
-                        'shipment_id',
-                        $shipment->id
-                    )
-                    ->where(
-                        'rider_id',
-                        $rider->id
-                    )
-                    ->where(
-                        'status',
-                        'accepted'
-                    )
-                    ->exists();
-
             if (!$hasAcceptedOffer) {
-                return [
-                    'success' => false,
-
-                    'status_code' => 403,
-
-                    'message' =>
-                        'You must accept the pickup request before scanning this parcel.',
-                ];
+                return $this->failure(
+                    'Accept the pickup offer before scanning this parcel.',
+                    403
+                );
             }
         }
 
-        // ========================================================
-        // SHIPMENT STATUS
-        // ========================================================
-
-        if (
-            $shipment->status !== 'assigned'
-        ) {
-            return [
-                'success' => false,
-
-                'status_code' => 422,
-
-                'message' =>
-                    'This parcel is not awaiting seller pickup.',
-            ];
+        if ($shipment->status !== 'assigned') {
+            return $this->failure(
+                'This parcel is not awaiting seller pickup.',
+                422
+            );
         }
 
-        // ========================================================
-        // UPDATE
-        // ========================================================
+        /*
+        |--------------------------------------------------------------
+        | UPDATE SHIPMENT
+        |--------------------------------------------------------------
+        */
 
         $shipment->update([
-            'status' =>
-                'in_transit',
-
-            'scanned_at_seller' =>
-                now(),
-
-            'scanned_by_rider_id' =>
-                $rider->id,
-
-            'seller_scan_confirmed_at' =>
-                now(),
-
+            'status' => 'in_transit',
+            'scanned_at_seller' => now(),
+            'scanned_by_rider_id' => $rider->id,
+            'seller_scan_confirmed_at' => now(),
             'picked_up_at' =>
-                now(),
+                $shipment->picked_up_at ?? now(),
         ]);
+
+        /*
+        |--------------------------------------------------------------
+        | SYNC BUYER ORDER TRACKING
+        |--------------------------------------------------------------
+        */
+
+        app(OrderFlowSyncService::class)
+            ->syncShipment($shipment);
 
         return [
             'success' => true,
-
-            'scan_type' =>
-                'seller_pickup',
-
+            'scan_type' => 'seller_pickup',
             'message' =>
-                'QR verified. Parcel picked up from the seller successfully.',
-
-            'buyer_id' =>
-                $order->user_id,
-
-            'order_id' =>
-                $order->id,
-
-            'order_number' =>
-                $order->order_number,
-
-            'seller_order_id' =>
-                $sellerOrder->id,
-
+                'Seller QR confirmed. Parcel picked up successfully and is now in transit.',
+            'buyer_id' => $order->user_id,
+            'order_id' => $order->id,
+            'order_number' => $order->order_number,
+            'seller_order_id' => $sellerOrder->id,
             'logistic_owner_id' =>
-                $shipment->logistic
-                    ?->owner_user_id,
-
-            'shipment' =>
-                $this->shipmentResponse(
-                    $shipment,
-                    $rider,
-                    $order
-                ),
+                $shipment->logistic?->owner_user_id,
+            'shipment' => $this->shipmentResponse(
+                $shipment,
+                $rider,
+                $order
+            ),
         ];
     }
 
-    // ============================================================
-    // HUB / FINAL-MILE PICKUP
-    // ============================================================
+    /*
+    |--------------------------------------------------------------------------
+    | FINAL-MILE HUB PICKUP SCAN
+    |--------------------------------------------------------------------------
+    |
+    | Requires:
+    | - Assigned final-mile rider
+    | - Received by sorting center
+    | - Sorting status staged
+    | - Valid hub and logistics
+    | - Matching rider logistics/hub/zone
+    |
+    | Effect:
+    | - status = picked_up
+    | - hub_picked_up_at
+    | - hub_pickup_rider_id
+    |
+    */
 
     private function processHubPickup(
         Shipment $shipment,
         $rider,
         $order
     ): array {
-        // ========================================================
-        // VERIFY FINAL-MILE RIDER
-        // ========================================================
-
         if (
-            $shipment->rider_id === null ||
-            (int) $shipment->rider_id !==
-                (int) $rider->id
+            (int) ($shipment->rider_id ?? 0)
+                !== (int) $rider->id
         ) {
-            return [
-                'success' => false,
-
-                'status_code' => 403,
-
-                'message' =>
-                    'This parcel is not assigned to you for final-mile delivery.',
-            ];
+            return $this->failure(
+                'This parcel is not assigned to you for final-mile delivery.',
+                403
+            );
         }
 
-        // ========================================================
-        // ALREADY PICKED UP
-        // ========================================================
-
-        if (
-            $shipment->hub_picked_up_at !== null
-        ) {
-            return [
-                'success' => false,
-
-                'status_code' => 422,
-
-                'message' =>
-                    'Hub pickup has already been confirmed.',
-            ];
+        if ($shipment->hub_picked_up_at !== null) {
+            return $this->failure(
+                'Hub pickup has already been confirmed.',
+                422
+            );
         }
 
-        // ========================================================
-        // HUB STATE
-        // ========================================================
+        /*
+        |--------------------------------------------------------------
+        | LOGISTICS PROCESSING REQUIREMENTS
+        |--------------------------------------------------------------
+        */
 
         if (
             !$shipment->received_by_sorting_center ||
@@ -860,32 +726,26 @@ class ScannerController extends Controller
                 true
             )
         ) {
-            return [
-                'success' => false,
-
-                'status_code' => 422,
-
-                'message' =>
-                    'Parcel must be received, staged, and assigned before hub pickup.',
-            ];
+            return $this->failure(
+                'Parcel must be received, staged, and assigned before hub pickup.',
+                422
+            );
         }
 
-        // ========================================================
-        // LOGISTICS / HUB
-        // ========================================================
+        /*
+        |--------------------------------------------------------------
+        | VALID HUB
+        |--------------------------------------------------------------
+        */
 
         if (
             !$shipment->hub_id ||
             !$shipment->logistic_id
         ) {
-            return [
-                'success' => false,
-
-                'status_code' => 422,
-
-                'message' =>
-                    'Parcel has no valid logistics hub assignment.',
-            ];
+            return $this->failure(
+                'Parcel has no valid logistics hub assignment.',
+                422
+            );
         }
 
         $hub = $shipment->hub;
@@ -895,132 +755,113 @@ class ScannerController extends Controller
             (int) $hub->logistic_id !==
                 (int) $shipment->logistic_id
         ) {
-            return [
-                'success' => false,
-
-                'status_code' => 422,
-
-                'message' =>
-                    'Parcel hub does not belong to its logistics provider.',
-            ];
+            return $this->failure(
+                'Parcel hub does not belong to its logistics provider.',
+                422
+            );
         }
 
-        // ========================================================
-        // RIDER LOGISTICS COMPANY
-        // ========================================================
+        /*
+        |--------------------------------------------------------------
+        | RIDER LOGISTICS COMPANY
+        |--------------------------------------------------------------
+        */
 
         if (
             !$rider->logistic_id ||
             (int) $rider->logistic_id !==
                 (int) $shipment->logistic_id
         ) {
-            return [
-                'success' => false,
-
-                'status_code' => 403,
-
-                'message' =>
-                    'Rider does not belong to this logistics company.',
-            ];
+            return $this->failure(
+                'Rider does not belong to this logistics company.',
+                403
+            );
         }
 
-        // ========================================================
-        // RIDER HUB
-        // ========================================================
+        /*
+        |--------------------------------------------------------------
+        | RIDER HUB
+        |--------------------------------------------------------------
+        */
 
         if (
             $rider->hub_id !== null &&
             (int) $rider->hub_id !==
                 (int) $shipment->hub_id
         ) {
-            return [
-                'success' => false,
-
-                'status_code' => 403,
-
-                'message' =>
-                    'Rider is assigned to a different hub.',
-            ];
+            return $this->failure(
+                'Rider is assigned to a different hub.',
+                403
+            );
         }
 
-        // ========================================================
-        // DELIVERY ZONE
-        // ========================================================
+        /*
+        |--------------------------------------------------------------
+        | DELIVERY ZONE
+        |--------------------------------------------------------------
+        */
+
+        $riderZone = trim(
+            (string) ($rider->delivery_zone ?? '')
+        );
+
+        $shipmentZone = trim(
+            (string) ($shipment->delivery_zone ?? '')
+        );
 
         if (
-            $rider->delivery_zone !== null &&
-            trim(
-                (string) $rider->delivery_zone
-            ) !== ''
+            $riderZone !== '' &&
+            mb_strtolower($riderZone) !==
+                mb_strtolower($shipmentZone)
         ) {
-            if (
-                mb_strtolower(
-                    trim(
-                        (string) $rider->delivery_zone
-                    )
-                ) !==
-                mb_strtolower(
-                    trim(
-                        (string) $shipment->delivery_zone
-                    )
-                )
-            ) {
-                return [
-                    'success' => false,
-
-                    'status_code' => 403,
-
-                    'message' =>
-                        'Rider delivery zone does not match this parcel.',
-                ];
-            }
+            return $this->failure(
+                'Rider delivery zone does not match this parcel.',
+                403
+            );
         }
 
-        // ========================================================
-        // UPDATE
-        // ========================================================
+        /*
+        |--------------------------------------------------------------
+        | UPDATE HUB PICKUP
+        |--------------------------------------------------------------
+        */
 
-        $shipment->status =
-            'picked_up';
+        $shipment->update([
+            'status' => 'picked_up',
+            'hub_picked_up_at' => now(),
+            'hub_pickup_rider_id' => $rider->id,
+        ]);
 
-        $shipment->hub_picked_up_at =
-            now();
+        /*
+        |--------------------------------------------------------------
+        | SYNC BUYER TRACKING
+        |--------------------------------------------------------------
+        */
 
-        $shipment->hub_pickup_rider_id =
-            $rider->id;
-
-        $shipment->save();
+        app(OrderFlowSyncService::class)
+            ->syncShipment($shipment);
 
         return [
             'success' => true,
-
-            'scan_type' =>
-                'hub_pickup',
-
+            'scan_type' => 'hub_pickup',
             'message' =>
-                'Hub QR verified. Parcel picked up for delivery.',
-
-            'buyer_id' =>
-                $order->user_id,
-
-            'order_id' =>
-                $order->id,
-
-            'order_number' =>
-                $order->order_number,
-
-            'shipment' =>
-                $this->shipmentResponse(
-                    $shipment,
-                    $rider,
-                    $order
-                ),
+                'Hub QR confirmed. Parcel collected for final-mile delivery.',
+            'buyer_id' => $order->user_id,
+            'order_id' => $order->id,
+            'order_number' => $order->order_number,
+            'shipment' => $this->shipmentResponse(
+                $shipment,
+                $rider,
+                $order
+            ),
         ];
     }
 
-    // ============================================================
-    // MOBILE SHIPMENT RESPONSE
-    // ============================================================
+    /*
+    |--------------------------------------------------------------------------
+    | RESPONSE FOR FLUTTER RIDER SCANNER
+    |--------------------------------------------------------------------------
+    */
 
     private function shipmentResponse(
         Shipment $shipment,
@@ -1032,30 +873,74 @@ class ScannerController extends Controller
         $shipment->loadMissing([
             'sellerOrder.order.user',
             'sellerOrder.seller',
+            'rider',
+            'hub',
         ]);
 
-        $customer =
-            $shipment
-                ->sellerOrder
-                ?->order
-                ?->user;
+        $customer = $shipment
+            ->sellerOrder
+            ?->order
+            ?->user;
+
+        $isPickupRider =
+            (int) ($shipment->pickup_rider_id ?? 0)
+                === (int) $rider->id;
+
+        $isFinalMileRider =
+            (int) ($shipment->rider_id ?? 0)
+                === (int) $rider->id;
+
+        $assignmentType = match (true) {
+            $isPickupRider && $isFinalMileRider =>
+                'pickup_and_delivery',
+
+            $isPickupRider =>
+                'seller_pickup',
+
+            $isFinalMileRider =>
+                'final_mile',
+
+            default =>
+                'unknown',
+        };
 
         return [
-            'id' =>
-                $shipment->id,
+            /*
+            |--------------------------------------------------------------
+            | IDENTIFICATION
+            |--------------------------------------------------------------
+            */
 
-            'shipment_id' =>
-                $shipment->id,
-
+            'id' => $shipment->id,
+            'shipment_id' => $shipment->id,
             'seller_order_id' =>
                 $shipment->seller_order_id,
 
             'tracking_number' =>
                 $shipment->tracking_number,
 
+            'assignment_type' => $assignmentType,
+
+            'is_pickup_rider' => $isPickupRider,
+            'is_final_mile_rider' => $isFinalMileRider,
+
+            'pickup_rider_id' =>
+                $shipment->pickup_rider_id,
+
+            'rider_id' => $shipment->rider_id,
+
+            'rider_name' =>
+                $shipment->rider?->name ??
+                ($isFinalMileRider ? $rider->name : ''),
+
+            /*
+            |--------------------------------------------------------------
+            | CUSTOMER
+            |--------------------------------------------------------------
+            */
+
             'customer_name' =>
-                $customer?->name ??
-                'Customer',
+                $customer?->name ?? 'Customer',
 
             'customer_phone' =>
                 $customer?->mobile_number ??
@@ -1063,22 +948,159 @@ class ScannerController extends Controller
                 '',
 
             'delivery_address' =>
-                $shipment->delivery_address ??
-                '',
+                $shipment->delivery_address ?? '',
 
-            'rider_id' =>
-                (string) $rider->id,
+            'pickup_address' =>
+                $shipment->pickup_address ?? '',
 
-            'rider_name' =>
-                $rider->name ??
-                'Rider',
+            /*
+            |--------------------------------------------------------------
+            | SHIPMENT STATUS
+            |--------------------------------------------------------------
+            */
 
-            'status' =>
-                $shipment->status,
+            'status' => $shipment->status,
+
+            'buyer_order_status' =>
+                $order?->status,
+
+            'buyer_delivery_status' =>
+                $order?->delivery_status,
+
+            /*
+            |--------------------------------------------------------------
+            | SELLER QR
+            |--------------------------------------------------------------
+            */
+
+            'seller_scan_confirmed_at' =>
+                $shipment->seller_scan_confirmed_at
+                    ?->toISOString(),
+
+            'scanned_at_seller' =>
+                $shipment->scanned_at_seller
+                    ?->toISOString(),
+
+            'scanned_by_rider_id' =>
+                $shipment->scanned_by_rider_id,
+
+            'seller_pickup_scan_confirmed' =>
+                $isPickupRider &&
+                $shipment->seller_scan_confirmed_at !== null &&
+                (int) ($shipment->scanned_by_rider_id ?? 0)
+                    === (int) $rider->id,
+
+            /*
+            |--------------------------------------------------------------
+            | HUB QR
+            |--------------------------------------------------------------
+            */
+
+            'hub_picked_up_at' =>
+                $shipment->hub_picked_up_at
+                    ?->toISOString(),
+
+            'hub_pickup_rider_id' =>
+                $shipment->hub_pickup_rider_id,
+
+            'hub_pickup_scan_confirmed' =>
+                $isFinalMileRider &&
+                $shipment->hub_picked_up_at !== null &&
+                (int) ($shipment->hub_pickup_rider_id ?? 0)
+                    === (int) $rider->id,
+
+            /*
+            |--------------------------------------------------------------
+            | SORTING CENTER
+            |--------------------------------------------------------------
+            */
+
+            'received_by_sorting_center' =>
+                (bool) (
+                    $shipment->received_by_sorting_center
+                    ?? false
+                ),
+
+            'sorting_status' =>
+                $shipment->sorting_status,
+
+            'staged_at' =>
+                $shipment->staged_at?->toISOString(),
+
+            'at_sorting_center_at' =>
+                $shipment->at_sorting_center_at
+                    ?->toISOString(),
+
+            /*
+            |--------------------------------------------------------------
+            | HUB
+            |--------------------------------------------------------------
+            */
+
+            'hub_id' => $shipment->hub_id,
+            'current_hub_id' => $shipment->hub_id,
+
+            'current_hub_name' =>
+                $shipment->hub?->name ?? '',
+
+            'logistic_id' => $shipment->logistic_id,
+
+            'delivery_zone' =>
+                $shipment->delivery_zone ?? '',
+
+            /*
+            |--------------------------------------------------------------
+            | ROUTING
+            |--------------------------------------------------------------
+            */
+
+            'routing_status' =>
+                $shipment->routing_status ?? '',
+
+            'linehaul_status' =>
+                $shipment->linehaul_status ?? '',
+
+            /*
+            |--------------------------------------------------------------
+            | PROOF
+            |--------------------------------------------------------------
+            */
+
+            'has_proof_of_delivery' =>
+                !empty($shipment->proof_of_delivery),
+
+            'delivered_to' =>
+                $shipment->delivered_to,
+
+            'delivery_notes' =>
+                $shipment->notes,
+
+            /*
+            |--------------------------------------------------------------
+            | DATES
+            |--------------------------------------------------------------
+            */
 
             'order_date' =>
-                $order?->created_at
-                    ?->toISOString(),
+                $order?->created_at?->toISOString(),
+
+            'created_at' =>
+                $shipment->created_at?->toISOString(),
+
+            'updated_at' =>
+                $shipment->updated_at?->toISOString(),
+
+            'picked_up_at' =>
+                $shipment->picked_up_at?->toISOString(),
+
+            'delivered_at' =>
+                $shipment->delivered_at?->toISOString(),
+
+            /*
+            |--------------------------------------------------------------
+            | LOCATION
+            |--------------------------------------------------------------
+            */
 
             'latitude' =>
                 $shipment->latitude !== null
@@ -1090,84 +1112,54 @@ class ScannerController extends Controller
                     ? (float) $shipment->longitude
                     : null,
 
-            'picked_up_at' =>
-                $shipment->picked_up_at
-                    ?->toISOString(),
-
-            'hub_picked_up_at' =>
-                $shipment->hub_picked_up_at
-                    ?->toISOString(),
-
-            'created_at' =>
-                $shipment->created_at
-                    ?->toISOString(),
-
-            'updated_at' =>
-                $shipment->updated_at
-                    ?->toISOString(),
-
-            'delivery_earnings' =>
-                null,
+            'delivery_earnings' => null,
         ];
     }
 
-    // ============================================================
-    // NOTIFICATIONS
-    // ============================================================
+    /*
+    |--------------------------------------------------------------------------
+    | BUYER AND LOGISTICS NOTIFICATIONS
+    |--------------------------------------------------------------------------
+    */
 
     private function createScanNotifications(
         array $result,
         $rider
     ): void {
-        $buyerId =
-            $result['buyer_id'] ??
-            null;
-
-        $orderId =
-            $result['order_id'] ??
-            null;
-
+        $buyerId = $result['buyer_id'] ?? null;
+        $orderId = $result['order_id'] ?? null;
         $orderNumber =
-            $result['order_number'] ??
-            null;
+            $result['order_number'] ?? '';
 
-        $shipment =
-            $result['shipment'] ??
-            [];
+        $shipment = $result['shipment'] ?? [];
 
-        $trackingNumber =
-            $shipment['tracking_number'] ??
-            '';
+        $tracking =
+            $shipment['tracking_number'] ?? '';
+
+        /*
+        |--------------------------------------------------------------
+        | SELLER PICKUP NOTIFICATIONS
+        |--------------------------------------------------------------
+        */
 
         if (
-            $result['scan_type'] ===
-            'seller_pickup'
+            $result['scan_type'] === 'seller_pickup'
         ) {
             if ($buyerId) {
                 Notification::create([
-                    'user_id' =>
-                        $buyerId,
-
+                    'user_id' => $buyerId,
                     'title' =>
                         'Rider Picked Up Your Parcel',
-
-                    'type' =>
-                        'delivery',
-
+                    'type' => 'delivery',
                     'message' =>
                         'Parcel #' .
                         ($result['seller_order_id'] ?? '') .
                         ' from order ' .
-                        ($orderNumber ?? '') .
+                        $orderNumber .
                         ' has been picked up from the seller.',
-
-                    'link' =>
-                        $orderId
-                            ? route(
-                                'orders.show',
-                                $orderId
-                            )
-                            : null,
+                    'link' => $orderId
+                        ? route('orders.show', $orderId)
+                        : null,
                 ]);
             }
 
@@ -1177,60 +1169,92 @@ class ScannerController extends Controller
 
             if ($logisticOwnerId) {
                 Notification::create([
-                    'user_id' =>
-                        $logisticOwnerId,
-
+                    'user_id' => $logisticOwnerId,
                     'title' =>
                         'Parcel Picked Up by Rider',
-
-                    'type' =>
-                        'shipment',
-
+                    'type' => 'shipment',
                     'message' =>
                         'Rider ' .
                         $rider->name .
                         ' picked up shipment ' .
-                        $trackingNumber .
+                        $tracking .
                         ' from the seller.',
-
-                    'link' =>
-                        null,
+                    'link' => null,
                 ]);
             }
 
             return;
         }
 
+        /*
+        |--------------------------------------------------------------
+        | FINAL-MILE HUB PICKUP NOTIFICATION
+        |--------------------------------------------------------------
+        */
+
         if (
-            $result['scan_type'] ===
-                'hub_pickup' &&
+            $result['scan_type'] === 'hub_pickup' &&
             $buyerId
         ) {
             Notification::create([
-                'user_id' =>
-                    $buyerId,
-
+                'user_id' => $buyerId,
                 'title' =>
                     'Parcel Picked Up for Delivery',
-
-                'type' =>
-                    'delivery',
-
+                'type' => 'delivery',
                 'message' =>
                     'Shipment ' .
-                    $trackingNumber .
+                    $tracking .
                     ' from order ' .
-                    ($orderNumber ?? '') .
+                    $orderNumber .
                     ' has been picked up from the sorting center for delivery.',
-
-                'link' =>
-                    $orderId
-                        ? route(
-                            'orders.show',
-                            $orderId
-                        )
-                        : null,
+                'link' => $orderId
+                    ? route('orders.show', $orderId)
+                    : null,
             ]);
         }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | HELPERS
+    |--------------------------------------------------------------------------
+    */
+
+    private function isFinalized(
+        Shipment $shipment
+    ): bool {
+        return in_array(
+            $shipment->status,
+            [
+                'delivered',
+                'completed',
+                'delivery_failed',
+                'failed',
+                'cancelled',
+                'canceled',
+            ],
+            true
+        );
+    }
+
+    private function failure(
+        string $message,
+        int $statusCode
+    ): array {
+        return [
+            'success' => false,
+            'status_code' => $statusCode,
+            'message' => $message,
+        ];
+    }
+
+    private function error(
+        string $message,
+        int $statusCode
+    ): JsonResponse {
+        return response()->json([
+            'success' => false,
+            'message' => $message,
+        ], $statusCode);
     }
 }

@@ -14,45 +14,20 @@ use App\Services\OrderFlowSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class OrderController extends Controller
 {
-    /**
-     * Get all shipments assigned to the authenticated rider.
-     *
-     * GET /api/rider/orders
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | RIDER ASSIGNED SHIPMENTS
+    |--------------------------------------------------------------------------
+    */
+
     public function index(Request $request): JsonResponse
     {
         try {
-            $rider = $request->user();
-
-            if (!$rider) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthenticated.',
-                ], 401);
-            }
-
-            if (!$rider->isRider()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This account is not a rider account.',
-                ], 403);
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | ASSIGNED SHIPMENTS
-            |--------------------------------------------------------------------------
-            |
-            | rider_id:
-            |   Final-mile delivery rider.
-            |
-            | pickup_rider_id:
-            |   Seller pickup rider.
-            |
-            */
+            $rider = $this->authenticatedRider($request);
 
             $shipments = Shipment::query()
                 ->where(function ($query) use ($rider) {
@@ -71,12 +46,10 @@ class OrderController extends Controller
                 ->get();
 
             $data = $shipments
-                ->map(function (Shipment $shipment) use ($rider) {
-                    return $this->formatShipment(
-                        shipment: $shipment,
-                        rider: $rider,
-                    );
-                })
+                ->map(
+                    fn (Shipment $shipment) =>
+                        $this->formatShipment($shipment, $rider)
+                )
                 ->values();
 
             return response()->json([
@@ -85,122 +58,92 @@ class OrderController extends Controller
                 'meta' => [
                     'total' => $data->count(),
                 ],
-            ], 200);
+            ]);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             report($e);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to load rider deliveries.',
-            ], 500);
+            return $this->error(
+                'Unable to load rider deliveries.',
+                500
+            );
         }
     }
 
-    /**
-     * Get one shipment assigned to the authenticated rider.
-     *
-     * GET /api/rider/orders/{shipment}
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | SINGLE RIDER SHIPMENT
+    |--------------------------------------------------------------------------
+    */
+
     public function show(
         Request $request,
         Shipment $shipment
     ): JsonResponse {
         try {
-            $rider = $request->user();
+            $rider = $this->authenticatedRider($request);
 
-            if (!$rider) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthenticated.',
-                ], 401);
-            }
+            abort_unless(
+                $this->isShipmentAssignedToRider(
+                    $shipment,
+                    (int) $rider->id
+                ),
+                403,
+                'This shipment is not assigned to you.'
+            );
 
-            if (!$rider->isRider()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This account is not a rider account.',
-                ], 403);
-            }
-
-            if (!$this->isShipmentAssignedToRider(
-                shipment: $shipment,
-                riderId: (int) $rider->id,
-            )) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This shipment is not assigned to you.',
-                ], 403);
-            }
-
-            $shipment->load([
-                'sellerOrder.order.user',
-                'sellerOrder.seller',
-                'logistic',
-                'hub',
-                'rider',
-            ]);
+            $this->loadShipmentRelations($shipment);
 
             return response()->json([
                 'success' => true,
                 'data' => $this->formatShipment(
-                    shipment: $shipment,
-                    rider: $rider,
+                    $shipment,
+                    $rider
                 ),
-            ], 200);
+            ]);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             report($e);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to load rider delivery.',
-            ], 500);
+            return $this->error(
+                'Unable to load rider delivery.',
+                500
+            );
         }
     }
 
-    /**
-     * Upload proof of delivery.
-     *
-     * POST /api/rider/orders/{shipment}/proof
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | UPLOAD PROOF OF DELIVERY
+    |--------------------------------------------------------------------------
+    |
+    | POST /api/rider/orders/{shipment}/proof
+    |
+    | Requirements:
+    | - Authenticated final-mile rider
+    | - Successful hub QR pickup
+    | - Shipment out for delivery
+    | - Valid proof image
+    |
+    */
+
     public function uploadProof(
         Request $request,
         Shipment $shipment
     ): JsonResponse {
         try {
-            $rider = $request->user();
+            $rider = $this->authenticatedRider($request);
 
-            if (!$rider) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthenticated.',
-                ], 401);
-            }
-
-            if (!$rider->isRider()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This account is not a rider account.',
-                ], 403);
-            }
-
-            if (!$this->isFinalMileRider(
-                shipment: $shipment,
-                riderId: (int) $rider->id,
-            )) {
-                return response()->json([
-                    'success' => false,
-                    'message' =>
-                        'This shipment is not assigned to you for final delivery.',
-                ], 403);
-            }
-
-            if ($shipment->status !== 'out_for_delivery') {
-                return response()->json([
-                    'success' => false,
-                    'message' =>
-                        'Shipment must be out for delivery before uploading delivery proof.',
-                ], 422);
-            }
+            abort_unless(
+                $this->isFinalMileRider(
+                    $shipment,
+                    (int) $rider->id
+                ),
+                403,
+                'This shipment is not assigned to you for final delivery.'
+            );
 
             $validated = $request->validate([
                 'proof_of_delivery' => [
@@ -209,25 +152,28 @@ class OrderController extends Controller
                     'mimes:jpg,jpeg,png',
                     'max:5120',
                 ],
-
                 'delivery_signature' => [
                     'nullable',
                     'string',
                     'max:1000',
                 ],
-
                 'delivered_to' => [
                     'nullable',
                     'string',
                     'max:255',
                 ],
-
                 'delivery_notes' => [
                     'nullable',
                     'string',
                     'max:1000',
                 ],
             ]);
+
+            // Validate before uploading to private storage.
+            $this->validateProofEligibility(
+                $shipment,
+                $rider
+            );
 
             $proofPath = $request
                 ->file('proof_of_delivery')
@@ -237,105 +183,140 @@ class OrderController extends Controller
                 );
 
             if (!$proofPath) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Proof of delivery upload failed.',
-                ], 500);
+                return $this->error(
+                    'Proof of delivery upload failed.',
+                    500
+                );
             }
 
-            $shipment->proof_of_delivery = $proofPath;
+            // Recheck the assignment and status under lock.
+            // If it changed, the new proof is not applied.
+            try {
+                DB::transaction(function () use (
+                    $shipment,
+                    $rider,
+                    $validated,
+                    $proofPath
+                ) {
+                    $locked = Shipment::query()
+                        ->whereKey($shipment->id)
+                        ->lockForUpdate()
+                        ->firstOrFail();
 
-            if (array_key_exists(
-                'delivery_signature',
-                $validated
-            )) {
-                $shipment->delivery_signature =
-                    $validated['delivery_signature'];
+                    $this->validateProofEligibility(
+                        $locked,
+                        $rider
+                    );
+
+                    if (!empty($locked->proof_of_delivery)) {
+                        throw ValidationException::withMessages([
+                            'proof_of_delivery' =>
+                                'Proof of delivery has already been uploaded.',
+                        ]);
+                    }
+
+                    $locked->proof_of_delivery = $proofPath;
+
+                    if (array_key_exists(
+                        'delivery_signature',
+                        $validated
+                    )) {
+                        $locked->delivery_signature =
+                            $validated['delivery_signature'];
+                    }
+
+                    if (array_key_exists(
+                        'delivered_to',
+                        $validated
+                    )) {
+                        $locked->delivered_to =
+                            $validated['delivered_to'];
+                    }
+
+                    if (array_key_exists(
+                        'delivery_notes',
+                        $validated
+                    )) {
+                        $locked->notes =
+                            $validated['delivery_notes'];
+                    }
+
+                    $locked->save();
+                });
+            } catch (\Throwable $e) {
+                // Prevent orphaned proof files if the
+                // database transaction is rejected.
+                try {
+                    \Illuminate\Support\Facades\Storage::disk(
+                        'supabase_private'
+                    )->delete($proofPath);
+                } catch (\Throwable $cleanupError) {
+                    report($cleanupError);
+                }
+
+                throw $e;
             }
 
-            if (array_key_exists(
-                'delivered_to',
-                $validated
-            )) {
-                $shipment->delivered_to =
-                    $validated['delivered_to'];
-            }
-
-            if (array_key_exists(
-                'delivery_notes',
-                $validated
-            )) {
-                $shipment->notes =
-                    $validated['delivery_notes'];
-            }
-
-            $shipment->save();
             $shipment->refresh();
-
-            $shipment->load([
-                'sellerOrder.order.user',
-                'sellerOrder.seller',
-                'logistic',
-                'hub',
-                'rider',
-            ]);
+            $this->loadShipmentRelations($shipment);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Delivery proof uploaded successfully.',
+                'message' =>
+                    'Delivery proof uploaded successfully.',
                 'data' => $this->formatShipment(
-                    shipment: $shipment,
-                    rider: $rider,
+                    $shipment,
+                    $rider
                 ),
-            ], 200);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+            ]);
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             throw $e;
         } catch (\Throwable $e) {
             report($e);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to upload delivery proof.',
-            ], 500);
+            return $this->error(
+                'Unable to upload delivery proof.',
+                500
+            );
         }
     }
 
-    /**
-     * Update final-mile shipment delivery status.
-     *
-     * PUT /api/rider/orders/{shipment}/status
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | UPDATE FINAL-MILE DELIVERY STATUS
+    |--------------------------------------------------------------------------
+    |
+    | PUT /api/rider/orders/{shipment}/status
+    |
+    | Allowed sequence:
+    |
+    | Hub QR scan -> picked_up
+    | picked_up -> out_for_delivery
+    | out_for_delivery -> delivered
+    | out_for_delivery -> delivery_failed
+    |
+    | An ordinary status request cannot replace
+    | the seller or hub QR scan.
+    |
+    */
+
     public function updateStatus(
         Request $request,
         Shipment $shipment
     ): JsonResponse {
         try {
-            $authenticatedRider = $request->user();
+            $rider = $this->authenticatedRider($request);
 
-            if (!$authenticatedRider) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthenticated.',
-                ], 401);
-            }
-
-            if (!$authenticatedRider->isRider()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This account is not a rider account.',
-                ], 403);
-            }
-
-            if (!$this->isFinalMileRider(
-                shipment: $shipment,
-                riderId: (int) $authenticatedRider->id,
-            )) {
-                return response()->json([
-                    'success' => false,
-                    'message' =>
-                        'This shipment is not assigned to you for final delivery.',
-                ], 403);
-            }
+            abort_unless(
+                $this->isFinalMileRider(
+                    $shipment,
+                    (int) $rider->id
+                ),
+                403,
+                'This shipment is not assigned to you for final delivery.'
+            );
 
             $validated = $request->validate([
                 'status' => [
@@ -343,13 +324,11 @@ class OrderController extends Controller
                     'string',
                     'in:in_transit,out_for_delivery,delivered,delivery_failed,failed',
                 ],
-
                 'delivery_notes' => [
                     'nullable',
                     'string',
                     'max:1000',
                 ],
-
                 'failure_reason' => [
                     'nullable',
                     'string',
@@ -363,135 +342,106 @@ class OrderController extends Controller
                 $newStatus = 'delivery_failed';
             }
 
+            // Do not allow this endpoint to simulate pickup.
+            if ($newStatus === 'in_transit') {
+                throw ValidationException::withMessages([
+                    'status' =>
+                        'Pickup must be confirmed using the official BiliHub QR scanner.',
+                ]);
+            }
+
             DB::transaction(function () use (
                 $shipment,
-                $authenticatedRider,
+                $rider,
                 $validated,
                 $newStatus
             ) {
-                $lockedShipment = Shipment::query()
+                $locked = Shipment::query()
                     ->whereKey($shipment->id)
                     ->lockForUpdate()
                     ->firstOrFail();
 
-                if (
-                    (int) ($lockedShipment->rider_id ?? 0)
-                    !== (int) $authenticatedRider->id
-                ) {
-                    abort(
-                        403,
-                        'This shipment is not assigned to you for final delivery.'
-                    );
-                }
+                abort_unless(
+                    $this->isFinalMileRider(
+                        $locked,
+                        (int) $rider->id
+                    ),
+                    403,
+                    'This shipment is not assigned to you for final delivery.'
+                );
 
-                if (in_array(
-                    $lockedShipment->status,
-                    [
-                        'delivered',
-                        'delivery_failed',
-                        'cancelled',
-                    ],
-                    true
-                )) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
+                $this->validateNotFinalized($locked);
+
+                /*
+                |----------------------------------------------------------
+                | REQUIRE CONFIRMED HUB QR PICKUP
+                |----------------------------------------------------------
+                */
+
+                if (
+                    $locked->hub_picked_up_at === null ||
+                    (int) ($locked->hub_pickup_rider_id ?? 0)
+                        !== (int) $rider->id
+                ) {
+                    throw ValidationException::withMessages([
                         'status' =>
-                            'This shipment is already finalized.',
+                            'Scan and confirm this parcel at the assigned hub before starting or completing delivery.',
                     ]);
                 }
 
                 /*
-                |--------------------------------------------------------------------------
-                | IN TRANSIT
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
+                | REQUIRE LOGISTICS RECEIVING + STAGING
+                |----------------------------------------------------------
                 */
-
-                if ($newStatus === 'in_transit') {
-                    if (!in_array(
-                        $lockedShipment->status,
-                        [
-                            'assigned',
-                            'picked_up',
-                            'in_transit',
-                        ],
-                        true
-                    )) {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
-                            'status' =>
-                                'Shipment cannot be marked as in transit from its current status.',
-                        ]);
-                    }
-
-                    if ($lockedShipment->status === 'in_transit') {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
-                            'status' =>
-                                'Shipment is already in transit.',
-                        ]);
-                    }
-
-                    $lockedShipment->update([
-                        'status' => 'in_transit',
-                        'notes' =>
-                            $validated['delivery_notes']
-                            ?? $lockedShipment->notes,
-                    ]);
-
-                    app(OrderFlowSyncService::class)
-                        ->syncShipment($lockedShipment);
-
-                    return;
-                }
-
-                /*
-                |--------------------------------------------------------------------------
-                | SORTING CENTER VALIDATION
-                |--------------------------------------------------------------------------
-                */
-
-                if (!in_array(
-                    $lockedShipment->status,
-                    [
-                        'picked_up',
-                        'in_transit',
-                        'out_for_delivery',
-                    ],
-                    true
-                )) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
-                        'status' =>
-                            'Shipment is not ready for final delivery.',
-                    ]);
-                }
 
                 if (
-                    !$lockedShipment->received_by_sorting_center
-                    || $lockedShipment->sorting_status !== 'staged'
-                    || $lockedShipment->staged_at === null
+                    !$locked->received_by_sorting_center ||
+                    $locked->sorting_status !== 'staged' ||
+                    $locked->staged_at === null
                 ) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
+                    throw ValidationException::withMessages([
                         'status' =>
                             'Shipment must complete sorting center processing before delivery.',
                     ]);
                 }
 
-                if (
+                /*
+                |----------------------------------------------------------
+                | VALIDATE STATUS TRANSITION
+                |----------------------------------------------------------
+                */
+
+                if ($newStatus === 'out_for_delivery') {
+                    if ($locked->status !== 'picked_up') {
+                        throw ValidationException::withMessages([
+                            'status' =>
+                                'Shipment must be picked up and scanned at the hub before going out for delivery.',
+                        ]);
+                    }
+                } elseif (
                     in_array(
                         $newStatus,
-                        [
-                            'delivered',
-                            'delivery_failed',
-                        ],
+                        ['delivered', 'delivery_failed'],
                         true
                     )
-                    && $lockedShipment->status !== 'out_for_delivery'
                 ) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
-                        'status' =>
-                            'Shipment must be out for delivery first.',
-                    ]);
+                    if ($locked->status !== 'out_for_delivery') {
+                        throw ValidationException::withMessages([
+                            'status' =>
+                                'Shipment must be out for delivery first.',
+                        ]);
+                    }
                 }
 
+                /*
+                |----------------------------------------------------------
+                | LOCK ASSOCIATED ORDER RECORDS
+                |----------------------------------------------------------
+                */
+
                 $sellerOrder = SellerOrder::query()
-                    ->whereKey($lockedShipment->seller_order_id)
+                    ->whereKey($locked->seller_order_id)
                     ->lockForUpdate()
                     ->firstOrFail();
 
@@ -502,58 +452,61 @@ class OrderController extends Controller
                     ->lockForUpdate()
                     ->firstOrFail();
 
-                $tracking =
-                    $lockedShipment->tracking_number
-                    ?: ('Shipment #' . $lockedShipment->id);
+                $tracking = $locked->tracking_number
+                    ?: 'Shipment #' . $locked->id;
 
                 /*
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
                 | OUT FOR DELIVERY
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
                 */
 
                 if ($newStatus === 'out_for_delivery') {
-                    if ($lockedShipment->status === 'out_for_delivery') {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
-                            'status' =>
-                                'Shipment is already out for delivery.',
-                        ]);
-                    }
-
-                    $lockedShipment->update([
+                    $locked->update([
                         'status' => 'out_for_delivery',
                         'notes' =>
                             $validated['delivery_notes']
-                            ?? $lockedShipment->notes,
+                            ?? $locked->notes,
                     ]);
 
                     app(OrderFlowSyncService::class)
-                        ->syncShipment($lockedShipment);
+                        ->syncShipment($locked);
 
                     $this->createNotification(
                         userId: (int) $order->user_id,
                         title: 'Parcel Out for Delivery',
-                        message: "Your parcel {$tracking} is on its way.",
+                        message:
+                            "Your parcel {$tracking} is on its way.",
                         type: 'delivery',
-                        link: route('orders.show', $order),
+                        link: route('orders.show', $order)
                     );
 
                     return;
                 }
 
                 /*
-                |--------------------------------------------------------------------------
-                | DELIVERED
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
+                | DELIVERED — REQUIRE PROOF
+                |----------------------------------------------------------
                 */
 
                 if ($newStatus === 'delivered') {
-                    if (empty($lockedShipment->proof_of_delivery)) {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
+                    if (empty($locked->proof_of_delivery)) {
+                        throw ValidationException::withMessages([
                             'status' =>
                                 'Upload proof of delivery before marking this shipment as delivered.',
                         ]);
                     }
+
+                    /*
+                    |------------------------------------------------------
+                    | COD PAYMENT VALIDATION
+                    |------------------------------------------------------
+                    |
+                    | Keep the existing per-shipment and legacy
+                    | payment checks to protect COD settlement.
+                    |
+                    */
 
                     if ($order->payment_method === 'cod') {
                         $expectedMinor =
@@ -562,7 +515,7 @@ class OrderController extends Controller
                         $shipmentPayment = Payment::query()
                             ->where(
                                 'shipment_id',
-                                $lockedShipment->id
+                                $locked->id
                             )
                             ->where(
                                 'order_id',
@@ -573,42 +526,45 @@ class OrderController extends Controller
                             ->first();
 
                         $shipmentPaid =
-                            $shipmentPayment
-                            && $expectedMinor > 0
-                            && (int) $shipmentPayment->amount_minor
+                            $shipmentPayment &&
+                            $expectedMinor > 0 &&
+                            (int) $shipmentPayment->amount_minor
                                 === $expectedMinor;
 
                         $legacyFullyPaid =
-                            !$shipmentPayment
-                            && $order->payment_status === 'paid'
-                            && (int) $order->amount_collected_minor
-                                === (int) $order->total_minor
-                            && $order->collected_at !== null
-                            && $order->collected_by !== null
-                            && !Payment::query()
-                                ->where('order_id', $order->id)
+                            !$shipmentPayment &&
+                            $order->payment_status === 'paid' &&
+                            (int) $order->amount_collected_minor
+                                === (int) $order->total_minor &&
+                            $order->collected_at !== null &&
+                            $order->collected_by !== null &&
+                            !Payment::query()
+                                ->where(
+                                    'order_id',
+                                    $order->id
+                                )
                                 ->whereNotNull('shipment_id')
                                 ->exists();
 
                         if (!$shipmentPaid && !$legacyFullyPaid) {
-                            throw \Illuminate\Validation\ValidationException::withMessages([
+                            throw ValidationException::withMessages([
                                 'status' =>
                                     'COD for this shipment must be collected before marking it as delivered.',
                             ]);
                         }
                     }
 
-                    $lockedShipment->update([
+                    $locked->update([
                         'status' => 'delivered',
                         'sorting_status' => 'staged',
                         'delivered_at' => now(),
                         'notes' =>
                             $validated['delivery_notes']
-                            ?? $lockedShipment->notes,
+                            ?? $locked->notes,
                     ]);
 
                     app(OrderFlowSyncService::class)
-                        ->syncShipment($lockedShipment);
+                        ->syncShipment($locked);
 
                     $sellerOrder->update([
                         'status' => 'delivered',
@@ -616,35 +572,34 @@ class OrderController extends Controller
                 }
 
                 /*
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
                 | DELIVERY FAILED
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
                 */
 
                 if ($newStatus === 'delivery_failed') {
-                    $failureReason =
-                        trim(
-                            (string) (
-                                $validated['failure_reason']
-                                ?? $validated['delivery_notes']
-                                ?? ''
-                            )
-                        );
+                    $reason = trim(
+                        (string) (
+                            $validated['failure_reason']
+                            ?? $validated['delivery_notes']
+                            ?? ''
+                        )
+                    );
 
-                    if ($failureReason === '') {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
+                    if ($reason === '') {
+                        throw ValidationException::withMessages([
                             'failure_reason' =>
                                 'Failure reason is required when delivery fails.',
                         ]);
                     }
 
-                    $lockedShipment->update([
+                    $locked->update([
                         'status' => 'delivery_failed',
-                        'notes' => $failureReason,
+                        'notes' => $reason,
                     ]);
 
                     app(OrderFlowSyncService::class)
-                        ->syncShipment($lockedShipment);
+                        ->syncShipment($locked);
 
                     $sellerOrder->update([
                         'status' => 'delivery_failed',
@@ -652,43 +607,46 @@ class OrderController extends Controller
                 }
 
                 /*
-                |--------------------------------------------------------------------------
-                | RIDER LOAD / AVAILABILITY
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
+                | RIDER WORKLOAD
+                |----------------------------------------------------------
                 */
 
-                $rider = User::query()
-                    ->whereKey($authenticatedRider->id)
+                $lockedRider = User::query()
+                    ->whereKey($rider->id)
                     ->lockForUpdate()
                     ->firstOrFail();
 
                 if ($newStatus === 'delivered') {
-                    if ((int) $rider->current_load > 0) {
-                        $rider->decrement('current_load');
+                    if ((int) $lockedRider->current_load > 0) {
+                        $lockedRider->decrement('current_load');
                     }
 
-                    $rider->refresh();
+                    $lockedRider->refresh();
 
                     if (
-                        $rider->max_capacity !== null
-                        && (int) $rider->current_load
-                            < (int) $rider->max_capacity
+                        $lockedRider->max_capacity !== null &&
+                        (int) $lockedRider->current_load <
+                            (int) $lockedRider->max_capacity
                     ) {
-                        $rider->update([
-                            'availability_status' =>
-                                'available',
+                        $lockedRider->update([
+                            'availability_status' => 'available',
                         ]);
                     }
 
-                    $rider->increment(
+                    $lockedRider->increment(
                         'daily_deliveries_completed'
                     );
                 }
 
+                // Failed deliveries retain their rider
+                // custody/load until the return workflow
+                // releases the shipment.
+
                 /*
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
                 | PARENT BUYER ORDER
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
                 */
 
                 $hasUndelivered = $order
@@ -715,9 +673,9 @@ class OrderController extends Controller
                 }
 
                 /*
-                |--------------------------------------------------------------------------
-                | DELIVERED SIDE EFFECTS
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
+                | DELIVERED NOTIFICATIONS & COMMISSION
+                |----------------------------------------------------------
                 */
 
                 if ($newStatus === 'delivered') {
@@ -730,7 +688,7 @@ class OrderController extends Controller
                         message:
                             "Your parcel {$tracking} has been delivered.",
                         type: 'delivery',
-                        link: route('orders.show', $order),
+                        link: route('orders.show', $order)
                     );
 
                     $sellerUserId =
@@ -743,19 +701,19 @@ class OrderController extends Controller
                                 'Parcel Delivered to Customer',
                             message:
                                 "Parcel {$tracking} has been delivered successfully.",
-                            type: 'shipment',
+                            type: 'shipment'
                         );
                     }
                 }
 
                 /*
-                |--------------------------------------------------------------------------
-                | DELIVERY FAILED NOTIFICATION
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
+                | FAILED DELIVERY NOTIFICATION
+                |----------------------------------------------------------
                 */
 
                 if ($newStatus === 'delivery_failed') {
-                    $failureReason =
+                    $reason =
                         $validated['failure_reason']
                         ?? $validated['delivery_notes']
                         ?? 'Delivery failed.';
@@ -764,287 +722,162 @@ class OrderController extends Controller
                         userId: (int) $order->user_id,
                         title: 'Parcel Delivery Failed',
                         message:
-                            "Delivery failed for parcel {$tracking}. Reason: {$failureReason}",
+                            "Delivery failed for parcel {$tracking}. Reason: {$reason}",
                         type: 'delivery',
-                        link: route('orders.show', $order),
+                        link: route('orders.show', $order)
                     );
                 }
 
                 /*
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
                 | LOGISTICS NOTIFICATION
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
                 */
 
-                if (in_array(
-                    $newStatus,
-                    [
-                        'delivered',
-                        'delivery_failed',
-                    ],
-                    true
-                )) {
-                    $lockedShipment->loadMissing(
-                        'logistic.owner'
-                    );
+                if (
+                    in_array(
+                        $newStatus,
+                        ['delivered', 'delivery_failed'],
+                        true
+                    )
+                ) {
+                    $locked->loadMissing('logistic.owner');
 
                     $logisticOwner =
-                        $lockedShipment->logistic?->owner;
+                        $locked->logistic?->owner;
 
                     if ($logisticOwner) {
-                        $title =
-                            $newStatus === 'delivered'
-                                ? 'Parcel Delivery Completed'
-                                : 'Parcel Delivery Failed';
+                        $title = $newStatus === 'delivered'
+                            ? 'Parcel Delivery Completed'
+                            : 'Parcel Delivery Failed';
 
                         $this->createNotification(
                             userId: (int) $logisticOwner->id,
                             title: $title,
                             message:
-                                "Rider {$rider->name} updated parcel {$tracking} to {$newStatus}.",
-                            type: 'shipment',
+                                "Rider {$lockedRider->name} updated parcel {$tracking} to {$newStatus}.",
+                            type: 'shipment'
                         );
                     }
                 }
             });
 
             $shipment->refresh();
-
-            $shipment->load([
-                'sellerOrder.order.user',
-                'sellerOrder.seller',
-                'logistic',
-                'hub',
-                'rider',
-            ]);
+            $this->loadShipmentRelations($shipment);
 
             return response()->json([
                 'success' => true,
-
                 'message' => match ($newStatus) {
-                    'in_transit' =>
-                        'Shipment marked as in transit.',
-
                     'out_for_delivery' =>
                         'Shipment marked as out for delivery.',
-
                     'delivered' =>
                         'Shipment delivered successfully.',
-
                     'delivery_failed' =>
                         'Delivery marked as failed.',
-
                     default =>
-                        'Shipment status updated successfully.',
+                        'Shipment status updated.',
                 },
-
                 'data' => $this->formatShipment(
-                    shipment: $shipment,
-                    rider: $authenticatedRider,
+                    $shipment,
+                    $rider
                 ),
-            ], 200);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+            ]);
+        } catch (ValidationException $e) {
             throw $e;
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             throw $e;
         } catch (\Throwable $e) {
             report($e);
 
-            return response()->json([
-                'success' => false,
-                'message' =>
-                    'Unable to update shipment status.',
-            ], 500);
+            return $this->error(
+                'Unable to update shipment status.',
+                500
+            );
         }
     }
 
-    /**
-     * Mark a seller-pickup shipment as collected from the seller.
-     *
-     * POST /api/rider/pickups/{shipment}/picked-up
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | SELLER PICKUP — LEGACY MANUAL ENDPOINT
+    |--------------------------------------------------------------------------
+    |
+    | POST /api/rider/pickups/{shipment}/picked-up
+    |
+    | This endpoint is retained for route compatibility.
+    | It does NOT change shipment status.
+    |
+    | The actual seller pickup must use:
+    |
+    | POST /api/rider/scan
+    |
+    | Required QR:
+    | tracking_number + qr_token + seller_order_id
+    |
+    */
+
     public function markSellerPickupInTransit(
         Request $request,
         Shipment $shipment
     ): JsonResponse {
         try {
-            $rider = $request->user();
+            $rider = $this->authenticatedRider($request);
 
-            if (!$rider) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthenticated.',
-                ], 401);
-            }
-
-            if (!$rider->isRider()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This account is not a rider account.',
-                ], 403);
-            }
-
-            if (!$this->isSellerPickupRider(
-                shipment: $shipment,
-                riderId: (int) $rider->id,
-            )) {
-                return response()->json([
-                    'success' => false,
-                    'message' =>
-                        'This shipment is not assigned to you for seller pickup.',
-                ], 403);
-            }
-
-            $validated = $request->validate([
-                'notes' => [
-                    'nullable',
-                    'string',
-                    'max:1000',
-                ],
-            ]);
-
-            DB::transaction(function () use (
-                $shipment,
-                $rider,
-                $validated
-            ) {
-                $lockedShipment = Shipment::query()
-                    ->whereKey($shipment->id)
-                    ->lockForUpdate()
-                    ->firstOrFail();
-
-                if (
-                    (int) ($lockedShipment->pickup_rider_id ?? 0)
-                    !== (int) $rider->id
-                ) {
-                    abort(
-                        403,
-                        'This shipment is not assigned to you for seller pickup.'
-                    );
-                }
-
-                if ($lockedShipment->received_by_sorting_center) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
-                        'status' =>
-                            'This parcel has already been received by the sorting center.',
-                    ]);
-                }
-
-                if ($lockedShipment->status === 'in_transit') {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
-                        'status' =>
-                            'This seller pickup is already in transit.',
-                    ]);
-                }
-
-                if (!in_array(
-                    $lockedShipment->status,
-                    [
-                        'assigned',
-                        'picked_up',
-                    ],
-                    true
-                )) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
-                        'status' =>
-                            'This parcel cannot be picked up from its current status.',
-                    ]);
-                }
-
-                $newNotes = trim(
-                    (string) ($validated['notes'] ?? '')
-                );
-
-                $lockedShipment->update([
-                    'status' => 'in_transit',
-
-                    'picked_up_at' =>
-                        $lockedShipment->picked_up_at ?? now(),
-
-                    'notes' =>
-                        $newNotes !== ''
-                            ? $newNotes
-                            : $lockedShipment->notes,
-                ]);
-
-                app(OrderFlowSyncService::class)
-                    ->syncShipment($lockedShipment);
-            });
-
-            $shipment->refresh();
-
-            $shipment->load([
-                'sellerOrder.order.user',
-                'sellerOrder.seller',
-                'logistic',
-                'hub',
-                'rider',
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' =>
-                    'Seller pickup marked as in transit.',
-
-                'data' => $this->formatShipment(
-                    shipment: $shipment,
-                    rider: $rider,
+            abort_unless(
+                $this->isSellerPickupRider(
+                    $shipment,
+                    (int) $rider->id
                 ),
-            ], 200);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            throw $e;
+                403,
+                'This shipment is not assigned to you for seller pickup.'
+            );
+
+            return $this->error(
+                'Seller pickup must be confirmed by scanning the original BiliHub waybill QR at the seller location. Use the Rider Scanner.',
+                422
+            );
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             throw $e;
         } catch (\Throwable $e) {
             report($e);
 
-            return response()->json([
-                'success' => false,
-                'message' =>
-                    'Unable to update seller pickup status.',
-            ], 500);
+            return $this->error(
+                'Unable to validate seller pickup.',
+                500
+            );
         }
     }
 
-    /**
-     * Mark a seller-pickup shipment as delivered
-     * to the sorting center.
-     *
-     * Logistics still needs to confirm physical receipt.
-     *
-     * POST /api/rider/pickups/{shipment}/deliver-to-sorting-center
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | DELIVER SELLER PICKUP TO SORTING CENTER
+    |--------------------------------------------------------------------------
+    |
+    | POST /api/rider/pickups/{shipment}/deliver-to-sorting-center
+    |
+    | Preconditions:
+    | - Authenticated pickup rider
+    | - Successful seller QR scan recorded
+    | - Shipment currently in transit
+    |
+    | Logistics must still confirm receiving.
+    |
+    */
+
     public function deliverSellerPickupToSortingCenter(
         Request $request,
         Shipment $shipment
     ): JsonResponse {
         try {
-            $rider = $request->user();
+            $rider = $this->authenticatedRider($request);
 
-            if (!$rider) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthenticated.',
-                ], 401);
-            }
-
-            if (!$rider->isRider()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'This account is not a rider account.',
-                ], 403);
-            }
-
-            if (!$this->isSellerPickupRider(
-                shipment: $shipment,
-                riderId: (int) $rider->id,
-            )) {
-                return response()->json([
-                    'success' => false,
-                    'message' =>
-                        'This shipment is not assigned to you for seller pickup.',
-                ], 403);
-            }
+            abort_unless(
+                $this->isSellerPickupRider(
+                    $shipment,
+                    (int) $rider->id
+                ),
+                403,
+                'This shipment is not assigned to you for seller pickup.'
+            );
 
             $validated = $request->validate([
                 'notes' => [
@@ -1059,44 +892,61 @@ class OrderController extends Controller
                 $rider,
                 $validated
             ) {
-                $lockedShipment = Shipment::query()
+                $locked = Shipment::query()
                     ->whereKey($shipment->id)
                     ->lockForUpdate()
                     ->firstOrFail();
 
-                if (
-                    (int) ($lockedShipment->pickup_rider_id ?? 0)
-                    !== (int) $rider->id
-                ) {
-                    abort(
-                        403,
-                        'This shipment is not assigned to you for seller pickup.'
-                    );
-                }
+                abort_unless(
+                    $this->isSellerPickupRider(
+                        $locked,
+                        (int) $rider->id
+                    ),
+                    403,
+                    'This shipment is not assigned to you for seller pickup.'
+                );
 
-                if ($lockedShipment->received_by_sorting_center) {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
+                if ($locked->received_by_sorting_center) {
+                    throw ValidationException::withMessages([
                         'status' =>
                             'This parcel has already been received by the sorting center.',
                     ]);
                 }
 
-                if ($lockedShipment->status === 'at_sorting_center') {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
+                if ($locked->status === 'at_sorting_center') {
+                    throw ValidationException::withMessages([
                         'status' =>
-                            'This parcel is already waiting for sorting center confirmation.',
+                            'This parcel is already awaiting Logistics confirmation.',
                     ]);
                 }
 
-                if ($lockedShipment->status !== 'in_transit') {
-                    throw \Illuminate\Validation\ValidationException::withMessages([
+                if ($locked->status !== 'in_transit') {
+                    throw ValidationException::withMessages([
                         'status' =>
-                            'Only seller pickups that are in transit can be handed over to the sorting center.',
+                            'Only in-transit seller pickups can be handed over to the sorting center.',
+                    ]);
+                }
+
+                /*
+                |----------------------------------------------------------
+                | REQUIRE SELLER QR CONFIRMATION
+                |----------------------------------------------------------
+                */
+
+                if (
+                    $locked->seller_scan_confirmed_at === null ||
+                    $locked->scanned_at_seller === null ||
+                    (int) ($locked->scanned_by_rider_id ?? 0)
+                        !== (int) $rider->id
+                ) {
+                    throw ValidationException::withMessages([
+                        'status' =>
+                            'Scan the original seller waybill QR before delivering this parcel to the sorting center.',
                     ]);
                 }
 
                 $sellerOrder = SellerOrder::query()
-                    ->whereKey($lockedShipment->seller_order_id)
+                    ->whereKey($locked->seller_order_id)
                     ->lockForUpdate()
                     ->firstOrFail();
 
@@ -1106,29 +956,25 @@ class OrderController extends Controller
                     ->firstOrFail();
 
                 /*
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
                 | ASSIGN HUB IF MISSING
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
                 */
 
-                if (!$lockedShipment->hub_id) {
+                if (!$locked->hub_id) {
                     $hub =
-                        \App\Services\HubAssignmentService::findBestHubForSellerOrder(
-                            $sellerOrder
-                        );
+                        \App\Services\HubAssignmentService::
+                        findBestHubForSellerOrder($sellerOrder);
 
                     if (!$hub) {
-                        throw \Illuminate\Validation\ValidationException::withMessages([
+                        throw ValidationException::withMessages([
                             'status' =>
                                 'No sorting center is available for this parcel.',
                         ]);
                     }
 
-                    $lockedShipment->hub_id =
-                        $hub->id;
-
-                    $lockedShipment->logistic_id =
-                        $hub->logistic_id;
+                    $locked->hub_id = $hub->id;
+                    $locked->logistic_id = $hub->logistic_id;
                 }
 
                 $newNotes = trim(
@@ -1136,22 +982,21 @@ class OrderController extends Controller
                 );
 
                 $existingNotes = trim(
-                    (string) ($lockedShipment->notes ?? '')
+                    (string) ($locked->notes ?? '')
                 );
 
                 /*
-                |--------------------------------------------------------------------------
-                | ARRIVED AT SORTING CENTER
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
+                | ARRIVED — NOT YET RECEIVED
+                |----------------------------------------------------------
                 */
 
-                $lockedShipment->update([
-                    'status' =>
-                        'at_sorting_center',
-
-                    'at_sorting_center_at' =>
-                        now(),
-
+                $locked->update([
+                    'status' => 'at_sorting_center',
+                    'at_sorting_center_at' => now(),
+                    'received_by_sorting_center' => false,
+                    'hub_id' => $locked->hub_id,
+                    'logistic_id' => $locked->logistic_id,
                     'notes' => implode(
                         "\n",
                         array_filter([
@@ -1159,175 +1004,193 @@ class OrderController extends Controller
                             $existingNotes,
                         ])
                     ),
-
-                    'received_by_sorting_center' =>
-                        false,
-
-                    'hub_id' =>
-                        $lockedShipment->hub_id,
-
-                    'logistic_id' =>
-                        $lockedShipment->logistic_id,
                 ]);
 
                 app(OrderFlowSyncService::class)
-                    ->syncShipment($lockedShipment);
+                    ->syncShipment($locked);
 
                 /*
-                |--------------------------------------------------------------------------
-                | LOGISTICS NOTIFICATION
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------
+                | NOTIFY LOGISTICS
+                |----------------------------------------------------------
                 */
 
-                $lockedShipment->loadMissing([
+                $locked->loadMissing([
                     'logistic.owner',
                     'hub',
                 ]);
 
                 $logisticOwner =
-                    $lockedShipment->logistic?->owner;
+                    $locked->logistic?->owner;
 
                 if ($logisticOwner) {
                     $tracking =
-                        $lockedShipment->tracking_number
-                        ?: (
-                            'Shipment #'
-                            . $lockedShipment->id
-                        );
+                        $locked->tracking_number
+                        ?: 'Shipment #' . $locked->id;
 
                     $hubName =
-                        $lockedShipment->hub?->name
+                        $locked->hub?->name
                         ?? 'Sorting Center';
 
                     $this->createNotification(
-                        userId:
-                            (int) $logisticOwner->id,
-
+                        userId: (int) $logisticOwner->id,
                         title:
                             'Parcel Awaiting Sorting Center Confirmation',
-
                         message:
                             "Rider {$rider->name} delivered shipment {$tracking} to {$hubName}. Awaiting physical receipt confirmation.",
-
-                        type:
-                            'shipment',
+                        type: 'shipment'
                     );
                 }
             });
 
             $shipment->refresh();
-
-            $shipment->load([
-                'sellerOrder.order.user',
-                'sellerOrder.seller',
-                'logistic',
-                'hub',
-                'rider',
-            ]);
+            $this->loadShipmentRelations($shipment);
 
             return response()->json([
                 'success' => true,
-
                 'message' =>
                     'Parcel arrived at the sorting center. Awaiting Logistics confirmation.',
-
                 'data' => $this->formatShipment(
-                    shipment: $shipment,
-                    rider: $rider,
+                    $shipment,
+                    $rider
                 ),
-            ], 200);
-        } catch (\Illuminate\Validation\ValidationException $e) {
+            ]);
+        } catch (ValidationException $e) {
             throw $e;
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             throw $e;
         } catch (\Throwable $e) {
             report($e);
 
-            return response()->json([
-                'success' => false,
-                'message' =>
-                    'Unable to hand over parcel to the sorting center.',
-            ], 500);
+            return $this->error(
+                'Unable to hand over parcel to the sorting center.',
+                500
+            );
         }
     }
 
-    /**
-     * Create a notification using the same notification model
-     * used by the Rider web application.
-     */
-    private function createNotification(
-        int $userId,
-        string $title,
-        string $message,
-        string $type = 'delivery',
-        ?string $link = null
-    ): void {
-        Notification::create([
-            'user_id' => $userId,
-            'title' => $title,
-            'message' => $message,
-            'type' => $type,
-            'link' => $link,
-        ]);
+    /*
+    |--------------------------------------------------------------------------
+    | SHARED AUTHORIZATION
+    |--------------------------------------------------------------------------
+    */
+
+    private function authenticatedRider(Request $request): User
+    {
+        $rider = $request->user();
+
+        abort_unless(
+            $rider,
+            401,
+            'Unauthenticated.'
+        );
+
+        abort_unless(
+            $rider->isRider(),
+            403,
+            'This account is not a rider account.'
+        );
+
+        return $rider;
     }
 
-    /**
-     * Check whether the authenticated rider has any assignment
-     * on this shipment.
-     *
-     * Used by list/details.
-     */
     private function isShipmentAssignedToRider(
         Shipment $shipment,
         int $riderId
     ): bool {
-        return
-            (int) ($shipment->rider_id ?? 0)
-                === $riderId
-            || (int) ($shipment->pickup_rider_id ?? 0)
-                === $riderId;
+        return $this->isFinalMileRider(
+            $shipment,
+            $riderId
+        ) || $this->isSellerPickupRider(
+            $shipment,
+            $riderId
+        );
     }
 
-    /**
-     * Check whether the authenticated rider
-     * is the seller-pickup rider.
-     */
     private function isSellerPickupRider(
         Shipment $shipment,
         int $riderId
     ): bool {
-        return
-            (int) ($shipment->pickup_rider_id ?? 0)
+        return (int) ($shipment->pickup_rider_id ?? 0)
             === $riderId;
     }
 
-    /**
-     * Check whether the authenticated rider
-     * is the final-mile rider.
-     */
     private function isFinalMileRider(
         Shipment $shipment,
         int $riderId
     ): bool {
-        return
-            (int) ($shipment->rider_id ?? 0)
+        return (int) ($shipment->rider_id ?? 0)
             === $riderId;
     }
 
-    /**
-     * Determine how the rider is assigned to the shipment.
-     */
+    private function validateNotFinalized(
+        Shipment $shipment
+    ): void {
+        if (
+            in_array(
+                $shipment->status,
+                [
+                    'delivered',
+                    'completed',
+                    'delivery_failed',
+                    'failed',
+                    'cancelled',
+                    'canceled',
+                ],
+                true
+            )
+        ) {
+            throw ValidationException::withMessages([
+                'status' =>
+                    'This shipment is already finalized.',
+            ]);
+        }
+    }
+
+    private function validateProofEligibility(
+        Shipment $shipment,
+        User $rider
+    ): void {
+        abort_unless(
+            $this->isFinalMileRider(
+                $shipment,
+                (int) $rider->id
+            ),
+            403,
+            'This shipment is not assigned to you for final delivery.'
+        );
+
+        if (
+            $shipment->status !== 'out_for_delivery' ||
+            $shipment->hub_picked_up_at === null ||
+            (int) ($shipment->hub_pickup_rider_id ?? 0)
+                !== (int) $rider->id ||
+            !$shipment->received_by_sorting_center ||
+            $shipment->sorting_status !== 'staged' ||
+            $shipment->staged_at === null
+        ) {
+            throw ValidationException::withMessages([
+                'status' =>
+                    'Complete the hub QR pickup and start final delivery before uploading proof.',
+            ]);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | ASSIGNMENT TYPE FOR FLUTTER
+    |--------------------------------------------------------------------------
+    */
+
     private function assignmentType(
         Shipment $shipment,
         int $riderId
     ): string {
         $isFinalMile =
-            (int) ($shipment->rider_id ?? 0)
-            === $riderId;
+            $this->isFinalMileRider($shipment, $riderId);
 
         $isPickup =
-            (int) ($shipment->pickup_rider_id ?? 0)
-            === $riderId;
+            $this->isSellerPickupRider($shipment, $riderId);
 
         if ($isFinalMile && $isPickup) {
             return 'pickup_and_delivery';
@@ -1344,102 +1207,76 @@ class OrderController extends Controller
         return 'unknown';
     }
 
-    /**
-     * Format shipment data for the Rider mobile application.
-     *
-     * IMPORTANT:
-     * id = Shipment ID.
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | FORMAT SHIPMENT RESPONSE FOR FLUTTER
+    |--------------------------------------------------------------------------
+    |
+    | IMPORTANT: id is Shipment ID, not Order ID.
+    |
+    */
+
     private function formatShipment(
         Shipment $shipment,
-        $rider
+        User $rider
     ): array {
-        $sellerOrder =
-            $shipment->sellerOrder;
+        $sellerOrder = $shipment->sellerOrder;
+        $order = $sellerOrder?->order;
+        $customer = $order?->user;
 
-        $order =
-            $sellerOrder?->order;
+        $assignmentType = $this->assignmentType(
+            $shipment,
+            (int) $rider->id
+        );
 
-        $customer =
-            $order?->user;
+        $isFinalMile = $this->isFinalMileRider(
+            $shipment,
+            (int) $rider->id
+        );
 
-        $assignmentType =
-            $this->assignmentType(
-                shipment: $shipment,
-                riderId: (int) $rider->id,
-            );
+        $isPickup = $this->isSellerPickupRider(
+            $shipment,
+            (int) $rider->id
+        );
 
         return [
-            /*
-            |--------------------------------------------------------------------------
-            | SHIPMENT IDENTIFICATION
-            |--------------------------------------------------------------------------
-            */
-
-            'id' =>
-                $shipment->id,
-
-            'shipment_id' =>
-                $shipment->id,
-
+            'id' => $shipment->id,
+            'shipment_id' => $shipment->id,
             'seller_order_id' =>
                 $shipment->seller_order_id,
 
             'tracking_number' =>
                 $shipment->tracking_number ?? '',
 
-            /*
-            |--------------------------------------------------------------------------
-            | ASSIGNMENT
-            |--------------------------------------------------------------------------
-            */
-
-            'assignment_type' =>
-                $assignmentType,
-
-            'is_final_mile_rider' =>
-                (int) ($shipment->rider_id ?? 0)
-                === (int) $rider->id,
-
-            'is_pickup_rider' =>
-                (int) ($shipment->pickup_rider_id ?? 0)
-                === (int) $rider->id,
+            'assignment_type' => $assignmentType,
+            'is_final_mile_rider' => $isFinalMile,
+            'is_pickup_rider' => $isPickup,
 
             'pickup_rider_id' =>
                 $shipment->pickup_rider_id,
 
-            /*
-            |--------------------------------------------------------------------------
-            | CUSTOMER
-            |--------------------------------------------------------------------------
-            */
+            'rider_id' => $shipment->rider_id,
+
+            'rider_name' =>
+                $shipment->rider?->name
+                ?? ($isFinalMile ? $rider->name : ''),
 
             'customer_name' =>
-                $customer?->name
-                ?? 'Customer',
+                $customer?->name ?? 'Customer',
 
             'customer_phone' =>
                 $customer?->mobile_number
                 ?? $customer?->phone
                 ?? '',
 
-            /*
-            |--------------------------------------------------------------------------
-            | DELIVERY
-            |--------------------------------------------------------------------------
-            */
-
             'delivery_address' =>
-                $shipment->delivery_address
-                ?? '',
+                $shipment->delivery_address ?? '',
 
             'pickup_address' =>
-                $shipment->pickup_address
-                ?? '',
+                $shipment->pickup_address ?? '',
 
             'status' =>
-                $shipment->status
-                ?? '',
+                $shipment->status ?? '',
 
             'buyer_order_status' =>
                 $order?->status,
@@ -1448,9 +1285,52 @@ class OrderController extends Controller
                 $order?->delivery_status,
 
             /*
-            |--------------------------------------------------------------------------
+            |--------------------------------------------------------------
+            | SELLER QR SCAN
+            |--------------------------------------------------------------
+            */
+
+            'seller_scan_confirmed_at' =>
+                $shipment->seller_scan_confirmed_at
+                    ?->toISOString(),
+
+            'scanned_at_seller' =>
+                $shipment->scanned_at_seller
+                    ?->toISOString(),
+
+            'scanned_by_rider_id' =>
+                $shipment->scanned_by_rider_id,
+
+            'seller_pickup_scan_confirmed' =>
+                $isPickup &&
+                $shipment->seller_scan_confirmed_at !== null &&
+                $shipment->scanned_at_seller !== null &&
+                (int) ($shipment->scanned_by_rider_id ?? 0)
+                    === (int) $rider->id,
+
+            /*
+            |--------------------------------------------------------------
+            | HUB QR SCAN
+            |--------------------------------------------------------------
+            */
+
+            'hub_picked_up_at' =>
+                $shipment->hub_picked_up_at
+                    ?->toISOString(),
+
+            'hub_pickup_rider_id' =>
+                $shipment->hub_pickup_rider_id,
+
+            'hub_pickup_scan_confirmed' =>
+                $isFinalMile &&
+                $shipment->hub_picked_up_at !== null &&
+                (int) ($shipment->hub_pickup_rider_id ?? 0)
+                    === (int) $rider->id,
+
+            /*
+            |--------------------------------------------------------------
             | SORTING CENTER
-            |--------------------------------------------------------------------------
+            |--------------------------------------------------------------
             */
 
             'received_by_sorting_center' =>
@@ -1463,20 +1343,21 @@ class OrderController extends Controller
                 $shipment->sorting_status,
 
             'staged_at' =>
-                $shipment
-                    ->staged_at
+                $shipment->staged_at
+                    ?->toISOString(),
+
+            'at_sorting_center_at' =>
+                $shipment->at_sorting_center_at
                     ?->toISOString(),
 
             /*
-            |--------------------------------------------------------------------------
+            |--------------------------------------------------------------
             | PROOF
-            |--------------------------------------------------------------------------
+            |--------------------------------------------------------------
             */
 
             'has_proof_of_delivery' =>
-                !empty(
-                    $shipment->proof_of_delivery
-                ),
+                !empty($shipment->proof_of_delivery),
 
             'proof_of_delivery' =>
                 $shipment->proof_of_delivery,
@@ -1491,27 +1372,9 @@ class OrderController extends Controller
                 $shipment->notes,
 
             /*
-            |--------------------------------------------------------------------------
-            | RIDER
-            |--------------------------------------------------------------------------
-            */
-
-            'rider_id' =>
-                $shipment->rider_id,
-
-            'rider_name' =>
-                $shipment->rider?->name
-                ?? (
-                    (int) ($shipment->rider_id ?? 0)
-                    === (int) $rider->id
-                        ? ($rider->name ?? 'Rider')
-                        : ''
-                ),
-
-            /*
-            |--------------------------------------------------------------------------
+            |--------------------------------------------------------------
             | LOCATION
-            |--------------------------------------------------------------------------
+            |--------------------------------------------------------------
             */
 
             'latitude' =>
@@ -1535,49 +1398,71 @@ class OrderController extends Controller
                     : null,
 
             /*
-            |--------------------------------------------------------------------------
-            | DATES
-            |--------------------------------------------------------------------------
+            |--------------------------------------------------------------
+            | DATE FIELDS
+            |--------------------------------------------------------------
             */
 
             'order_date' =>
-                $order
-                    ?->created_at
-                    ?->toISOString(),
+                $order?->created_at?->toISOString(),
 
             'created_at' =>
-                $shipment
-                    ->created_at
-                    ?->toISOString(),
+                $shipment->created_at?->toISOString(),
 
             'updated_at' =>
-                $shipment
-                    ->updated_at
-                    ?->toISOString(),
+                $shipment->updated_at?->toISOString(),
 
             'picked_up_at' =>
-                $shipment
-                    ->picked_up_at
-                    ?->toISOString(),
-
-            'hub_picked_up_at' =>
-                $shipment
-                    ->hub_picked_up_at
-                    ?->toISOString(),
+                $shipment->picked_up_at?->toISOString(),
 
             'delivered_at' =>
-                $shipment
-                    ->delivered_at
-                    ?->toISOString(),
+                $shipment->delivered_at?->toISOString(),
 
-            /*
-            |--------------------------------------------------------------------------
-            | EARNINGS
-            |--------------------------------------------------------------------------
-            */
-
-            'delivery_earnings' =>
-                null,
+            'delivery_earnings' => null,
         ];
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SHARED RESPONSE / NOTIFICATION HELPERS
+    |--------------------------------------------------------------------------
+    */
+
+    private function loadShipmentRelations(
+        Shipment $shipment
+    ): void {
+        $shipment->load([
+            'sellerOrder.order.user',
+            'sellerOrder.seller',
+            'logistic',
+            'hub',
+            'rider',
+        ]);
+    }
+
+    private function createNotification(
+        int $userId,
+        string $title,
+        string $message,
+        string $type = 'delivery',
+        ?string $link = null
+    ): void {
+        Notification::create([
+            'user_id' => $userId,
+            'title' => $title,
+            'message' => $message,
+            'type' => $type,
+            'link' => $link,
+        ]);
+    }
+
+    private function error(
+        string $message,
+        int $status
+    ): JsonResponse {
+        return response()->json([
+            'success' => false,
+            'message' => $message,
+        ], $status);
     }
 }
