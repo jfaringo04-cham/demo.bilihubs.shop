@@ -187,11 +187,6 @@ Route::middleware('auth')->group(function () {
             [\App\Http\Controllers\Admin\LogisticWithdrawalController::class, 'reject']
         )->name('logistic-withdrawals.reject');
 
-        // TEMPORARY: Admin-only, read-only COD accounting diagnostic.
-        Route::get(
-            '/cod-wallet/diagnostic',
-            \App\Http\Controllers\Admin\CodWalletDiagnosticController::class
-        )->name('cod-wallet.diagnostic');
 
         Route::get(
             '/cod-wallet',

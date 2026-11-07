@@ -35,10 +35,44 @@ class CodCustodyService
 
     public function adminWallet(): AdminWallet
     {
-        return AdminWallet::firstOrCreate(
-            ['id' => 1],
-            ['available_balance_minor' => 0]
-        );
+        // Select the existing wallet containing accounting activity.
+        // Never create another wallet merely because ID 1 is missing.
+        $activeWallets = AdminWallet::query()
+            ->where(function ($query) {
+                $query->whereHas('transactions')
+                    ->orWhere('available_balance_minor', '>', 0);
+            })
+            ->orderBy('id')
+            ->limit(2)
+            ->get();
+
+        // Multiple active wallets require manual reconciliation.
+        // Do not silently combine balances or ledger records.
+        if ($activeWallets->count() > 1) {
+            throw new \RuntimeException(
+                'Multiple Admin COD wallets contain financial activity. '
+                . 'Manual accounting reconciliation is required.'
+            );
+        }
+
+        if ($activeWallets->count() === 1) {
+            return $activeWallets->first();
+        }
+
+        // Reuse an empty existing wallet rather than multiplying rows.
+        $existing = AdminWallet::query()
+            ->orderBy('id')
+            ->first();
+
+        if ($existing) {
+            return $existing;
+        }
+
+        // Initial setup only. A future database-level singleton
+        // constraint is still required for concurrent creation safety.
+        return AdminWallet::create([
+            'available_balance_minor' => 0,
+        ]);
     }
 
     public function creditConfirmedRiderRemittance(
