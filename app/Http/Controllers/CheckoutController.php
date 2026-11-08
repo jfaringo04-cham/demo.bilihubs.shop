@@ -428,8 +428,8 @@ class CheckoutController extends Controller
             return $priceMinor * (int) $item->quantity;
         });
 
-        // Existing BiliHub checkout fees.
-        $taxMinor = intdiv(($subtotalMinor * 3) + 50, 100);
+        // Existing BiliHub platform service fee.
+        $serviceFeeMinor = intdiv(($subtotalMinor * 3) + 50, 100);
 
         // Shipping is PHP 50.00 per seller/shipment.
         $sellerCount = max(1, $cartItems->pluck('product.seller_id')->filter()->unique()->count());
@@ -468,11 +468,11 @@ class CheckoutController extends Controller
 
         $totalMinor = max(
             0,
-            $subtotalMinor + $taxMinor + $shippingMinor - $voucherDiscountMinor
+            $subtotalMinor + $serviceFeeMinor + $shippingMinor - $voucherDiscountMinor
         );
 
         $subtotal = $subtotalMinor / 100;
-        $tax = $taxMinor / 100;
+        $serviceFee = $serviceFeeMinor / 100;
         $shipping = $shippingMinor / 100;
         $voucherDiscount = $voucherDiscountMinor / 100;
         $total = $totalMinor / 100;
@@ -509,7 +509,7 @@ class CheckoutController extends Controller
         $totalMinor = max(
             0,
             $subtotalMinor
-                + $taxMinor
+                + $serviceFeeMinor
                 + $shippingMinor
                 - $voucherDiscountMinor
         );
@@ -519,7 +519,7 @@ class CheckoutController extends Controller
         return view('checkout.index', compact(
             'cartItems',
             'subtotal',
-            'tax',
+            'serviceFee',
             'shipping',
             'shippingQuote',
             'total',
@@ -660,7 +660,7 @@ class CheckoutController extends Controller
 
         // Standardized BiliHub checkout fees.
         // Buyer service fee: 3%.
-        $taxMinor = intdiv(($subtotalMinor * 3) + 50, 100);
+        $serviceFeeMinor = intdiv(($subtotalMinor * 3) + 50, 100);
 
         // Shipping is PHP 50.00 per seller/shipment.
         $sellerCount = max(1, $cartItems->pluck('product.seller_id')->filter()->unique()->count());
@@ -672,13 +672,13 @@ class CheckoutController extends Controller
         $voucherCode = $request->session()->get('checkout.voucher_code');
 
         // Final buyer payment (discount recalculated inside transaction).
-        $totalMinor = $subtotalMinor + $taxMinor + $shippingMinor;
+        $totalMinor = $subtotalMinor + $serviceFeeMinor + $shippingMinor;
 
         // Temporary legacy peso values for dual-write compatibility.
 
         $subtotal = $subtotalMinor / 100;
 
-        $tax = $taxMinor / 100;
+        $serviceFee = $serviceFeeMinor / 100;
 
         $shipping = $shippingMinor / 100;
 
@@ -769,7 +769,7 @@ class CheckoutController extends Controller
 
         $totalMinor =
             $subtotalMinor
-            + $taxMinor
+            + $serviceFeeMinor
             + $shippingMinor;
 
         $total = $totalMinor / 100;
@@ -784,7 +784,7 @@ class CheckoutController extends Controller
 
             $subtotal,
 
-            $tax,
+            $serviceFee,
 
             $shipping,
 
@@ -792,7 +792,7 @@ class CheckoutController extends Controller
 
             $subtotalMinor,
 
-            $taxMinor,
+            $serviceFeeMinor,
 
             $shippingMinor,
 
@@ -995,7 +995,7 @@ class CheckoutController extends Controller
                 }
             }
 
-            $totalMinor = $subtotalMinor + $taxMinor + $shippingMinor - $voucherDiscountMinor;
+            $totalMinor = $subtotalMinor + $serviceFeeMinor + $shippingMinor - $voucherDiscountMinor;
 
             $orderReference = 'ORD-' . strtoupper(Str::random(10));
 
@@ -1011,7 +1011,7 @@ class CheckoutController extends Controller
 
                 'subtotal_minor' => $subtotalMinor,
 
-                'tax_minor' => $taxMinor,
+                'service_fee_minor' => $serviceFeeMinor,
 
                 'shipping_minor' => $shippingMinor,
 
@@ -1052,7 +1052,7 @@ class CheckoutController extends Controller
 
             $sellerIndex = 0;
 
-            $allocatedTaxMinor = 0;
+            $allocatedServiceFeeMinor = 0;
 
             $firstSellerOrderId = null;
 
@@ -1072,20 +1072,20 @@ class CheckoutController extends Controller
                 });
 
                 // Each SellerOrder represents one seller/shipment and receives the full
-                // per-seller shipping fee. Tax/service fee still reconciles proportionally.
+                // per-seller shipping fee. Platform service fee still reconciles proportionally.
                 $sellerShippingMinor = (int) (
                     $shippingBySellerMinor[(int) $sellerId]
                     ?? config('shipping.base_fee_minor', 5000)
                 );
 
                 if ($sellerIndex === $sellerCount) {
-                    $sellerTaxMinor = $taxMinor - $allocatedTaxMinor;
+                    $sellerServiceFeeMinor = $serviceFeeMinor - $allocatedServiceFeeMinor;
                 } else {
-                    $sellerTaxMinor = $subtotalMinor > 0
-                        ? intdiv($taxMinor * $sellerSubtotalMinor, $subtotalMinor)
+                    $sellerServiceFeeMinor = $subtotalMinor > 0
+                        ? intdiv($serviceFeeMinor * $sellerSubtotalMinor, $subtotalMinor)
                         : 0;
 
-                    $allocatedTaxMinor += $sellerTaxMinor;
+                    $allocatedServiceFeeMinor += $sellerServiceFeeMinor;
                 }
 
                 $sellerVoucherDiscountMinor = $sellerItems->sum(function ($item) use ($itemVoucherDiscounts) {
@@ -1097,8 +1097,8 @@ class CheckoutController extends Controller
                 $platformFundedDiscountMinor = $voucherResult && $voucherResult['funded_by'] === 'platform'
                     ? $sellerVoucherDiscountMinor : 0;
 
-                $sellerTotalMinor = $sellerSubtotalMinor + $sellerTaxMinor
-                    + $sellerShippingMinor - $sellerVoucherDiscountMinor;
+                $sellerTotalMinor = $sellerSubtotalMinor + $sellerServiceFeeMinor
+                    + $sellerShippingMinor - $sellerFundedDiscountMinor;
 
                 // Temporary legacy peso values for dual-write compatibility.
 
@@ -1106,7 +1106,7 @@ class CheckoutController extends Controller
 
                 $sellerShipping = $sellerShippingMinor / 100;
 
-                $sellerTax = $sellerTaxMinor / 100;
+                $sellerServiceFee = $sellerServiceFeeMinor / 100;
 
                 $sellerTotal = $sellerTotalMinor / 100;
 
@@ -1119,6 +1119,7 @@ class CheckoutController extends Controller
                     'status' => 'pending',
 
                     'subtotal_minor' => $sellerSubtotalMinor,
+                    'service_fee_minor' => $sellerServiceFeeMinor,
 
                     'shipping_minor' => $sellerShippingMinor,
 

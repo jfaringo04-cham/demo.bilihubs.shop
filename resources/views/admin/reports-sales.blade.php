@@ -7,13 +7,13 @@
 
     <div class="d-flex gap-2">
         <a href="{{ route('admin.reports.commission') }}"
-           class="btn btn-outline-secondary btn-sm">
+            class="btn btn-outline-secondary btn-sm">
             <i class="bi bi-percent"></i>
             Commission Report
         </a>
 
         <a href="{{ route('admin.reports.sales.export') }}{{ request()->getQueryString() ? '?' . request()->getQueryString() : '' }}"
-           class="btn btn-bili-hub btn-sm">
+            class="btn btn-bili-hub btn-sm">
             <i class="bi bi-download"></i>
             Export CSV
         </a>
@@ -24,23 +24,19 @@
 <div class="card shadow-sm mb-4">
     <div class="card-body">
         <form method="GET"
-              action="{{ route('admin.reports.sales') }}"
-              class="row g-3 align-items-end">
+            action="{{ route('admin.reports.sales') }}"
+            class="row g-3 align-items-end">
 
             <div class="col-md-6 col-xl-2">
                 <label class="form-label fw-bold">From</label>
-                <input type="date"
-                       name="from"
-                       value="{{ request('from') }}"
-                       class="form-control">
+                <input type="date" name="from"
+                    value="{{ request('from') }}" class="form-control">
             </div>
 
             <div class="col-md-6 col-xl-2">
                 <label class="form-label fw-bold">To</label>
-                <input type="date"
-                       name="to"
-                       value="{{ request('to') }}"
-                       class="form-control">
+                <input type="date" name="to"
+                    value="{{ request('to') }}" class="form-control">
             </div>
 
             <div class="col-md-6 col-xl-2">
@@ -48,10 +44,10 @@
                 <select name="status" class="form-select">
                     <option value="">All Statuses</option>
                     @foreach($statuses as $status)
-                        <option value="{{ $status }}"
-                            @selected(request('status') === $status)>
-                            {{ \Illuminate\Support\Str::headline($status) }}
-                        </option>
+                    <option value="{{ $status }}"
+                        @selected(request('status')===$status)>
+                        {{ \Illuminate\Support\Str::headline($status) }}
+                    </option>
                     @endforeach
                 </select>
             </div>
@@ -61,10 +57,10 @@
                 <select name="seller_id" class="form-select">
                     <option value="">All Sellers</option>
                     @foreach($sellers as $seller)
-                        <option value="{{ $seller->id }}"
-                            @selected((string) request('seller_id') === (string) $seller->id)>
-                            {{ $seller->name }}
-                        </option>
+                    <option value="{{ $seller->id }}"
+                        @selected((string) request('seller_id')===(string) $seller->id)>
+                        {{ $seller->name }}
+                    </option>
                     @endforeach
                 </select>
             </div>
@@ -74,10 +70,10 @@
                 <select name="product_id" class="form-select">
                     <option value="">All Products</option>
                     @foreach($products as $product)
-                        <option value="{{ $product->id }}"
-                            @selected((string) request('product_id') === (string) $product->id)>
-                            {{ $product->name }}
-                        </option>
+                    <option value="{{ $product->id }}"
+                        @selected((string) request('product_id')===(string) $product->id)>
+                        {{ $product->name }}
+                    </option>
                     @endforeach
                 </select>
             </div>
@@ -85,21 +81,20 @@
             <div class="col-md-6 col-xl-2">
                 <label class="form-label fw-bold">Sort By</label>
                 <select name="sort" class="form-select">
-                    <option value="sales_desc" @selected(request('sort', 'sales_desc') === 'sales_desc')}>
+                    <option value="sales_desc" @selected(request('sort', 'sales_desc' )==='sales_desc' )>
                         Highest Sales
                     </option>
-                    <option value="sales_asc" @selected(request('sort') === 'sales_asc')}>
+                    <option value="sales_asc" @selected(request('sort')==='sales_asc' )>
                         Lowest Sales
                     </option>
-                    <option value="orders_desc" @selected(request('sort') === 'orders_desc')}>
+                    <option value="orders_desc" @selected(request('sort')==='orders_desc' )>
                         Most Orders / Qty
                     </option>
                 </select>
             </div>
 
             <div class="col-md-6">
-                <button type="submit"
-                        class="btn btn-outline-secondary w-100">
+                <button type="submit" class="btn btn-outline-secondary w-100">
                     <i class="bi bi-filter"></i>
                     Apply Filters
                 </button>
@@ -107,7 +102,7 @@
 
             <div class="col-md-6">
                 <a href="{{ route('admin.reports.sales') }}"
-                   class="btn btn-outline-danger w-100">
+                    class="btn btn-outline-danger w-100">
                     <i class="bi bi-arrow-counterclockwise"></i>
                     Reset Filters
                 </a>
@@ -118,39 +113,39 @@
 
 {{-- ACTIVE FILTER SUMMARY --}}
 @if(request()->hasAny(['from', 'to', 'status', 'seller_id', 'product_id', 'sort']))
-    <div class="d-flex flex-wrap gap-2 mb-4">
-        @if(request('from'))
-            <span class="badge text-bg-light border">From: {{ request('from') }}</span>
-        @endif
+<div class="d-flex flex-wrap gap-2 mb-4">
+    @if(request('from'))
+    <span class="badge text-bg-light border">From: {{ request('from') }}</span>
+    @endif
 
-        @if(request('to'))
-            <span class="badge text-bg-light border">To: {{ request('to') }}</span>
-        @endif
+    @if(request('to'))
+    <span class="badge text-bg-light border">To: {{ request('to') }}</span>
+    @endif
 
-        @if(request('status'))
-            <span class="badge text-bg-light border">
-                Status: {{ \Illuminate\Support\Str::headline(request('status')) }}
-            </span>
-        @endif
+    @if(request('status'))
+    <span class="badge text-bg-light border">
+        Status: {{ \Illuminate\Support\Str::headline(request('status')) }}
+    </span>
+    @endif
 
-        @if(request('seller_id'))
-            @php($selectedSeller = $sellers->firstWhere('id', (int) request('seller_id')))
-            @if($selectedSeller)
-                <span class="badge text-bg-light border">
-                    Seller: {{ $selectedSeller->name }}
-                </span>
-            @endif
-        @endif
+    @if(request('seller_id'))
+    @php($selectedSeller = $sellers->firstWhere('id', (int) request('seller_id')))
+    @if($selectedSeller)
+    <span class="badge text-bg-light border">
+        Seller: {{ $selectedSeller->name }}
+    </span>
+    @endif
+    @endif
 
-        @if(request('product_id'))
-            @php($selectedProduct = $products->firstWhere('id', (int) request('product_id')))
-            @if($selectedProduct)
-                <span class="badge text-bg-light border">
-                    Product: {{ $selectedProduct->name }}
-                </span>
-            @endif
-        @endif
-    </div>
+    @if(request('product_id'))
+    @php($selectedProduct = $products->firstWhere('id', (int) request('product_id')))
+    @if($selectedProduct)
+    <span class="badge text-bg-light border">
+        Product: {{ $selectedProduct->name }}
+    </span>
+    @endif
+    @endif
+</div>
 @endif
 
 {{-- SUMMARY CARDS --}}
@@ -162,7 +157,15 @@
                     <i class="bi bi-cash"></i>
                 </div>
                 <div>
-                    <h6 class="text-muted mb-1">Total Sales</h6>
+                    <h6 class="text-muted mb-1">
+                        @if(request()->filled('product_id'))
+                        Delivered Product Sales
+                        @elseif(request()->filled('seller_id'))
+                        Delivered Seller-Order Value
+                        @else
+                        Delivered Buyer-Order Value
+                        @endif
+                    </h6>
                     <h3 class="mb-0">
                         &#8369;{{ number_format($totalSales, 2) }}
                     </h3>
@@ -231,17 +234,16 @@
 
                     <tbody>
                         @forelse($byStatus as $status => $count)
-                            <tr>
-                                <td>{{ \Illuminate\Support\Str::headline($status) }}</td>
-                                <td>{{ $count }}</td>
-                            </tr>
+                        <tr>
+                            <td>{{ \Illuminate\Support\Str::headline($status) }}</td>
+                            <td>{{ $count }}</td>
+                        </tr>
                         @empty
-                            <tr>
-                                <td colspan="2"
-                                    class="text-center text-muted py-4">
-                                    No order data found for the selected filters.
-                                </td>
-                            </tr>
+                        <tr>
+                            <td colspan="2" class="text-center text-muted py-4">
+                                No order data found for the selected filters.
+                            </td>
+                        </tr>
                         @endforelse
                     </tbody>
                 </table>
@@ -260,34 +262,33 @@
                             <th>Product</th>
                             <th>Seller</th>
                             <th>Qty Sold</th>
-                            <th class="text-end">Revenue</th>
+                            <th class="text-end">Product Sales</th>
                         </tr>
                     </thead>
 
                     <tbody>
                         @forelse($topProducts as $item)
-                            <tr>
-                                <td class="fw-semibold">
-                                    {{ $item->product->name ?? 'Deleted Product' }}
-                                </td>
-                                <td>
-                                    {{ $item->product->seller->name ?? 'N/A' }}
-                                </td>
-                                <td>{{ (int) $item->total_quantity }}</td>
-                                <td class="text-end fw-semibold">
-                                    &#8369;{{ number_format(
+                        <tr>
+                            <td class="fw-semibold">
+                                {{ $item->product->name ?? 'Deleted Product' }}
+                            </td>
+                            <td>
+                                {{ $item->product->seller->name ?? 'N/A' }}
+                            </td>
+                            <td>{{ (int) $item->total_quantity }}</td>
+                            <td class="text-end fw-semibold">
+                                &#8369;{{ number_format(
                                         ((int) $item->total_revenue_minor) / 100,
                                         2
                                     ) }}
-                                </td>
-                            </tr>
+                            </td>
+                        </tr>
                         @empty
-                            <tr>
-                                <td colspan="4"
-                                    class="text-center text-muted py-4">
-                                    No delivered product sales found for the selected filters.
-                                </td>
-                            </tr>
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-4">
+                                No delivered product sales found for the selected filters.
+                            </td>
+                        </tr>
                         @endforelse
                     </tbody>
                 </table>
@@ -301,7 +302,7 @@
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h5 class="mb-0">Top Sellers</h5>
         <small class="text-muted">
-            Based on delivered sales and current filters
+            Based on delivered seller-order values and current filters
         </small>
     </div>
 
@@ -311,29 +312,28 @@
                 <tr>
                     <th>Seller</th>
                     <th>Delivered Orders</th>
-                    <th class="text-end">Delivered Sales</th>
+                    <th class="text-end">Delivered Seller-Order Value</th>
                 </tr>
             </thead>
 
             <tbody>
                 @forelse($topSellers as $seller)
-                    <tr>
-                        <td class="fw-semibold">{{ $seller->name }}</td>
-                        <td>{{ $seller->delivered_orders_count }}</td>
-                        <td class="text-end fw-semibold">
-                            &#8369;{{ number_format(
+                <tr>
+                    <td class="fw-semibold">{{ $seller->name }}</td>
+                    <td>{{ $seller->delivered_orders_count }}</td>
+                    <td class="text-end fw-semibold">
+                        &#8369;{{ number_format(
                                 ((int) ($seller->delivered_sales_minor ?? 0)) / 100,
                                 2
                             ) }}
-                        </td>
-                    </tr>
+                    </td>
+                </tr>
                 @empty
-                    <tr>
-                        <td colspan="3"
-                            class="text-center text-muted py-4">
-                            No delivered seller sales found for the selected filters.
-                        </td>
-                    </tr>
+                <tr>
+                    <td colspan="3" class="text-center text-muted py-4">
+                        No delivered seller-order values found for the selected filters.
+                    </td>
+                </tr>
                 @endforelse
             </tbody>
         </table>

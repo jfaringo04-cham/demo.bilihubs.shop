@@ -277,9 +277,9 @@ default => 'secondary',
                     </div>
 
                     <div class="d-flex justify-content-between mb-2">
-                        <span class="text-muted">Tax</span>
+                        <span class="text-muted">Platform Service Fee (3%)</span>
                         <span>
-                            ₱{{ number_format(($order->tax_minor ?? 0) / 100, 2) }}
+                            ₱{{ number_format((($order->service_fee_minor ?? $order->tax_minor ?? 0) / 100), 2) }}
                         </span>
                     </div>
 

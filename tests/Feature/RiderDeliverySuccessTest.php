@@ -8,9 +8,9 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
-use Tests\TestCase;
+use Tests\SQLiteTestCase;
 
-class RiderDeliverySuccessTest extends TestCase
+class RiderDeliverySuccessTest extends SQLiteTestCase
 {
     protected function setUp(): void
     {
@@ -145,6 +145,47 @@ class RiderDeliverySuccessTest extends TestCase
             $table->unique(['order_id', 'seller_id']);
         });
 
+        Schema::create('platform_revenue_entries', function (Blueprint $table) {
+            $table->id();
+
+            $table->string('revenue_type', 40);
+            $table->string('source_type', 40);
+            $table->unsignedBigInteger('source_id');
+            $table->string('entry_type', 20)->default('earned');
+
+            $table->foreignId('order_id')
+                ->nullable()
+                ->constrained('orders')
+                ->restrictOnDelete();
+
+            $table->foreignId('seller_order_id')
+                ->nullable()
+                ->constrained('seller_orders')
+                ->restrictOnDelete();
+
+            $table->bigInteger('amount_minor');
+            $table->char('currency', 3)->default('PHP');
+            $table->timestampTz('recognized_at');
+
+            $table->foreignId('reversal_of_entry_id')
+                ->nullable()
+                ->unique()
+                ->constrained('platform_revenue_entries')
+                ->restrictOnDelete();
+
+            $table->json('metadata')->nullable();
+            $table->timestamps();
+
+            $table->unique(
+                ['revenue_type', 'source_type', 'source_id', 'entry_type'],
+                'platform_revenue_source_unique'
+            );
+
+            $table->index('order_id');
+            $table->index('seller_order_id');
+            $table->index('recognized_at');
+            $table->index('revenue_type');
+        });
         Schema::create('notifications', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id');
@@ -364,7 +405,7 @@ class RiderDeliverySuccessTest extends TestCase
 
         $this->assertDatabaseHas('orders', [
             'id' => $orderId, 'delivery_status' => 'partially_delivered',
-            'payment_status' => 'unpaid',
+            'payment_status' => 'partially_paid',
         ]);
         $this->assertDatabaseHas('seller_orders', [
             'id' => $firstSellerOrderId, 'status' => 'delivered',

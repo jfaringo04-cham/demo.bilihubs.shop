@@ -18,6 +18,15 @@ class ShippingEarningsSplitTest extends TestCase
     {
         parent::setUp();
 
+        // Isolate this legacy test schema from the PostgreSQL test database.
+        config()->set('database.default', 'sqlite');
+        config()->set('database.connections.sqlite.database', ':memory:');
+
+        DB::purge('sqlite');
+        DB::setDefaultConnection('sqlite');
+
+        $schema = Schema::connection('sqlite');
+
         foreach ([
             'logistic_wallet_transactions',
             'logistic_wallets',

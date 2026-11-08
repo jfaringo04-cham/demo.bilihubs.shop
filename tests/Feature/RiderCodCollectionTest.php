@@ -6,9 +6,9 @@ use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Tests\TestCase;
+use Tests\SQLiteTestCase;
 
-class RiderCodCollectionTest extends TestCase
+class RiderCodCollectionTest extends SQLiteTestCase
 {
     protected function setUp(): void
     {
@@ -262,7 +262,7 @@ class RiderCodCollectionTest extends TestCase
         $this->assertDatabaseHas('orders', [
             'id' => $orderId,
             'amount_collected_minor' => 50000,
-            'payment_status' => 'unpaid',
+            'payment_status' => 'partially_paid',
         ]);
     }
 
@@ -359,7 +359,7 @@ class RiderCodCollectionTest extends TestCase
         $this->assertDatabaseHas('orders', [
             'id' => $orderId,
             'amount_collected_minor' => 60000,
-            'payment_status' => 'unpaid',
+            'payment_status' => 'partially_paid',
         ]);
 
         $this->actingAs($rider2);

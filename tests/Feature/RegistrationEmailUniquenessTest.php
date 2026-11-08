@@ -13,9 +13,9 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use App\Models\EmailVerificationOtp;
-use Tests\TestCase;
+use Tests\SQLiteTestCase;
 
-class RegistrationEmailUniquenessTest extends TestCase
+class RegistrationEmailUniquenessTest extends SQLiteTestCase
 {
     protected function setUp(): void
     {

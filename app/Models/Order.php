@@ -16,6 +16,7 @@ class Order extends Model
     'status',
     'subtotal_minor',
     'tax_minor',
+    'service_fee_minor',
     'shipping_minor',
     'total_minor',
     'shipping_address',
@@ -80,6 +81,7 @@ class Order extends Model
     // Milestone 4 integer centavo fields.
     'subtotal_minor' => 'integer',
     'tax_minor' => 'integer',
+    'service_fee_minor' => 'integer',
     'shipping_minor' => 'integer',
     'total_minor' => 'integer',
     'amount_collected_minor' => 'integer',

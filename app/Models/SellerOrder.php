@@ -31,6 +31,7 @@ class SellerOrder extends Model
         'rescheduled_at',
 
         // Money in centavos
+        'service_fee_minor',
         'subtotal_minor',
         'shipping_minor',
         'total_minor',
@@ -48,6 +49,7 @@ class SellerOrder extends Model
         'discount_minor' => 'integer',
         'seller_discount_minor' => 'integer',
         'platform_discount_minor' => 'integer',
+        'service_fee_minor' => 'integer',
     ];
 
     /**

@@ -7,6 +7,7 @@ use App\Models\Payment;
 use App\Models\Commission;
 use App\Models\CodRemittance;
 use App\Models\Order;
+use App\Models\PlatformRevenueEntry;
 use Illuminate\Support\Facades\DB;
 
 class FinancialReconciliationController extends Controller
@@ -19,7 +20,6 @@ class FinancialReconciliationController extends Controller
             ->sum('amount_minor');
 
         // Count only confirmed COD remittance allocations.
-        // DISTINCT payment_id protects against repeated counting.
         $confirmedPaymentIds = DB::table('cod_remittance_payments')
             ->join(
                 'cod_remittances',
@@ -47,6 +47,80 @@ class FinancialReconciliationController extends Controller
             ->where('status', 'paid')
             ->sum('amount_minor');
 
+        /*
+        |--------------------------------------------------------------------------
+        | PLATFORM REVENUE LEDGER
+        |--------------------------------------------------------------------------
+        |
+        | Only PHP entries are included in these totals.
+        | Earned entries increase revenue.
+        | Reversal entries reduce revenue.
+        | No historical records are generated here.
+        |
+        */
+
+        $ledgerTotals = PlatformRevenueEntry::query()
+            ->where('currency', 'PHP')
+            ->whereIn('revenue_type', [
+                'service_fee',
+                'seller_commission',
+            ])
+            ->selectRaw("
+                COALESCE(SUM(
+                    CASE
+                        WHEN revenue_type = 'service_fee'
+                        AND entry_type = 'earned'
+                        THEN amount_minor ELSE 0
+                    END
+                ), 0) AS service_fee_earned_minor,
+
+                COALESCE(SUM(
+                    CASE
+                        WHEN revenue_type = 'service_fee'
+                        AND entry_type = 'reversal'
+                        THEN amount_minor ELSE 0
+                    END
+                ), 0) AS service_fee_reversed_minor,
+
+                COALESCE(SUM(
+                    CASE
+                        WHEN revenue_type = 'seller_commission'
+                        AND entry_type = 'earned'
+                        THEN amount_minor ELSE 0
+                    END
+                ), 0) AS commission_earned_minor,
+
+                COALESCE(SUM(
+                    CASE
+                        WHEN revenue_type = 'seller_commission'
+                        AND entry_type = 'reversal'
+                        THEN amount_minor ELSE 0
+                    END
+                ), 0) AS commission_reversed_minor
+            ")
+            ->first();
+
+        $serviceFeeEarnedMinor =
+            (int) $ledgerTotals->service_fee_earned_minor;
+
+        $serviceFeeReversedMinor =
+            (int) $ledgerTotals->service_fee_reversed_minor;
+
+        $commissionEarnedMinor =
+            (int) $ledgerTotals->commission_earned_minor;
+
+        $commissionReversedMinor =
+            (int) $ledgerTotals->commission_reversed_minor;
+
+        $serviceFeeNetMinor =
+            $serviceFeeEarnedMinor - $serviceFeeReversedMinor;
+
+        $commissionNetMinor =
+            $commissionEarnedMinor - $commissionReversedMinor;
+
+        $totalPlatformRevenueMinor =
+            $serviceFeeNetMinor + $commissionNetMinor;
+
         $recentRemittances = CodRemittance::query()
             ->with(['rider', 'logistic'])
             ->latest()
@@ -60,8 +134,6 @@ class FinancialReconciliationController extends Controller
             ->get();
 
         // Read-only order-level financial breakdown.
-        // Uses stored amounts, preserving historical checkout fees.
-        // Recent orders using their actual stored financial amounts.
         $recentOrders = Order::query()
             ->with('user')
             ->latest()
@@ -69,10 +141,11 @@ class FinancialReconciliationController extends Controller
             ->get();
 
         // Commission totals grouped by order.
-        // No commissions() relationship is required.
         $commissionsByOrder = Commission::query()
             ->whereIn('order_id', $recentOrders->pluck('id'))
-            ->selectRaw('order_id, SUM(amount_minor) AS commission_total_minor')
+            ->selectRaw(
+                'order_id, SUM(amount_minor) AS commission_total_minor'
+            )
             ->groupBy('order_id')
             ->pluck('commission_total_minor', 'order_id');
 
@@ -82,6 +155,13 @@ class FinancialReconciliationController extends Controller
             'totalCommissionMinor',
             'pendingCommissionMinor',
             'paidCommissionMinor',
+            'serviceFeeEarnedMinor',
+            'serviceFeeReversedMinor',
+            'commissionEarnedMinor',
+            'commissionReversedMinor',
+            'serviceFeeNetMinor',
+            'commissionNetMinor',
+            'totalPlatformRevenueMinor',
             'recentRemittances',
             'recentPayments',
             'recentOrders',

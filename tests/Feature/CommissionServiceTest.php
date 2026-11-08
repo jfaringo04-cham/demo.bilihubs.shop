@@ -75,6 +75,7 @@ class CommissionServiceTest extends TestCase
         $order = Order::create([
             'user_id' => $buyer->id,
             'order_number' => 'TEST-COMMISSION-001',
+            'reference' => 'TEST-COMMISSION-001',
             'status' => 'delivered',
             'shipping_address' => [
                 'name' => 'Test Buyer',
@@ -113,6 +114,7 @@ class CommissionServiceTest extends TestCase
         $order = Order::create([
             'user_id' => $buyer->id,
             'order_number' => 'TEST-COMMISSION-002',
+            'reference' => 'TEST-COMMISSION-002',
             'status' => 'delivered',
             'shipping_address' => [
                 'name' => 'Test Buyer',
@@ -146,6 +148,7 @@ class CommissionServiceTest extends TestCase
         $order = Order::create([
             'user_id' => $buyer->id,
             'order_number' => 'TEST-COMMISSION-003',
+            'reference' => 'TEST-COMMISSION-003',
             'status' => 'delivered',
             'shipping_address' => [
                 'name' => 'Test Buyer',
@@ -184,6 +187,7 @@ class CommissionServiceTest extends TestCase
         $order = Order::create([
             'user_id' => $buyer->id,
             'order_number' => 'TEST-COMMISSION-004',
+            'reference' => 'TEST-COMMISSION-004',
             'status' => 'delivered',
             'shipping_address' => [
                 'name' => 'Test Buyer',
@@ -220,6 +224,7 @@ class CommissionServiceTest extends TestCase
         $order = Order::create([
             'user_id' => $buyer->id,
             'order_number' => 'TEST-COMMISSION-005',
+            'reference' => 'TEST-COMMISSION-005',
             'status' => 'delivered',
             'shipping_address' => [
                 'name' => 'Test Buyer',

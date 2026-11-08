@@ -1,58 +1,60 @@
-﻿.git
+# Git and local environment
+.git
 .gitignore
 .env
 .env.*
 !.env.example
+bilihub-33f7dff7807a.json
+*service-account*.json
+*credentials*.json
 
+# Dependencies and local tooling
 node_modules
 vendor
 tests
 coverage
 .phpunit.cache
 .phpunit.result.cache
-
-storage/logs/*
-storage/framework/cache/*
-storage/framework/sessions/*
-storage/framework/views/*
-
-*.log
-*.sql
-*.dump
-*.backup
-
 .idea
 .vscode
 .DS_Store
 Thumbs.db
 
-
-# Local private storage and temporary files
+# Laravel runtime data
+public/storage
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
 storage/app/private/*
 !storage/app/private/.gitignore
-
-# Local uploaded files
 storage/app/public/*
 !storage/app/public/.gitignore
 
-# Additional sensitive files
+# Local databases, dumps, logs, and credentials
+*.log
+*.sql
+*.dump
+*.backup
+*.sqlite
+*.sqlite3
 *.pem
 *.key
 *.p12
 *.pfx
-*credentials*.json
-*service-account*.json
 
-# Local testing artifacts
-phpunit.xml.bak
-*.sqlite
-*.sqlite3
-
-# Exclude local development backups and temporary files
+# Temporary local diagnostics and backups
+/audit_*.php
+/inspect_*.php
+/check_*.php
+/ProductController_old.php
+/money-audit.txt
+/shipment_show_review.txt
+/test-output.txt
 *.bak
 *.bak-*
 *.backup-*
 *-backup
 *-backup-*
 *.encoding-backup
-ntent .start.sh
+phpunit.xml.bak

@@ -6,9 +6,9 @@ use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Tests\TestCase;
+use Tests\SQLiteTestCase;
 
-class CheckoutPaymentTest extends TestCase
+class CheckoutPaymentTest extends SQLiteTestCase
 {
     protected function setUp(): void
     {

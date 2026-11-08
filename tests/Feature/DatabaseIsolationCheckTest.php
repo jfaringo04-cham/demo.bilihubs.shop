@@ -2,9 +2,9 @@
 
 namespace Tests\Feature;
 
-use Tests\TestCase;
+use Tests\SQLiteTestCase;
 
-class DatabaseIsolationCheckTest extends TestCase
+class DatabaseIsolationCheckTest extends SQLiteTestCase
 {
     public function test_database_is_sqlite_in_memory(): void
     {

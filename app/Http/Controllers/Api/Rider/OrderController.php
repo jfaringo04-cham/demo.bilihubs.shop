@@ -679,28 +679,45 @@ class OrderController extends Controller
                 */
 
                 if ($newStatus === 'delivered') {
+
+                    // Generate the existing seller commission record.
                     app(CommissionService::class)
                         ->generateForOrder($order);
 
+                    // Get only the seller associated with this shipment.
+                    $sellerUserId = $sellerOrder->seller?->user_id;
+
+                    // Recognize only this seller's commission.
+                    // Do not recognize commissions belonging to other
+                    // seller orders under the same parent order.
+                    if ($sellerUserId) {
+
+                        $commission = \App\Models\Commission::query()
+                            ->where('order_id', $order->id)
+                            ->where('seller_id', $sellerUserId)
+                            ->first();
+
+                        if ($commission) {
+                            app(\App\Services\PlatformRevenueService::class)
+                                ->recognizeCommission($commission);
+                        }
+                    }
+
+                    // Notify the buyer.
                     $this->createNotification(
                         userId: (int) $order->user_id,
                         title: 'Parcel Delivered',
-                        message:
-                            "Your parcel {$tracking} has been delivered.",
+                        message: "Your parcel {$tracking} has been delivered.",
                         type: 'delivery',
                         link: route('orders.show', $order)
                     );
 
-                    $sellerUserId =
-                        $sellerOrder->seller?->user_id;
-
+                    // Notify the seller.
                     if ($sellerUserId) {
                         $this->createNotification(
                             userId: (int) $sellerUserId,
-                            title:
-                                'Parcel Delivered to Customer',
-                            message:
-                                "Parcel {$tracking} has been delivered successfully.",
+                            title: 'Parcel Delivered to Customer',
+                            message: "Parcel {$tracking} has been delivered successfully.",
                             type: 'shipment'
                         );
                     }

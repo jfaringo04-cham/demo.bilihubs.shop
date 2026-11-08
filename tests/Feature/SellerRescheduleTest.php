@@ -26,11 +26,11 @@ use Illuminate\Support\Facades\DB;
 
 use Illuminate\Support\Facades\Schema;
 
-use Tests\TestCase;
+use Tests\SQLiteTestCase;
 
 
 
-class SellerRescheduleTest extends TestCase
+class SellerRescheduleTest extends SQLiteTestCase
 
 {
 

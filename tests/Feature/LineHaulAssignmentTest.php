@@ -99,8 +99,11 @@ class LineHaulAssignmentTest extends TestCase
         $orderId = DB::table('orders')->insertGetId([
             'user_id' => $buyer->id,
             'order_number' => 'LINEHAUL-' . uniqid(),
-            'shipping_address' => 'Calamba, Laguna',
-            'status' => 'processing',
+            'reference' => 'TEST-LINEHAUL-' . uniqid(),
+            'shipping_address' => json_encode([
+                'address' => 'Calamba, Laguna',
+            ]),
+            'status' => 'confirmed',
             'payment_method' => 'cod',
             'payment_status' => 'paid',
             'subtotal_minor' => 100000,

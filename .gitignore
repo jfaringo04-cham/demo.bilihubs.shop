@@ -1,8 +1,8 @@
 *.log
 .DS_Store
 .env
-.env.backup
-.env.production
+.env.*
+!.env.example
 .phpactor.json
 .phpunit.result.cache
 /.codex
@@ -28,6 +28,8 @@ Thumbs.db
 
 # Local credentials - never commit
 bilihub-33f7dff7807a.json
+*service-account*.json
+*credentials*.json
 
 # Local development backups and audit outputs
 *.bak
@@ -38,3 +40,16 @@ shipment_show_review.txt
 test-output.txt
 storage/test-results.xml
 public/tmp_test_trending.php
+
+# Temporary local diagnostic scripts and reports
+/audit_*.php
+/inspect_*.php
+/check_*.php
+/ProductController_old.php
+/money-audit.txt
+/shipment_show_review.txt
+/test-output.txt
+
+# User-uploaded files (including private seller/rider documents)
+/storage/app/public/*
+!/storage/app/public/.gitignore

@@ -12,9 +12,9 @@ use Illuminate\Support\Facades\Http;
 
 use Illuminate\Support\Facades\Schema;
 
-use Tests\TestCase;
+use Tests\SQLiteTestCase;
 
-class CheckoutStockTest extends TestCase
+class CheckoutStockTest extends SQLiteTestCase
 
 {
 
@@ -193,9 +193,11 @@ class CheckoutStockTest extends TestCase
 
             $table->unsignedBigInteger('subtotal_minor');
 
-            $table->unsignedBigInteger('tax_minor');
+            $table->unsignedBigInteger('tax_minor')->nullable();
 
-            $table->unsignedBigInteger('shipping_minor');
+
+            $table->unsignedBigInteger('service_fee_minor')->nullable();
+$table->unsignedBigInteger('shipping_minor');
 
             $table->unsignedBigInteger('total_minor');
             $table->unsignedBigInteger('discount_minor')->default(0);
@@ -233,7 +235,9 @@ class CheckoutStockTest extends TestCase
 
             $table->unsignedBigInteger('subtotal_minor');
 
-            $table->unsignedBigInteger('shipping_minor');
+
+            $table->unsignedBigInteger('service_fee_minor')->nullable();
+$table->unsignedBigInteger('shipping_minor');
 
             $table->unsignedBigInteger('total_minor');
             $table->unsignedBigInteger('discount_minor')->default(0);

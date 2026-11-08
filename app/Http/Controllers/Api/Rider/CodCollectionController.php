@@ -211,6 +211,11 @@ class CodCollectionController extends Controller
                 'paid_at' => $collectedAt,
             ]);
 
+            // Recognize the stored Platform Service Fee after
+            // the COD payment has been successfully recorded.
+            app(\App\Services\PlatformRevenueService::class)
+                ->recognizeCodPayment($payment);
+
             $fullyPaid =
                 $newCollectedMinor === (int) $order->total_minor;
 
@@ -220,7 +225,7 @@ class CodCollectionController extends Controller
                 'amount_collected_minor' => $newCollectedMinor,
                 'payment_status' => $fullyPaid
                     ? 'paid'
-                    : 'unpaid',
+                    : ($newCollectedMinor > 0 ? 'partially_paid' : 'unpaid'),
                 'collected_at' => $fullyPaid
                     ? $collectedAt
                     : null,

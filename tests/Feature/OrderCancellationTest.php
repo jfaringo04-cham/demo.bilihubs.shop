@@ -22,11 +22,11 @@ use Illuminate\Support\Facades\Http;
 
 use Illuminate\Support\Facades\Schema;
 
-use Tests\TestCase;
+use Tests\SQLiteTestCase;
 
 
 
-class OrderCancellationTest extends TestCase
+class OrderCancellationTest extends SQLiteTestCase
 
 {
 
@@ -231,7 +231,9 @@ class OrderCancellationTest extends TestCase
 
             $table->unsignedBigInteger('subtotal_minor');
 
-            $table->unsignedBigInteger('tax_minor');
+            $table->unsignedBigInteger('tax_minor')->nullable();
+
+            $table->unsignedBigInteger('service_fee_minor')->nullable();
 
             $table->unsignedBigInteger('shipping_minor');
 
@@ -276,6 +278,8 @@ class OrderCancellationTest extends TestCase
 
             $table->unsignedBigInteger('subtotal_minor');
 
+            $table->unsignedBigInteger('service_fee_minor')->nullable();
+
             $table->unsignedBigInteger('shipping_minor');
 
             $table->unsignedBigInteger('total_minor');
@@ -290,6 +294,46 @@ class OrderCancellationTest extends TestCase
         });
 
 
+
+        // Voucher tables used by OrderController::requestCancellation().
+        // The cancellation flow checks for an existing redemption before
+        // restoring inventory, even when this test has no voucher attached.
+        Schema::create('vouchers', function (Blueprint $table) {
+            $table->id();
+            $table->string('owner_type', 20)->default('platform');
+            $table->foreignId('seller_id')->nullable();
+            $table->string('name')->default('Test voucher');
+            $table->string('code', 80)->default('TEST-VOUCHER');
+            $table->text('description')->nullable();
+            $table->string('discount_type', 20)->default('fixed');
+            $table->unsignedBigInteger('discount_value_minor')->nullable();
+            $table->unsignedSmallInteger('discount_percent_bps')->nullable();
+            $table->unsignedBigInteger('minimum_spend_minor')->default(0);
+            $table->unsignedBigInteger('maximum_discount_minor')->nullable();
+            $table->string('product_scope', 20)->default('all');
+            $table->unsignedInteger('usage_limit')->nullable();
+            $table->unsignedInteger('per_user_limit')->default(1);
+            $table->unsignedInteger('usage_count')->default(0);
+            $table->timestamp('starts_at')->nullable();
+            $table->timestamp('ends_at')->nullable();
+            $table->boolean('is_enabled')->default(true);
+            $table->timestamps();
+        });
+
+        Schema::create('voucher_redemptions', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('voucher_id');
+            $table->foreignId('user_id');
+            $table->foreignId('order_id');
+            $table->foreignId('seller_order_id')->nullable();
+            $table->string('voucher_code_snapshot', 80);
+            $table->string('funded_by', 20);
+            $table->unsignedBigInteger('discount_minor');
+            $table->string('status', 20)->default('reserved');
+            $table->timestamp('redeemed_at')->nullable();
+            $table->timestamp('reversed_at')->nullable();
+            $table->timestamps();
+        });
 
         // Test-only logistics tables required by shipment creation during checkout.
         Schema::create('hubs', function (Blueprint $table) {

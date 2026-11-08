@@ -451,26 +451,21 @@ class DashboardController extends Controller
                 $collectedAt = now();
 
                 // Record the actual rider who collected this shipment's COD.
-
-                \App\Models\Payment::create([
-
+                $payment = \App\Models\Payment::create([
                     'order_id' => $order->id,
-
                     'shipment_id' => $shipment->id,
-
                     'collected_by' => Auth::id(),
-
                     'method' => 'cod',
-
                     'status' => 'paid',
-
                     'amount_minor' => $amountMinor,
-
                     'currency' => 'PHP',
-
                     'paid_at' => $collectedAt,
-
                 ]);
+
+                // Recognize the stored Platform Service Fee only after
+                // the COD payment has been successfully recorded.
+                app(\App\Services\PlatformRevenueService::class)
+                    ->recognizeCodPayment($payment);
 
                 $fullyPaid = $newCollectedMinor
 
@@ -485,10 +480,8 @@ class DashboardController extends Controller
                     'amount_collected_minor' => $newCollectedMinor,
 
                     'payment_status' => $fullyPaid
-
                         ? 'paid'
-
-                        : 'unpaid',
+                        : ($newCollectedMinor > 0 ? 'partially_paid' : 'unpaid'),
 
                     'collected_at' => $fullyPaid
 
@@ -1819,210 +1812,130 @@ class DashboardController extends Controller
     }
 
     public function updateShipmentStatus(
-
         Request $request,
-
         \App\Models\Shipment $shipment
-
     ) {
-
         abort_unless(
-
             (int) $shipment->rider_id === (int) Auth::id(),
-
             403
-
         );
 
         $data = $request->validate([
-
             'delivery_status' => [
-
                 'required',
-
                 'in:out_for_delivery,delivered,delivery_failed',
-
             ],
-
             'delivery_notes' => 'nullable|string|max:1000',
-
             'failure_reason' => [
-
                 'nullable',
-
                 'required_if:delivery_status,delivery_failed',
-
                 'string',
-
                 'max:1000',
-
             ],
-
             'proof_of_delivery' => [
-
                 'nullable',
-
                 'required_if:delivery_status,delivered',
-
                 'image',
-
                 'mimes:jpg,jpeg,png',
-
                 'max:5120',
-
             ],
-
             'delivery_signature' => 'nullable|string|max:1000',
-
             'delivered_to' => 'nullable|string|max:255',
-
         ]);
 
         $proofPath = null;
 
         try {
-
             \Illuminate\Support\Facades\DB::transaction(function () use (
-
                 $request,
-
                 $shipment,
-
                 $data,
-
                 &$proofPath
-
             ) {
-
                 $shipment = \App\Models\Shipment::query()
-
                     ->whereKey($shipment->id)
-
                     ->lockForUpdate()
-
                     ->firstOrFail();
 
                 abort_unless(
-
                     (int) $shipment->rider_id === (int) Auth::id(),
-
                     403
-
                 );
 
                 if (in_array($shipment->status, [
-
                     'delivered',
-
                     'delivery_failed',
-
                     'cancelled',
-
                 ], true)) {
-
                     throw \Illuminate\Validation\ValidationException::withMessages([
-
                         'delivery_status' => 'This shipment is already finalized.',
-
                     ]);
                 }
 
                 if (!in_array($shipment->status, [
-
                     'picked_up',
-
                     'in_transit',
-
                     'out_for_delivery',
-
                 ], true)) {
-
                     throw \Illuminate\Validation\ValidationException::withMessages([
-
                         'delivery_status' => 'Shipment is not ready for delivery.',
-
                     ]);
                 }
 
                 if (
-
                     !$shipment->received_by_sorting_center ||
-
                     $shipment->sorting_status !== 'staged' ||
-
                     $shipment->staged_at === null
-
                 ) {
-
                     throw \Illuminate\Validation\ValidationException::withMessages([
-
                         'delivery_status' => 'Shipment must complete sorting center processing before delivery.',
-
                     ]);
                 }
 
                 $newStatus = $data['delivery_status'];
 
                 if (
-
                     in_array($newStatus, ['delivered', 'delivery_failed'], true)
-
                     && $shipment->status !== 'out_for_delivery'
-
                 ) {
-
                     throw \Illuminate\Validation\ValidationException::withMessages([
-
                         'delivery_status' => 'Shipment must be out for delivery first.',
-
                     ]);
                 }
 
                 $sellerOrder = \App\Models\SellerOrder::query()
-
                     ->whereKey($shipment->seller_order_id)
-
                     ->lockForUpdate()
-
                     ->firstOrFail();
 
                 $order = \App\Models\Order::query()
-
                     ->whereKey($sellerOrder->order_id)
-
                     ->lockForUpdate()
-
                     ->firstOrFail();
 
                 $tracking = $shipment->tracking_number
-
                     ?: ('Shipment #' . $shipment->id);
 
+                /*
+            |--------------------------------------------------------------------------
+            | Out for Delivery
+            |--------------------------------------------------------------------------
+            */
+
                 if ($newStatus === 'out_for_delivery') {
-
                     if (!in_array($shipment->status, [
-
                         'picked_up',
-
                         'in_transit',
-
                         'out_for_delivery',
-
                     ], true)) {
-
                         throw \Illuminate\Validation\ValidationException::withMessages([
-
                             'delivery_status' => 'Shipment must be picked up first.',
-
                         ]);
                     }
 
                     if ($shipment->status === 'out_for_delivery') {
-
                         throw \Illuminate\Validation\ValidationException::withMessages([
-
                             'delivery_status' => 'Shipment is already out for delivery.',
-
                         ]);
                     }
 
@@ -2033,81 +1946,58 @@ class DashboardController extends Controller
                     }
 
                     $shipment->notes = $data['delivery_notes'] ?? null;
-
                     $shipment->save();
 
                     app(\App\Services\OrderFlowSyncService::class)
                         ->syncShipment($shipment);
 
                     $this->createNotification(
-
                         $order->user_id,
-
                         'Parcel Out for Delivery',
-
                         "Your parcel {$tracking} is on its way.",
-
                         'delivery',
-
                         route('orders.show', $order)
-
                     );
 
                     return;
                 }
 
+                /*
+            |--------------------------------------------------------------------------
+            | Delivered - COD Validation
+            |--------------------------------------------------------------------------
+            */
+
                 if ($newStatus === 'delivered') {
-
                     if ($order->payment_method === 'cod') {
-
                         $expectedMinor = (int) $sellerOrder->total_minor;
 
                         $shipmentPayment = \App\Models\Payment::query()
-
                             ->where('shipment_id', $shipment->id)
-
                             ->where('order_id', $order->id)
-
                             ->where('method', 'cod')
-
                             ->where('status', 'paid')
-
                             ->first();
 
                         $shipmentPaid = $shipmentPayment
-
                             && $expectedMinor > 0
-
                             && (int) $shipmentPayment->amount_minor === $expectedMinor;
 
                         // Compatibility for historical fully paid orders without payment rows.
-
                         $legacyFullyPaid = !$shipmentPayment
-
                             && $order->payment_status === 'paid'
-
                             && (int) $order->amount_collected_minor === (int) $order->total_minor
-
                             && $order->collected_at !== null
-
                             && $order->collected_by !== null
-
                             && !\App\Models\Payment::query()
-
                                 ->where('order_id', $order->id)
-
                                 ->whereNotNull('shipment_id')
-
                                 ->exists();
 
                         if (!$shipmentPaid && !$legacyFullyPaid) {
-
                             throw \Illuminate\Validation\ValidationException::withMessages([
-
                                 'delivery_status' =>
-
                                 'COD for this shipment must be collected before marking it as Delivered.',
-
                             ]);
                         }
                     }
@@ -2120,209 +2010,158 @@ class DashboardController extends Controller
                             'Proof of delivery upload failed.'
                         );
                     }
+
                     $shipment->update([
-
                         'status' => 'delivered',
-
                         'sorting_status' => 'staged',
-
                         'delivered_at' => now(),
-
                         'proof_of_delivery' => $proofPath,
-
                         'delivery_signature' => $data['delivery_signature'] ?? null,
-
                         'delivered_to' => $data['delivered_to'] ?? null,
-
                         'notes' => $data['delivery_notes'] ?? null,
-
                     ]);
 
                     app(\App\Services\OrderFlowSyncService::class)
                         ->syncShipment($shipment);
 
                     $sellerOrder->update([
-
                         'status' => 'delivered',
-
                     ]);
                 } else {
+                    /*
+                |--------------------------------------------------------------------------
+                | Delivery Failed
+                |--------------------------------------------------------------------------
+                */
 
                     $shipment->update([
-
                         'status' => 'delivery_failed',
-
                         'notes' => $data['failure_reason'],
-
                     ]);
 
                     app(\App\Services\OrderFlowSyncService::class)
                         ->syncShipment($shipment);
 
                     $sellerOrder->update([
-
                         'status' => 'delivery_failed',
-
                     ]);
                 }
 
+                /*
+            |--------------------------------------------------------------------------
+            | Rider Capacity
+            |--------------------------------------------------------------------------
+            */
+
                 $rider = \App\Models\User::query()
-
                     ->whereKey(Auth::id())
-
                     ->lockForUpdate()
-
                     ->firstOrFail();
 
                 // A delivered parcel no longer occupies rider capacity.
-
                 // A failed parcel remains with the rider until logistics
-
                 // confirms its physical return to the sorting center.
 
                 if ($newStatus === 'delivered') {
-
                     if ((int) $rider->current_load > 0) {
-
                         $rider->decrement('current_load');
                     }
 
                     $rider->refresh();
 
                     if (
-
                         $rider->max_capacity !== null
-
                         && (int) $rider->current_load < (int) $rider->max_capacity
-
                     ) {
-
                         $rider->update([
-
                             'availability_status' => 'available',
-
                         ]);
                     }
-                }
 
-                if ($newStatus === 'delivered') {
-
+                    // Count each successfully delivered shipment once.
                     $rider->increment('daily_deliveries_completed');
                 }
 
-                $hasUndelivered = $order->sellerOrders()
-
-                    ->where('status', '!=', 'delivered')
-
-                    ->exists();
-
-                $hasDelivered = $order->sellerOrders()
-
-                    ->where('status', 'delivered')
-
-                    ->exists();
-
-                if (!$hasUndelivered) {
-
-                    $order->update([
-
-                        'status' => 'delivered',
-
-                        'delivery_status' => 'delivered',
-
-                        'delivered_at' => now(),
-
-                    ]);
-                } elseif ($hasDelivered) {
-
-                    $order->update([
-
-                        'delivery_status' => 'partially_delivered',
-
-                    ]);
-                }
+                /*
+            |--------------------------------------------------------------------------
+            | Platform Commission Recognition and Notifications
+            |--------------------------------------------------------------------------
+            */
 
                 if ($newStatus === 'delivered') {
 
+                    // Generate the existing seller commission record.
                     app(\App\Services\CommissionService::class)
-
                         ->generateForOrder($order);
 
-                    $this->createNotification(
-
-                        $order->user_id,
-
-                        'Parcel Delivered',
-
-                        "Your parcel {$tracking} has been delivered.",
-
-                        'delivery',
-
-                        route('orders.show', $order)
-
-                    );
-
+                    // Identify the seller associated with this exact shipment.
                     $sellerUserId = $sellerOrder->seller?->user_id;
 
+                    // Recognize only this seller's commission.
                     if ($sellerUserId) {
+                        $commission = \App\Models\Commission::query()
+                            ->where('order_id', $order->id)
+                            ->where('seller_id', $sellerUserId)
+                            ->first();
 
+                        if ($commission) {
+                            app(\App\Services\PlatformRevenueService::class)
+                                ->recognizeCommission($commission);
+                        }
+                    }
+
+                    $this->createNotification(
+                        $order->user_id,
+                        'Parcel Delivered',
+                        "Your parcel {$tracking} has been delivered.",
+                        'delivery',
+                        route('orders.show', $order)
+                    );
+
+                    if ($sellerUserId) {
                         $this->createNotification(
-
                             $sellerUserId,
-
                             'Parcel Delivered to Customer',
-
                             "Parcel {$tracking} has been delivered successfully.",
-
                             'shipment'
-
                         );
                     }
                 } else {
 
                     $this->createNotification(
-
                         $order->user_id,
-
                         'Parcel Delivery Failed',
-
                         "Delivery failed for parcel {$tracking}. Reason: "
-
                             . $data['failure_reason'],
-
                         'delivery',
-
                         route('orders.show', $order)
-
                     );
                 }
+
+                /*
+            |--------------------------------------------------------------------------
+            | Logistics Notification
+            |--------------------------------------------------------------------------
+            */
 
                 $logisticOwner = $shipment->logistic?->owner;
 
                 if ($logisticOwner) {
-
                     $title = $newStatus === 'delivered'
-
                         ? 'Parcel Delivery Completed'
-
                         : 'Parcel Delivery Failed';
 
                     $this->createNotification(
-
                         $logisticOwner->id,
-
                         $title,
-
                         "Rider " . $rider->name
-
                             . " updated parcel {$tracking} to {$newStatus}.",
-
                         'shipment'
-
                     );
                 }
             });
         } catch (\Throwable $e) {
+
             if ($proofPath !== null) {
                 try {
                     \Illuminate\Support\Facades\Storage::disk('supabase_private')
@@ -2336,9 +2175,7 @@ class DashboardController extends Controller
         }
 
         return redirect()
-
             ->route('rider.shipments.show', $shipment)
-
             ->with('success', 'Shipment status updated successfully.');
     }
 

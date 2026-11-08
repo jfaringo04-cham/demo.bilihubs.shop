@@ -9,9 +9,9 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
-use Tests\TestCase;
+use Tests\SQLiteTestCase;
 
-class RiderRescheduleIntegrationTest extends TestCase
+class RiderRescheduleIntegrationTest extends SQLiteTestCase
 {
     protected function setUp(): void
     {

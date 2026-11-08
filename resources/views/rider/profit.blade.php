@@ -164,17 +164,19 @@
 
 @push('scripts')
 @if($chartData->isNotEmpty())
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    @php
+        $riderProfitChartData = [
+            'labels' => $chartData->keys()->values(),
+            'values' => $chartData->values(),
+        ];
+    @endphp
 
-<script type="application/json" id="rider-profit-data">
-  {
-    !!json_encode([
-      'labels' => $chartData - > keys() - > values(),
-      'values' => $chartData - > values(),
-    ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!
-  }
-</script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-@vite('resources/js/rider/profit.js')
+    <script type="application/json" id="rider-profit-data">
+        @json($riderProfitChartData)
+    </script>
+
+    @vite('resources/js/rider/profit.js')
 @endif
 @endpush

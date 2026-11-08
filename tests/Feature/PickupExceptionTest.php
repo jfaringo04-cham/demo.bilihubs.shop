@@ -66,6 +66,7 @@ class PickupExceptionTest extends TestCase
         $order = Order::create([
             'user_id' => $buyer->id,
             'order_number' => 'ORD-PICKUP-EXCEPTION-001',
+            'reference' => 'TEST-PICKUP-' . uniqid(),
             'status' => 'placed',
             'subtotal_minor' => 10000,
             'tax_minor' => 300,
@@ -96,6 +97,7 @@ class PickupExceptionTest extends TestCase
             'origin_hub_id' => $hub->id,
             'destination_hub_id' => $hub->id,
             'routing_status' => 'awaiting_pickup',
+            'tracking_code' => 'TEST-TRACKING-' . strtoupper(uniqid()),
             'tracking_number' => 'SPE-EXCEPTION001',
             'status' => 'pending',
             'pickup_address' => 'San Pablo Sur',

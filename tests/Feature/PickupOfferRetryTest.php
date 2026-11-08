@@ -108,6 +108,7 @@ class PickupOfferRetryTest extends TestCase
         $order = Order::create([
             'user_id' => $buyer->id,
             'order_number' => 'ORD-RETRY-001',
+            'reference' => 'TEST-RETRY-' . uniqid(),
             'status' => 'placed',
             'subtotal_minor' => 10000,
             'tax_minor' => 300,
@@ -137,6 +138,7 @@ class PickupOfferRetryTest extends TestCase
             'hub_id' => $hub->id,
             'origin_hub_id' => $hub->id,
             'routing_status' => 'awaiting_pickup',
+            'tracking_code' => 'TEST-TRACKING-' . strtoupper(uniqid()),
             'tracking_number' => 'SPE-RETRY001',
             'status' => 'pending',
             'pickup_address' => 'San Pablo Sur',

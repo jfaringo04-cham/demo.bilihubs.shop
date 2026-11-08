@@ -8,9 +8,9 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
-use Tests\TestCase;
+use Tests\SQLiteTestCase;
 
-class RiderDeliveryFinalizationTest extends TestCase
+class RiderDeliveryFinalizationTest extends SQLiteTestCase
 {
     protected function setUp(): void
     {

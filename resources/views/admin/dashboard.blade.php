@@ -3,7 +3,7 @@
 @section('title', 'Admin Dashboard')
 
 @push('styles')
-    @vite('resources/css/admin/dashboard.css')
+@vite('resources/css/admin/dashboard.css')
 @endpush
 
 @section('content')
@@ -119,7 +119,7 @@
 
         <div class="dashboard-mini-card">
             <div class="dashboard-mini-label">
-                Delivered Revenue
+                Delivered Order Value
             </div>
 
             <div class="dashboard-mini-value">
@@ -205,30 +205,30 @@
 
     @if(isset($recentOrders) && $recentOrders->count())
 
-        @foreach($recentOrders as $order)
+    @foreach($recentOrders as $order)
 
-            <div class="dashboard-list-item">
+    <div class="dashboard-list-item">
 
-                <div>
-                    <div class="dashboard-list-title">
-                        Order #{{ $order->id }}
-                    </div>
-
-                    <div class="dashboard-list-subtitle">
-                        {{ $order->user->name ?? $order->user->email ?? 'Customer' }}
-                    </div>
-                </div>
-
+        <div>
+            <div class="dashboard-list-title">
+                Order #{{ $order->id }}
             </div>
 
-        @endforeach
+            <div class="dashboard-list-subtitle">
+                {{ $order->user->name ?? $order->user->email ?? 'Customer' }}
+            </div>
+        </div>
+
+    </div>
+
+    @endforeach
 
     @else
 
-        <div class="dashboard-empty">
-            <i class="bi bi-inbox"></i>
-            <div>No orders available yet.</div>
-        </div>
+    <div class="dashboard-empty">
+        <i class="bi bi-inbox"></i>
+        <div>No orders available yet.</div>
+    </div>
 
     @endif
 
@@ -242,38 +242,38 @@
 
     @if(isset($topProducts) && $topProducts->count())
 
-        @foreach($topProducts as $product)
+    @foreach($topProducts as $product)
 
-            <div class="dashboard-list-item">
+    <div class="dashboard-list-item">
 
-                <div>
-                    <div class="dashboard-list-title">
-                        {{ $product->name }}
-                    </div>
+        <div>
+            <div class="dashboard-list-title">
+                {{ $product->name }}
+            </div>
 
-                    <div class="dashboard-list-subtitle">
-                        Recent marketplace product
-                    </div>
-                </div>
+            <div class="dashboard-list-subtitle">
+                Recent marketplace product
+            </div>
+        </div>
 
 
-                <div class="dashboard-list-title">
-                    ₱{{ number_format(
+        <div class="dashboard-list-title">
+            ₱{{ number_format(
                         ($product->price_minor ?? 0) / 100,
                         2
                     ) }}
-                </div>
+        </div>
 
-            </div>
+    </div>
 
-        @endforeach
+    @endforeach
 
     @else
 
-        <div class="dashboard-empty">
-            <i class="bi bi-box-seam"></i>
-            <div>No products available yet.</div>
-        </div>
+    <div class="dashboard-empty">
+        <i class="bi bi-box-seam"></i>
+        <div>No products available yet.</div>
+    </div>
 
     @endif
 

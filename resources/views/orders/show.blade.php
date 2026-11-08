@@ -245,19 +245,18 @@
 
           <div class="d-flex flex-wrap gap-2">
             @foreach($order->sellerOrders as $contactSellerOrder)
-              @php
-                $sellerOwner = $contactSellerOrder->seller?->owner;
-              @endphp
+            @php
+            $sellerOwner = $contactSellerOrder->seller?->owner;
+            @endphp
 
-              @if($sellerOwner && $sellerOwner->id !== auth()->id())
-                <a
-                  href="{{ route('buyer.messages.show', $sellerOwner) }}"
-                  class="btn btn-outline-primary btn-sm"
-                >
-                  <i class="bi bi-chat-dots me-1"></i>
-                  Message {{ $contactSellerOrder->seller?->name ?? $sellerOwner->name }}
-                </a>
-              @endif
+            @if($sellerOwner && $sellerOwner->id !== auth()->id())
+            <a
+              href="{{ route('buyer.messages.show', $sellerOwner) }}"
+              class="btn btn-outline-primary btn-sm">
+              <i class="bi bi-chat-dots me-1"></i>
+              Message {{ $contactSellerOrder->seller?->name ?? $sellerOwner->name }}
+            </a>
+            @endif
             @endforeach
           </div>
         </div>
@@ -390,7 +389,7 @@
 
       <div class="d-flex justify-content-between mb-2">
         <span>Service Fee (3%)</span>
-        <span>&#8369;{{ number_format(($order->tax_minor / 100), 2) }}</span>
+        <span>&#8369;{{ number_format((($order->service_fee_minor ?? $order->tax_minor ?? 0) / 100), 2) }}</span>
       </div>
 
       <div class="d-flex justify-content-between mb-2">

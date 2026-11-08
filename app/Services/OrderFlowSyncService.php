@@ -157,8 +157,15 @@ class OrderFlowSyncService
             default => 'placed',
         };
 
+        $deliveredCount = $statuses
+            ->filter(fn ($status) => in_array($status, ['delivered', 'completed'], true))
+            ->count();
+
+        $totalSellerOrders = $statuses->count();
+
         $deliveryStatus = match (true) {
-            $minimumRank >= 7 => 'delivered',
+            $deliveredCount === $totalSellerOrders => 'delivered',
+            $deliveredCount > 0 => 'partially_delivered',
             $minimumRank >= 6 => 'out_for_delivery',
             $minimumRank >= 4 => 'in_transit',
             default => 'pending',

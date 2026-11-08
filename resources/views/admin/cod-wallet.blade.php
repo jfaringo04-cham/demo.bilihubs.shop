@@ -14,16 +14,16 @@
         </span>
     </div>
 
-    
+
 
     @if($errors->any())
-        <div class="alert alert-danger">
-            <ul class="mb-0">
-                @foreach($errors->all() as $error)
-                    <li>{{ $error }}</li>
-                @endforeach
-            </ul>
-        </div>
+    <div class="alert alert-danger">
+        <ul class="mb-0">
+            @foreach($errors->all() as $error)
+            <li>{{ $error }}</li>
+            @endforeach
+        </ul>
+    </div>
     @endif
 
     <div class="row g-3 mb-4">
@@ -77,47 +77,47 @@
                 </thead>
                 <tbody>
                     @forelse($pending as $remittance)
-                        <tr>
-                            <td class="fw-semibold">{{ $remittance->reference }}</td>
-                            <td>{{ $remittance->logistic?->company_name ?? ('Logistics #'.$remittance->logistic_id) }}</td>
-                            <td class="fw-bold">
-                                ₱{{ number_format($remittance->amount_minor / 100, 2) }}
-                            </td>
-                            <td>{{ strtoupper(str_replace('_', ' ', $remittance->transfer_method ?? '—')) }}</td>
-                            <td>{{ $remittance->transfer_reference ?: '—' }}</td>
-                            <td class="text-end">
-                                <div class="d-flex gap-2 justify-content-end flex-wrap">
-                                    <form method="POST" action="{{ route('admin.cod-wallet.confirm', $remittance) }}">
-                                        @csrf
-                                        <button
-                                            class="btn btn-success btn-sm"
-                                            onclick="return confirm('Confirm that Admin actually received this COD cash?')">
-                                            Confirm Received
-                                        </button>
-                                    </form>
+                    <tr>
+                        <td class="fw-semibold">{{ $remittance->reference }}</td>
+                        <td>{{ $remittance->logistic?->company_name ?? ('Logistics #'.$remittance->logistic_id) }}</td>
+                        <td class="fw-bold">
+                            ₱{{ number_format($remittance->amount_minor / 100, 2) }}
+                        </td>
+                        <td>{{ strtoupper(str_replace('_', ' ', $remittance->transfer_method ?? '—')) }}</td>
+                        <td>{{ $remittance->transfer_reference ?: '—' }}</td>
+                        <td class="text-end">
+                            <div class="d-flex gap-2 justify-content-end flex-wrap">
+                                <form method="POST" action="{{ route('admin.cod-wallet.confirm', $remittance) }}">
+                                    @csrf
+                                    <button
+                                        class="btn btn-success btn-sm"
+                                        onclick="return confirm('Confirm that Admin actually received this COD cash?')">
+                                        Confirm Received
+                                    </button>
+                                </form>
 
-                                    <form method="POST" action="{{ route('admin.cod-wallet.reject', $remittance) }}">
-                                        @csrf
-                                        <input
-                                            type="text"
-                                            name="rejection_reason"
-                                            class="form-control form-control-sm mb-1"
-                                            placeholder="Reason"
-                                            maxlength="1000"
-                                            required>
-                                        <button class="btn btn-outline-danger btn-sm w-100">
-                                            Reject
-                                        </button>
-                                    </form>
-                                </div>
-                            </td>
-                        </tr>
+                                <form method="POST" action="{{ route('admin.cod-wallet.reject', $remittance) }}">
+                                    @csrf
+                                    <input
+                                        type="text"
+                                        name="rejection_reason"
+                                        class="form-control form-control-sm mb-1"
+                                        placeholder="Reason"
+                                        maxlength="1000"
+                                        required>
+                                    <button class="btn btn-outline-danger btn-sm w-100">
+                                        Reject
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
                     @empty
-                        <tr>
-                            <td colspan="6" class="text-center text-muted py-4">
-                                No pending COD transfers.
-                            </td>
-                        </tr>
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-4">
+                            No pending COD transfers.
+                        </td>
+                    </tr>
                     @endforelse
                 </tbody>
             </table>
@@ -141,23 +141,27 @@
                 </thead>
                 <tbody>
                     @forelse($transactions as $transaction)
-                        <tr>
-                            <td>{{ $transaction->created_at?->format('M d, Y h:i A') }}</td>
-                            <td>{{ $transaction->reference ?: '—' }}</td>
-                            <td>{{ $transaction->description }}</td>
-                            <td class="text-end fw-semibold text-success">
-                                +₱{{ number_format($transaction->amount_minor / 100, 2) }}
-                            </td>
-                            <td class="text-end">
-                                ₱{{ number_format($transaction->balance_after_minor / 100, 2) }}
-                            </td>
-                        </tr>
+                    <tr>
+                        <td>{{ $transaction->created_at?->format('M d, Y h:i A') }}</td>
+                        <td>{{ $transaction->reference ?: '—' }}</td>
+                        <td>{{ $transaction->description }}</td>
+                        @php
+                        $amountMinor = (int) $transaction->amount_minor;
+                        @endphp
+
+                        <td class="text-end fw-semibold {{ $amountMinor >= 0 ? 'text-success' : 'text-danger' }}">
+                            {{ $amountMinor < 0 ? '-₱' : '+₱' }}{{ number_format(abs($amountMinor) / 100, 2) }}
+                        </td>
+                        <td class="text-end">
+                            ₱{{ number_format($transaction->balance_after_minor / 100, 2) }}
+                        </td>
+                    </tr>
                     @empty
-                        <tr>
-                            <td colspan="5" class="text-center text-muted py-4">
-                                No Admin Wallet transactions yet.
-                            </td>
-                        </tr>
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">
+                            No Admin Wallet transactions yet.
+                        </td>
+                    </tr>
                     @endforelse
                 </tbody>
             </table>
@@ -182,33 +186,33 @@
                 </thead>
                 <tbody>
                     @forelse($remittances as $remittance)
-                        <tr>
-                            <td>{{ $remittance->reference }}</td>
-                            <td>{{ $remittance->logistic?->company_name ?? ('Logistics #'.$remittance->logistic_id) }}</td>
-                            <td>₱{{ number_format($remittance->amount_minor / 100, 2) }}</td>
-                            <td>
-                                <span class="badge {{ $remittance->status === 'confirmed' ? 'text-bg-success' : ($remittance->status === 'rejected' ? 'text-bg-danger' : 'text-bg-warning') }}">
-                                    {{ ucfirst($remittance->status) }}
-                                </span>
-                            </td>
-                            <td>{{ $remittance->submitted_at?->format('M d, Y h:i A') ?? '—' }}</td>
-                            <td>{{ $remittance->confirmed_at?->format('M d, Y h:i A') ?? '—' }}</td>
-                        </tr>
+                    <tr>
+                        <td>{{ $remittance->reference }}</td>
+                        <td>{{ $remittance->logistic?->company_name ?? ('Logistics #'.$remittance->logistic_id) }}</td>
+                        <td>₱{{ number_format($remittance->amount_minor / 100, 2) }}</td>
+                        <td>
+                            <span class="badge {{ $remittance->status === 'confirmed' ? 'text-bg-success' : ($remittance->status === 'rejected' ? 'text-bg-danger' : 'text-bg-warning') }}">
+                                {{ ucfirst($remittance->status) }}
+                            </span>
+                        </td>
+                        <td>{{ $remittance->submitted_at?->format('M d, Y h:i A') ?? '—' }}</td>
+                        <td>{{ $remittance->confirmed_at?->format('M d, Y h:i A') ?? '—' }}</td>
+                    </tr>
                     @empty
-                        <tr>
-                            <td colspan="6" class="text-center text-muted py-4">
-                                No logistics transfers yet.
-                            </td>
-                        </tr>
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-4">
+                            No logistics transfers yet.
+                        </td>
+                    </tr>
                     @endforelse
                 </tbody>
             </table>
         </div>
 
         @if($remittances->hasPages())
-            <div class="card-footer bg-white">
-                {{ $remittances->links('pagination::bootstrap-5') }}
-            </div>
+        <div class="card-footer bg-white">
+            {{ $remittances->links('pagination::bootstrap-5') }}
+        </div>
         @endif
     </div>
 </div>

@@ -9,7 +9,12 @@ use App\Models\SellerOrder;
 use App\Models\Product;
 use App\Models\Address;
 use App\Models\CartItem;
+use App\Models\Voucher;
+use App\Models\VoucherRedemption;
 use App\Models\Shipment;
+use App\Services\ShippingFeeService;
+use App\Services\VoucherCalculationService;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -50,12 +55,14 @@ class OrderController extends Controller
 ]);
     }
 
+
     public function store(Request $request)
     {
         $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
             'address_id' => 'required|exists:addresses,id',
             'payment_method' => 'required|in:cod,gcash,maya,card,bank_transfer',
             'notes' => 'nullable|string|max:1000',
+            'voucher_code' => 'nullable|string|max:80',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.variant_id' => 'nullable|exists:product_variants,id',
@@ -64,7 +71,9 @@ class OrderController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
+            return response()->json([
+                'errors' => $validator->errors(),
+            ], 422);
         }
 
         $address = Address::where('id', $request->address_id)
@@ -72,29 +81,36 @@ class OrderController extends Controller
             ->firstOrFail();
 
         $cartItems = [];
+        $shippingCartItems = [];
+        $voucherCartItems = collect();
         $subtotalMinor = 0;
 
         foreach ($request->items as $item) {
-            $product = Product::with(['variations.sizes', 'seller'])->findOrFail($item['product_id']);
+            $product = Product::with([
+                'variations.sizes',
+                'seller',
+            ])->findOrFail($item['product_id']);
 
-if (
-    $product->status !== 'published' ||
-    $product->compliance_status !== 'approved'
-) {
-    return response()->json([
-        'message' => "Product {$product->name} is not available.",
-    ], 422);
-}
+            if (
+                $product->status !== 'published' ||
+                $product->compliance_status !== 'approved'
+            ) {
+                return response()->json([
+                    'message' => "Product {$product->name} is not available.",
+                ], 422);
+            }
 
-if (!$product->seller_id) {
+            if (!$product->seller_id) {
                 return response()->json([
                     'message' => "Product {$product->name} is not connected to a seller shop yet.",
                 ], 422);
             }
 
             $variation = null;
+
             if (!empty($item['variant_id'])) {
-                $variation = $product->variations()->findOrFail($item['variant_id']);
+                $variation = $product->variations()
+                    ->findOrFail($item['variant_id']);
             } elseif (!empty($item['size_id'])) {
                 $variation = $product->variations()
                     ->whereHas('sizes', function ($query) use ($item) {
@@ -103,15 +119,16 @@ if (!$product->seller_id) {
                     ->first();
             }
 
-            $quantity = $item['quantity'];
+            $quantity = (int) $item['quantity'];
 
-            // Check stock
+            // Check variation or product stock.
             if ($variation) {
                 if ($variation->stock < $quantity) {
                     return response()->json([
                         'message' => "Insufficient stock for {$product->name} ({$variation->name})",
                     ], 422);
                 }
+
                 $priceMinor = (int) $variation->effective_price_minor;
             } else {
                 if ($product->stock < $quantity) {
@@ -119,12 +136,15 @@ if (!$product->seller_id) {
                         'message' => "Insufficient stock for {$product->name}",
                     ], 422);
                 }
+
                 $priceMinor = (int) $product->effective_price_minor;
             }
 
-            // Check size stock
+            // Check size stock.
             if (!empty($item['size_id'])) {
-                $size = $product->sizes()->findOrFail($item['size_id']);
+                $size = $product->sizes()
+                    ->findOrFail($item['size_id']);
+
                 if (($size->pivot->stock ?? 0) < $quantity) {
                     return response()->json([
                         'message' => "Size {$size->name} stock insufficient for {$product->name}",
@@ -135,7 +155,10 @@ if (!$product->seller_id) {
             $itemSubtotalMinor = $priceMinor * $quantity;
             $subtotalMinor += $itemSubtotalMinor;
 
+            $cartIndex = count($cartItems);
+
             $cartItems[] = [
+                'cart_index' => $cartIndex,
                 'product_id' => $product->id,
                 'seller_id' => $product->seller_id,
                 'variant_id' => $variation?->id,
@@ -144,54 +167,159 @@ if (!$product->seller_id) {
                 'price_minor' => $priceMinor,
                 'subtotal_minor' => $itemSubtotalMinor,
             ];
+
+            // VoucherCalculationService expects product, variation, and quantity.
+            $voucherCartItems->push((object) [
+                'product' => $product,
+                'variation' => $variation,
+                'quantity' => $quantity,
+            ]);
+
+            // ShippingFeeService expects each cart item to expose its product.
+            $shippingCartItems[] = (object) [
+                'product' => $product,
+            ];
         }
 
-        // Shipping is PHP 50.00 per seller/shipment.
+        // Group items by seller.
         $itemsBySeller = collect($cartItems)->groupBy('seller_id');
-        $sellerCount = max(1, $itemsBySeller->count());
-        $shippingFeePerSellerMinor = (int) config('bilihub.shipping_fee_per_seller_minor', 5000);
-        $shippingFeeMinor = $shippingFeePerSellerMinor * $sellerCount;
+        $sellerCount = $itemsBySeller->count();
 
-        // Standardized buyer service fee: 3%.
+        // Build the buyer's complete address for shipping-distance calculation.
+        $buyerAddressText = collect([
+            $address->address_line1,
+            $address->address_line2,
+            $address->barangay,
+            $address->city,
+            $address->province,
+            $address->postal_code,
+            $address->country,
+        ])
+            ->filter(fn($value) => $value !== null && trim((string) $value) !== '')
+            ->map(fn($value) => trim((string) $value))
+            ->implode(', ');
+
+        // Use the same distance-based shipping calculation as web checkout.
+        $shippingQuote = app(ShippingFeeService::class)->quoteForCart(
+            collect($shippingCartItems),
+            $address,
+            $buyerAddressText
+        );
+
+        $shippingBySellerMinor = $shippingQuote['per_seller_minor'];
+        $shippingFeeMinor = (int) $shippingQuote['total_fee_minor'];
+
+        // Platform Service Fee: 3% of product subtotal before voucher discounts.
         $serviceFeeMinor = intdiv(($subtotalMinor * 3) + 50, 100);
 
-        $totalMinor = $subtotalMinor + $shippingFeeMinor + $serviceFeeMinor;
-
-        // Legacy peso values are dual-written temporarily for compatibility.
-        $subtotal = $subtotalMinor / 100;
-        $shippingFee = $shippingFeeMinor / 100;
-        $serviceFee = $serviceFeeMinor / 100;
-        $total = $totalMinor / 100;
-
         DB::beginTransaction();
+
         try {
+
+            $voucherCode = trim((string) $request->input('voucher_code', ''));
+
+            $voucherResult = null;
+            $lockedVoucher = null;
+
+            $voucherDiscountMinor = 0;
+            $sellerDiscountMinor = 0;
+            $platformDiscountMinor = 0;
+
+            $itemVoucherDiscounts = [];
+
+            if ($voucherCode !== '') {
+                $lockedVoucher = Voucher::query()
+                    ->where('code', strtoupper($voucherCode))
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$lockedVoucher) {
+                    throw ValidationException::withMessages([
+                        'voucher_code' => 'The selected voucher is no longer available.',
+                    ]);
+                }
+
+                $voucherResult = app(VoucherCalculationService::class)->calculate(
+                    $voucherCode,
+                    $voucherCartItems,
+                    (int) Auth::id()
+                );
+
+                if ((int) $voucherResult['voucher_id'] !== (int) $lockedVoucher->id) {
+                    throw ValidationException::withMessages([
+                        'voucher_code' => 'Voucher validation failed. Please apply it again.',
+                    ]);
+                }
+
+                $voucherDiscountMinor = (int) $voucherResult['discount_minor'];
+                $sellerDiscountMinor = (int) $voucherResult['seller_discount_minor'];
+                $platformDiscountMinor = (int) $voucherResult['platform_discount_minor'];
+
+                foreach ($voucherResult['items'] as $discountRow) {
+                    $cartIndex = (int) $discountRow['cart_index'];
+
+                    $cartItem = $cartItems[$cartIndex] ?? null;
+                    $voucherCartItem = $voucherCartItems->get($cartIndex);
+
+                    if (
+                        !$cartItem ||
+                        !$voucherCartItem ||
+                        (int) $cartItem['product_id'] !== (int) $discountRow['product_id'] ||
+                        (int) $cartItem['seller_id'] !== (int) $discountRow['seller_id'] ||
+                        (int) $voucherCartItem->product->id !== (int) $discountRow['product_id']
+                    ) {
+                        throw ValidationException::withMessages([
+                            'voucher_code' => 'Voucher item allocation failed. Please retry checkout.',
+                        ]);
+                    }
+
+                    $itemVoucherDiscounts[$cartIndex] =
+                        (int) $discountRow['discount_minor'];
+                }
+            }
+
+            $totalMinor = $subtotalMinor
+                + $shippingFeeMinor
+                + $serviceFeeMinor
+                - $voucherDiscountMinor;
+
+
+
             $order = Order::create([
                 'user_id' => Auth::id(),
                 'order_number' => 'ORD-' . Str::upper(Str::random(10)),
-'reference' => 'REF-' . Str::upper(Str::random(12)),
-'status' => 'pending',
+                'reference' => 'REF-' . Str::upper(Str::random(12)),
+                'status' => 'pending',
                 'payment_method' => $request->payment_method,
-                'payment_status' => $request->payment_method === 'cod' ? 'unpaid' : 'pending',
+                'payment_status' => $request->payment_method === 'cod'
+                    ? 'unpaid'
+                    : 'pending',
+
                 'subtotal_minor' => $subtotalMinor,
-                // Existing API service fee is temporarily stored in the order tax field
-                // until the coordinated money/schema transition.
-                'tax_minor' => $serviceFeeMinor,
+                'service_fee_minor' => $serviceFeeMinor,
                 'shipping_minor' => $shippingFeeMinor,
                 'total_minor' => $totalMinor,
+
+                'discount_minor' => $voucherDiscountMinor,
+                'seller_discount_minor' => $sellerDiscountMinor,
+                'platform_discount_minor' => $platformDiscountMinor,
+
                 'notes' => $request->notes,
+
                 'shipping_address' => [
-    'label' => $address->label,
-    'address_line1' => $address->address_line1,
-    'address_line2' => $address->address_line2,
-    'barangay' => $address->barangay,
-    'city' => $address->city,
-    'province' => $address->province,
-    'postal_code' => $address->postal_code,
-    'country' => $address->country,
-    'phone' => $address->phone,
-    'latitude' => $address->latitude,
-    'longitude' => $address->longitude,
-],
+                    'label' => $address->label,
+                    'address_line1' => $address->address_line1,
+                    'address_line2' => $address->address_line2,
+                    'barangay' => $address->barangay,
+                    'city' => $address->city,
+                    'province' => $address->province,
+                    'postal_code' => $address->postal_code,
+                    'country' => $address->country,
+                    'phone' => $address->phone,
+                    'latitude' => $address->latitude,
+                    'longitude' => $address->longitude,
+                ],
+
                 'ordered_at' => now(),
                 'customer_latitude' => null,
                 'customer_longitude' => null,
@@ -200,39 +328,83 @@ if (!$product->seller_id) {
             // Split the buyer order into one SellerOrder per seller/shop.
             $allocatedServiceFeeMinor = 0;
             $sellerIndex = 0;
+            $firstSellerOrderId = null;
 
             foreach ($itemsBySeller as $sellerId => $sellerItems) {
                 $sellerIndex++;
+
+
                 $sellerSubtotalMinor = (int) $sellerItems->sum('subtotal_minor');
 
-                // One SellerOrder equals one seller/shipment, so each receives the full
-                // per-seller shipping fee. Service fee still reconciles proportionally.
-                $sellerShippingMinor = $shippingFeePerSellerMinor;
+                // Calculate voucher discounts belonging to this seller.
+                $sellerOrderDiscountMinor = 0;
+                $sellerOrderSellerDiscountMinor = 0;
+                $sellerOrderPlatformDiscountMinor = 0;
 
+                foreach ($sellerItems as $item) {
+                    $itemDiscountMinor = (int) (
+                        $itemVoucherDiscounts[$item['cart_index']] ?? 0
+                    );
+
+                    $sellerOrderDiscountMinor += $itemDiscountMinor;
+
+                    if ($voucherResult && $voucherResult['funded_by'] === 'seller') {
+                        $sellerOrderSellerDiscountMinor += $itemDiscountMinor;
+                    } elseif ($voucherResult && $voucherResult['funded_by'] === 'platform') {
+                        $sellerOrderPlatformDiscountMinor += $itemDiscountMinor;
+                    }
+                }
+
+                // Use the actual shipping quote for this seller.
+                $sellerShippingMinor = (int) (
+                    $shippingBySellerMinor[(int) $sellerId]
+                    ?? app(ShippingFeeService::class)->baseFeeMinor()
+                );
+
+                // Allocate the 3% platform service fee proportionally.
                 if ($sellerIndex === $sellerCount) {
-                    $sellerServiceFeeMinor = $serviceFeeMinor - $allocatedServiceFeeMinor;
+                    $sellerServiceFeeMinor = $serviceFeeMinor
+                        - $allocatedServiceFeeMinor;
                 } else {
                     $sellerServiceFeeMinor = $subtotalMinor > 0
-                        ? intdiv(($serviceFeeMinor * $sellerSubtotalMinor) + intdiv($subtotalMinor, 2), $subtotalMinor)
+                        ? intdiv(
+                            $serviceFeeMinor * $sellerSubtotalMinor,
+                            $subtotalMinor
+                        )
                         : 0;
 
                     $allocatedServiceFeeMinor += $sellerServiceFeeMinor;
                 }
 
-                $sellerTotalMinor = $sellerSubtotalMinor + $sellerServiceFeeMinor + $sellerShippingMinor;
+                // Only seller-funded discounts reduce the seller's payable total.
+                // Platform-funded discounts are funded by the platform.
+                $sellerTotalMinor = $sellerSubtotalMinor
+                    + $sellerServiceFeeMinor
+                    + $sellerShippingMinor
+                    - $sellerOrderSellerDiscountMinor;
 
                 $sellerOrder = SellerOrder::create([
                     'order_id' => $order->id,
                     'seller_id' => $sellerId,
                     'status' => 'pending',
+
                     'subtotal_minor' => $sellerSubtotalMinor,
+                    'service_fee_minor' => $sellerServiceFeeMinor,
                     'shipping_minor' => $sellerShippingMinor,
                     'total_minor' => $sellerTotalMinor,
+
+                    'discount_minor' => $sellerOrderDiscountMinor,
+                    'seller_discount_minor' => $sellerOrderSellerDiscountMinor,
+                    'platform_discount_minor' => $sellerOrderPlatformDiscountMinor,
                 ]);
+
+                if ($firstSellerOrderId === null) {
+                    $firstSellerOrderId = $sellerOrder->id;
+                }
+
 
                 foreach ($sellerItems as $item) {
                     $product = Product::find($item['product_id']);
-
                     $productName = $product?->name ?? 'Product';
 
                     if (!empty($item['variant_id'])) {
@@ -245,9 +417,10 @@ if (!$product->seller_id) {
                         }
                     }
 
-                    // Re-check and deduct stock inside the same DB transaction
-                    // so a failed order rolls all stock changes back.
-                    $lockedProduct = Product::query()->lockForUpdate()->findOrFail($item['product_id']);
+                    // Lock and re-check stock inside the transaction.
+                    $lockedProduct = Product::query()
+                        ->lockForUpdate()
+                        ->findOrFail($item['product_id']);
 
                     if (!empty($item['variant_id'])) {
                         $lockedVariation = $lockedProduct->variations()
@@ -255,18 +428,29 @@ if (!$product->seller_id) {
                             ->findOrFail($item['variant_id']);
 
                         if ($lockedVariation->stock < $item['quantity']) {
-                            throw new \RuntimeException("Insufficient stock for {$lockedProduct->name}.");
+                            throw new \RuntimeException(
+                                "Insufficient stock for {$lockedProduct->name}."
+                            );
                         }
 
-                        $lockedVariation->decrement('stock', $item['quantity']);
+                        $lockedVariation->decrement(
+                            'stock',
+                            $item['quantity']
+                        );
                     } else {
                         if ($lockedProduct->stock < $item['quantity']) {
-                            throw new \RuntimeException("Insufficient stock for {$lockedProduct->name}.");
+                            throw new \RuntimeException(
+                                "Insufficient stock for {$lockedProduct->name}."
+                            );
                         }
 
-                        $lockedProduct->decrement('stock', $item['quantity']);
+                        $lockedProduct->decrement(
+                            'stock',
+                            $item['quantity']
+                        );
                     }
 
+                    // Deduct size stock if a size was selected.
                     if (!empty($item['size_id'])) {
                         $sizeRow = DB::table('product_size')
                             ->where('product_id', $item['product_id'])
@@ -274,8 +458,13 @@ if (!$product->seller_id) {
                             ->lockForUpdate()
                             ->first();
 
-                        if (!$sizeRow || $sizeRow->stock < $item['quantity']) {
-                            throw new \RuntimeException("Insufficient size stock for {$lockedProduct->name}.");
+                        if (
+                            !$sizeRow ||
+                            $sizeRow->stock < $item['quantity']
+                        ) {
+                            throw new \RuntimeException(
+                                "Insufficient size stock for {$lockedProduct->name}."
+                            );
                         }
 
                         DB::table('product_size')
@@ -286,6 +475,24 @@ if (!$product->seller_id) {
                             ]);
                     }
 
+                    $itemDiscountMinor = (int) (
+                        $itemVoucherDiscounts[$item['cart_index']] ?? 0
+                    );
+
+                    $itemSellerDiscountMinor = (
+                        $voucherResult &&
+                        $voucherResult['funded_by'] === 'seller'
+                    )
+                        ? $itemDiscountMinor
+                        : 0;
+
+                    $itemPlatformDiscountMinor = (
+                        $voucherResult &&
+                        $voucherResult['funded_by'] === 'platform'
+                    )
+                        ? $itemDiscountMinor
+                        : 0;
+
                     OrderItem::create([
                         'seller_order_id' => $sellerOrder->id,
                         'product_id' => $item['product_id'],
@@ -295,36 +502,70 @@ if (!$product->seller_id) {
                         'quantity' => $item['quantity'],
                         'price_minor' => $item['price_minor'],
                         'subtotal_minor' => $item['subtotal_minor'],
+
+                        'discount_minor' => $itemDiscountMinor,
+                        'seller_discount_minor' => $itemSellerDiscountMinor,
+                        'platform_discount_minor' => $itemPlatformDiscountMinor,
                     ]);
                 }
             }
 
-            // Clear cart for these items
+            // Record voucher redemption once for the parent order.
+            if ($voucherResult && $lockedVoucher) {
+                VoucherRedemption::create([
+                    'voucher_id' => $lockedVoucher->id,
+                    'user_id' => Auth::id(),
+                    'order_id' => $order->id,
+                    'seller_order_id' => $firstSellerOrderId,
+                    'voucher_code_snapshot' => $voucherResult['code'],
+                    'funded_by' => $voucherResult['funded_by'],
+                    'discount_minor' => $voucherDiscountMinor,
+                    'status' => 'redeemed',
+                    'redeemed_at' => now(),
+                ]);
+
+                $lockedVoucher->increment('usage_count');
+            }
+
+            // Clear the cart items included in this order.
             CartItem::where('user_id', Auth::id())
-                ->whereIn('product_id', array_column($cartItems, 'product_id'))
+                ->whereIn(
+                    'product_id',
+                    array_column($cartItems, 'product_id')
+                )
                 ->delete();
 
-            // Create one shipment for each seller/shop parcel
-            // before committing so the whole checkout remains atomic.
+            // Create one shipment for each seller/shop parcel.
             app(\App\Services\ShipmentCreationService::class)
                 ->createForOrder($order);
 
-DB::commit();
+            DB::commit();
 
-return response()->json([
+            return response()->json([
                 'message' => 'Order placed successfully.',
-                'data' => $this->formatOrder($order->load(
-                    'items.product',
-                    'sellerOrders.shipment.rider'
-                )),
+                'data' => $this->formatOrder(
+                    $order->load(
+                        'items.product',
+                        'sellerOrders.shipment.rider'
+                    )
+                ),
             ], 201);
-        } catch (\Exception $e) {
+        } catch (ValidationException $e) {
             DB::rollBack();
+
+            return response()->json([
+                'message' => 'The given data was invalid.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
             return response()->json([
                 'message' => 'Failed to create order: ' . $e->getMessage(),
             ], 500);
         }
     }
+
 
     public function show(Order $order)
     {
@@ -620,100 +861,136 @@ return response()->json([
     }
 
     private function formatOrder(Order $order): array
-    {
-        $order->loadMissing([
-            'items.product',
-            'items.variation',
-            'items.size',
-            'sellerOrders.seller',
-            'sellerOrders.shipment.rider',
-            'rider',
-        ]);
+{
+    $order->loadMissing([
+        'items.product',
+        'items.variation',
+        'items.size',
+        'sellerOrders.seller',
+        'sellerOrders.shipment.rider',
+        'rider',
+    ]);
 
-        return [
-            'id' => $order->id,
-            'order_number' => $order->order_number,
-            'status' => $order->status,
-            'delivery_status' => $order->delivery_status,
-            'payment_method' => $order->payment_method,
-            'payment_status' => $order->payment_status,
-            'subtotal' => $order->subtotal_minor / 100,
-            'shipping_fee' => $order->shipping_minor / 100,
-            'service_fee' => $order->tax_minor / 100,
-            'discount' => $order->discount ?? 0,
-            'total' => $order->total_minor / 100,
-            'notes' => $order->notes,
-            'shipping_address' => $order->shipping_address,
-            'created_at' => $order->created_at?->toISOString(),
-            'confirmed_at' => $order->confirmed_at?->toISOString(),
-            'delivered_at' => $order->delivered_at?->toISOString(),
-            'address' => [
-    'full_address' => collect($order->shipping_address)
-        ->only([
-            'address_line1',
-            'address_line2',
-            'barangay',
-            'city',
-            'province',
-            'postal_code',
-            'country',
-        ])
-        ->filter()
-        ->implode(', '),
-],
-            'items' => $order->items->map(function ($item) {
-                return [
-                    'id' => $item->id,
-                    'product_id' => $item->product_id,
-                    'product_name' => $item->product?->name ?? 'Unknown',
-                    'product_image' => $item->product?->thumbnail ?? $item->product?->image,
-                    'variation_name' => $item->variation?->name,
-                    'size_name' => $item->size?->name,
-                    'quantity' => $item->quantity,
-                    'price' => $item->price_minor / 100,
-                    'subtotal' => $item->subtotal_minor / 100,
-                ];
-            }),
-            'seller_orders' => $order->sellerOrders->map(function ($sellerOrder) {
-                $shipment = $sellerOrder->shipment;
+    return [
+        'id' => $order->id,
+        'order_number' => $order->order_number,
+        'status' => $order->status,
+        'delivery_status' => $order->delivery_status,
+        'payment_method' => $order->payment_method,
+        'payment_status' => $order->payment_status,
 
-                return [
-                    'id' => $sellerOrder->id,
-                    'seller_id' => $sellerOrder->seller_id,
-                    'seller' => $sellerOrder->seller ? [
-                        'id' => $sellerOrder->seller->id,
-                        'name' => $sellerOrder->seller->name,
-                        'slug' => $sellerOrder->seller->slug,
+        'subtotal' => $order->subtotal_minor / 100,
+        'shipping_fee' => $order->shipping_minor / 100,
+
+        // Platform Service Fee: 3% of product subtotal before voucher discounts.
+        'service_fee' => (
+            $order->service_fee_minor ?? 0
+        ) / 100,
+
+        // Voucher discount breakdown.
+        'discount' => (
+            $order->discount_minor ?? 0
+        ) / 100,
+        'seller_discount' => (
+            $order->seller_discount_minor ?? 0
+        ) / 100,
+        'platform_discount' => (
+            $order->platform_discount_minor ?? 0
+        ) / 100,
+
+        'total' => $order->total_minor / 100,
+        'notes' => $order->notes,
+        'shipping_address' => $order->shipping_address,
+        'created_at' => $order->created_at?->toISOString(),
+        'confirmed_at' => $order->confirmed_at?->toISOString(),
+        'delivered_at' => $order->delivered_at?->toISOString(),
+
+        'address' => [
+            'full_address' => collect($order->shipping_address)
+                ->only([
+                    'address_line1',
+                    'address_line2',
+                    'barangay',
+                    'city',
+                    'province',
+                    'postal_code',
+                    'country',
+                ])
+                ->filter()
+                ->implode(', '),
+        ],
+
+        'items' => $order->items->map(function ($item) {
+            return [
+                'id' => $item->id,
+                'product_id' => $item->product_id,
+                'product_name' => $item->product?->name ?? 'Unknown',
+                'product_image' => $item->product?->thumbnail
+                    ?? $item->product?->image,
+                'variation_name' => $item->variation?->name,
+                'size_name' => $item->size?->name,
+                'quantity' => $item->quantity,
+                'price' => $item->price_minor / 100,
+                'subtotal' => $item->subtotal_minor / 100,
+
+                // Voucher discount breakdown.
+                'discount' => ($item->discount_minor ?? 0) / 100,
+                'seller_discount' => ($item->seller_discount_minor ?? 0) / 100,
+                'platform_discount' => ($item->platform_discount_minor ?? 0) / 100,
+            ];
+        }),
+
+        'seller_orders' => $order->sellerOrders->map(function ($sellerOrder) {
+            $shipment = $sellerOrder->shipment;
+
+            return [
+                'id' => $sellerOrder->id,
+                'seller_id' => $sellerOrder->seller_id,
+
+                'seller' => $sellerOrder->seller ? [
+                    'id' => $sellerOrder->seller->id,
+                    'name' => $sellerOrder->seller->name,
+                    'slug' => $sellerOrder->seller->slug,
+                ] : null,
+
+                'status' => $sellerOrder->status,
+                'subtotal' => $sellerOrder->subtotal_minor / 100,
+                'discount' => ($sellerOrder->discount_minor ?? 0) / 100,
+                'seller_discount' => ($sellerOrder->seller_discount_minor ?? 0) / 100,
+                'platform_discount' => ($sellerOrder->platform_discount_minor ?? 0) / 100,
+                'service_fee' => (
+                    $sellerOrder->service_fee_minor ?? 0
+                ) / 100,
+                'shipping' => $sellerOrder->shipping_minor / 100,
+                'total' => $sellerOrder->total_minor / 100,
+
+                'shipment' => $shipment ? [
+                    'id' => $shipment->id,
+                    'seller_order_id' => $shipment->seller_order_id,
+                    'tracking_number' => $shipment->tracking_number,
+                    'status' => $shipment->status,
+                    'picked_up_at' => $shipment->picked_up_at?->toISOString(),
+                    'delivered_at' => $shipment->delivered_at?->toISOString(),
+
+                    'rider' => $shipment->rider ? [
+                        'id' => $shipment->rider->id,
+                        'name' => $shipment->rider->name,
+                        'phone' => $shipment->rider->phone,
+                        'vehicle_type' => $shipment->rider->vehicle_type,
+                        'latitude' => $shipment->rider->latitude,
+                        'longitude' => $shipment->rider->longitude,
                     ] : null,
-                    'status' => $sellerOrder->status,
-                    'subtotal' => $sellerOrder->subtotal_minor / 100,
-                    'shipping' => $sellerOrder->shipping_minor / 100,
-                    'total' => $sellerOrder->total_minor / 100,
-                    'shipment' => $shipment ? [
-                        'id' => $shipment->id,
-                        'seller_order_id' => $shipment->seller_order_id,
-                        'tracking_number' => $shipment->tracking_number,
-                        'status' => $shipment->status,
-                        'picked_up_at' => $shipment->picked_up_at?->toISOString(),
-                        'delivered_at' => $shipment->delivered_at?->toISOString(),
-                        'rider' => $shipment->rider ? [
-                            'id' => $shipment->rider->id,
-                            'name' => $shipment->rider->name,
-                            'phone' => $shipment->rider->phone,
-                            'vehicle_type' => $shipment->rider->vehicle_type,
-                            'latitude' => $shipment->rider->latitude,
-                            'longitude' => $shipment->rider->longitude,
-                        ] : null,
-                    ] : null,
-                ];
-            })->values(),
-            'rider' => $order->rider ? [
-                'id' => $order->rider->id,
-                'name' => $order->rider->name,
-                'phone' => $order->rider->phone,
-            ] : null,
-        ];
-    }
+                ] : null,
+            ];
+        })->values(),
+
+        'rider' => $order->rider ? [
+            'id' => $order->rider->id,
+            'name' => $order->rider->name,
+            'phone' => $order->rider->phone,
+        ] : null,
+    ];
+}
 }
 
 
