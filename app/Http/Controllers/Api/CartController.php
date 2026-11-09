@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CartItem;
 use App\Models\Product;
 use App\Models\ProductVariant;
+use App\Services\ShippingFeeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -14,7 +15,7 @@ class CartController extends Controller
     public function index(Request $request)
     {
         $items = CartItem::with([
-            'product:id,name,price_minor,discounted_price_minor,discount_percent,discount_starts_at,discount_ends_at,stock,status',
+            'product:id,seller_id,name,price_minor,discounted_price_minor,discount_percent,discount_starts_at,discount_ends_at,stock,status',
             'product.images',
             'variation:id,product_id,name,price_minor,discounted_price_minor,discount_percent,stock',
             'size:id,name,slug',

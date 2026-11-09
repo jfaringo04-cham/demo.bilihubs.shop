@@ -134,13 +134,10 @@ class RiderWalletService
             )
         );
 
-        return min(
-            $configuredDeliveryPay,
-            max(
-                0,
-                $shippingMinor - $pickupTarget
-            )
-        );
+        $deliveryTarget = $configuredDeliveryPay
+            + ShippingBonusService::deliveryExtraForOrderMinor($sellerOrder);
+
+        return min($deliveryTarget, max(0, $shippingMinor - $pickupTarget));
     }
 
     /**
@@ -177,13 +174,8 @@ class RiderWalletService
             $this->calculateDeliveryEarningMinor($shipment);
 
         $logisticsReserve = min(
-            max(
-                0,
-                (int) config(
-                    'rider_wallet.logistics_earning_minor',
-                    500
-                )
-            ),
+            max(0, (int) config('rider_wallet.logistics_earning_minor', 500))
+                + ShippingBonusService::logisticsExtraForOrderMinor($sellerOrder),
             max(
                 0,
                 $shippingMinor

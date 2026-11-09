@@ -31,15 +31,14 @@ class ShippingFeeService
         );
     }
 
-    public function additionalPerKmMinor(): int
+    public function additionalBlockKm(): float
     {
-        return max(
-            0,
-            (int) config(
-                'shipping.additional_per_km_minor',
-                1000
-            )
-        );
+        return max(0.001, (float) config('shipping.additional_block_km', 3));
+    }
+
+    public function additionalPerBlockMinor(): int
+    {
+        return max(0, (int) config('shipping.additional_per_block_minor', 400));
     }
 
     public function calculateFeeMinor(?float $distanceKm): int
@@ -50,25 +49,13 @@ class ShippingFeeService
             return $base;
         }
 
-        $extraDistance = max(
-            0,
-            $distanceKm - $this->includedDistanceKm()
-        );
+        $extraDistance = max(0, $distanceKm - $this->includedDistanceKm());
 
-        /*
-         * Every started kilometer after the included distance
-         * is charged as one additional kilometer.
-         *
-         * 3.0 km = base
-         * 3.1 km = base + 1 km
-         * 4.1 km = base + 2 km
-         */
-        $extraKm = (int) ceil(
-            max(0, $extraDistance - 0.000001)
-        );
+        // Charge one PHP 4 block for every started 3 km beyond the first 3 km.
+        // 3.0 km = PHP 50; 3.1–6 km = PHP 54; over 6–9 km = PHP 58.
+        $extraBlocks = (int) ceil(max(0, $extraDistance - 0.000001) / $this->additionalBlockKm());
 
-        return $base
-            + ($extraKm * $this->additionalPerKmMinor());
+        return $base + ($extraBlocks * $this->additionalPerBlockMinor());
     }
 
     public function quoteForCart(
@@ -176,8 +163,9 @@ class ShippingFeeService
             'included_distance_km' =>
                 $this->includedDistanceKm(),
 
-            'additional_per_km_minor' =>
-                $this->additionalPerKmMinor(),
+            'additional_block_km' => $this->additionalBlockKm(),
+
+            'additional_per_block_minor' => $this->additionalPerBlockMinor(),
 
             'total_fee_minor' =>
                 $totalFeeMinor,

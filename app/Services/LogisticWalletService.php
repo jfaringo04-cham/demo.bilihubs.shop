@@ -74,17 +74,9 @@ class LogisticWalletService
         );
 
         $deliveryTarget = min(
-            max(
-                0,
-                (int) config(
-                    'rider_wallet.delivery_earning_minor',
-                    2500
-                )
-            ),
-            max(
-                0,
-                $shippingMinor - $pickupTarget
-            )
+            max(0, (int) config('rider_wallet.delivery_earning_minor', 2500))
+                + ShippingBonusService::deliveryExtraForOrderMinor($sellerOrder),
+            max(0, $shippingMinor - $pickupTarget)
         );
 
         $remainingAfterLocalRiders = max(
@@ -108,7 +100,7 @@ class LogisticWalletService
                     (int) config(
                         'rider_wallet.logistics_earning_minor',
                         500
-                    )
+                    ) + ShippingBonusService::logisticsExtraForOrderMinor($sellerOrder)
                 ),
                 $remainingAfterLocalRiders
             );

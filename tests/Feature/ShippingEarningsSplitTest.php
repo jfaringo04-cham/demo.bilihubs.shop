@@ -127,6 +127,8 @@ class ShippingEarningsSplitTest extends TestCase
             $table->unique(['shipment_id', 'type']);
         });
 
+        // Enable new policy for dynamically-created test orders.
+        config()->set('shipping.bonus_effective_at', '2020-01-01T00:00:00+08:00');
         config()->set('rider_wallet.pickup_earning_minor', 1500);
         config()->set('rider_wallet.delivery_earning_minor', 2500);
         config()->set('rider_wallet.logistics_earning_minor', 1000);
@@ -216,6 +218,112 @@ class ShippingEarningsSplitTest extends TestCase
             + (int) LogisticWalletTransaction::where('shipment_id', $shipment->id)->sum('amount_minor');
 
         $this->assertSame(5000, $total);
+    }
+
+    public function test_extra_four_pesos_is_shared_between_delivery_rider_and_logistics(): void
+    {
+        config()->set('shipping.base_fee_minor', 5000);
+        $shipment = $this->makeShipment(5400);
+        $this->creditAll($shipment);
+
+        $this->assertDatabaseHas('rider_wallet_transactions', [
+            'shipment_id' => $shipment->id, 'type' => 'pickup_credit', 'amount_minor' => 1500,
+        ]);
+        $this->assertDatabaseHas('rider_wallet_transactions', [
+            'shipment_id' => $shipment->id, 'type' => 'delivery_credit', 'amount_minor' => 2700,
+        ]);
+        $this->assertDatabaseHas('logistic_wallet_transactions', [
+            'shipment_id' => $shipment->id, 'type' => 'shipment_credit', 'amount_minor' => 1200,
+        ]);
+        $total = (int) RiderWalletTransaction::where('shipment_id', $shipment->id)->sum('amount_minor')
+            + (int) LogisticWalletTransaction::where('shipment_id', $shipment->id)->sum('amount_minor');
+        $this->assertSame(5400, $total);
+    }
+
+    public function test_extra_eight_pesos_is_shared_and_credits_are_idempotent(): void
+    {
+        config()->set('shipping.base_fee_minor', 5000);
+        $shipment = $this->makeShipment(5800);
+        $this->creditAll($shipment);
+        $this->creditAll($shipment->fresh());
+
+        $this->assertDatabaseHas('rider_wallet_transactions', [
+            'shipment_id' => $shipment->id, 'type' => 'delivery_credit', 'amount_minor' => 2900,
+        ]);
+        $this->assertDatabaseHas('logistic_wallet_transactions', [
+            'shipment_id' => $shipment->id, 'type' => 'shipment_credit', 'amount_minor' => 1400,
+        ]);
+        $this->assertSame(2, RiderWalletTransaction::where('shipment_id', $shipment->id)->count());
+        $this->assertSame(1, LogisticWalletTransaction::where('shipment_id', $shipment->id)->count());
+    }
+
+    public function test_linehaul_preserves_base_shares_and_splits_extra_four_pesos(): void
+    {
+        config()->set('shipping.base_fee_minor', 5000);
+        config()->set('rider_wallet.logistics_earning_minor', 500);
+
+        Schema::table('shipments', function (Blueprint $table) {
+            $table->unsignedBigInteger('linehaul_rider_id')->nullable();
+        });
+
+        $shipment = $this->makeShipment(5400);
+        $linehaulRiderId = DB::table('users')->insertGetId([
+            'name' => 'Linehaul Rider',
+            'email' => 'linehaul-' . uniqid() . '@example.com',
+            'password' => 'x',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('shipments')->where('id', $shipment->id)->update([
+            'linehaul_rider_id' => $linehaulRiderId,
+        ]);
+        $shipment = $shipment->fresh();
+
+        $this->creditAll($shipment);
+
+        foreach ([
+            'pickup_credit' => 1500,
+            'delivery_credit' => 2700,
+            'linehaul_credit' => 500,
+        ] as $type => $amount) {
+            $this->assertDatabaseHas('rider_wallet_transactions', [
+                'shipment_id' => $shipment->id,
+                'type' => $type,
+                'amount_minor' => $amount,
+            ]);
+        }
+        $this->assertDatabaseHas('logistic_wallet_transactions', [
+            'shipment_id' => $shipment->id, 'type' => 'shipment_credit', 'amount_minor' => 700,
+        ]);
+        $total = (int) RiderWalletTransaction::where('shipment_id', $shipment->id)->sum('amount_minor')
+            + (int) LogisticWalletTransaction::where('shipment_id', $shipment->id)->sum('amount_minor');
+        $this->assertSame(5400, $total);
+    }
+
+    public function test_pre_policy_eighty_peso_order_keeps_legacy_payout_when_confirmed_later(): void
+    {
+        config()->set('shipping.bonus_effective_at', '2026-11-10T00:00:00+08:00');
+        $shipment = $this->makeShipment(8000);
+
+        // Simulate a real in-flight order placed before the new fee policy.
+        DB::table('seller_orders')->where('id', $shipment->seller_order_id)->update([
+            'created_at' => '2026-11-08 08:00:00',
+        ]);
+
+        $this->creditAll($shipment);
+
+        $this->assertDatabaseHas('rider_wallet_transactions', [
+            'shipment_id' => $shipment->id, 'type' => 'pickup_credit', 'amount_minor' => 1500,
+        ]);
+        $this->assertDatabaseHas('rider_wallet_transactions', [
+            'shipment_id' => $shipment->id, 'type' => 'delivery_credit', 'amount_minor' => 2500,
+        ]);
+        $this->assertDatabaseHas('logistic_wallet_transactions', [
+            'shipment_id' => $shipment->id, 'type' => 'shipment_credit', 'amount_minor' => 4000,
+        ]);
+        $this->assertSame(8000,
+            (int) RiderWalletTransaction::where('shipment_id', $shipment->id)->sum('amount_minor')
+            + (int) LogisticWalletTransaction::where('shipment_id', $shipment->id)->sum('amount_minor')
+        );
     }
 
     public function test_repeated_credit_does_not_duplicate_any_share(): void
