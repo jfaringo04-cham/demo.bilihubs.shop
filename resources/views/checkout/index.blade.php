@@ -438,13 +438,13 @@
                     ) }}
                   km.
 
-                  Additional started km:
+                  Additional started 3 km block:
                   &#8369;{{ number_format(
                         $shippingQuote[
-                            'additional_per_km_minor'
+                            'additional_per_block_minor'
                         ] / 100,
                         2
-                    ) }}/km.
+                    ) }}/block.
                 </div>
 
               </div>
@@ -463,7 +463,7 @@
               </span>
 
               <strong>
-                -₱{{ number_format($voucherDiscount, 2) }}
+                -â‚±{{ number_format($voucherDiscount, 2) }}
               </strong>
             </div>
             @endif
