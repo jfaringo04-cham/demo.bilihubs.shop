@@ -533,6 +533,87 @@ $table->unsignedBigInteger('shipping_minor');
         ]);
     }
 
+    public function test_selected_cart_checkout_only_places_selected_items_and_preserves_others(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $sellerId = $this->seller('Shop A');
+        $selectedProductId = $this->addProduct($sellerId, 'Selected Shirt', 10, 2);
+        $unselectedProductId = $this->addProduct($sellerId, 'Unselected Shoes', 8, 3);
+
+        $selectedCartItemId = (int) DB::table('cart_items')
+            ->where('product_id', $selectedProductId)
+            ->value('id');
+        $unselectedCartItemId = (int) DB::table('cart_items')
+            ->where('product_id', $unselectedProductId)
+            ->value('id');
+
+        $selectionResponse = $this->post(route('cart.checkoutSelected'), [
+            'cart_item_ids' => [$selectedCartItemId],
+        ]);
+
+        $selectionResponse->assertRedirect(route('checkout.index'));
+        $selectionResponse->assertSessionHas(
+            'checkout.selected_cart_item_ids',
+            [$selectedCartItemId]
+        );
+
+        $response = $this->checkout();
+        $response->assertStatus(302);
+        $response->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseCount('order_items', 1);
+        $this->assertDatabaseHas('order_items', [
+            'product_id' => $selectedProductId,
+        ]);
+        $this->assertDatabaseMissing('order_items', [
+            'product_id' => $unselectedProductId,
+        ]);
+
+        $this->assertDatabaseHas('products', [
+            'id' => $selectedProductId,
+            'stock' => 8,
+        ]);
+        $this->assertDatabaseHas('products', [
+            'id' => $unselectedProductId,
+            'stock' => 8,
+        ]);
+
+        $this->assertDatabaseMissing('cart_items', [
+            'id' => $selectedCartItemId,
+        ]);
+        $this->assertDatabaseHas('cart_items', [
+            'id' => $unselectedCartItemId,
+            'quantity' => 3,
+        ]);
+        $this->assertFalse(session()->has('checkout.selected_cart_item_ids'));
+    }
+
+    public function test_selected_cart_checkout_rejects_empty_selection(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $response = $this->post(route('cart.checkoutSelected'), [
+            'cart_item_ids' => [],
+        ]);
+
+        $response->assertSessionHasErrors('cart_item_ids');
+        $this->assertDatabaseCount('orders', 0);
+    }
+
+    public function test_selected_cart_checkout_rejects_cart_item_ids_not_owned_by_buyer(): void
+    {
+        $this->actingAs($this->buyer());
+
+        $response = $this->post(route('cart.checkoutSelected'), [
+            'cart_item_ids' => [999999],
+        ]);
+
+        $response->assertSessionHasErrors('cart_item_ids');
+        $this->assertDatabaseCount('orders', 0);
+    }
+
     public function test_insufficient_product_stock_rolls_back_checkout(): void
 
     {

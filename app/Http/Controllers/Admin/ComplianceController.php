@@ -398,14 +398,27 @@ class ComplianceController extends Controller
 
     public function rescan(Product $product)
     {
-        ComplianceMonitor::recordPriceSnapshot($product);
-
         $triggers = ComplianceMonitor::checkProduct($product);
+        ComplianceMonitor::recordPriceSnapshot($product->fresh() ?? $product);
 
         if (empty($triggers)) {
+            if ($product->compliance_status === 'auto_flagged') {
+                $product->update([
+                    'compliance_status' => 'pending',
+                    'flagged_reason' => null,
+                    'admin_notes' => null,
+                    'flagged_at' => null,
+                ]);
+
+                return back()->with(
+                    'success',
+                    'No automated findings detected. The product is back in the pending admin-review queue; the seller account remains active.'
+                );
+            }
+
             return back()->with(
                 'success',
-                'Image scan completed. No violations detected â€” product remains live.'
+                'Compliance scan completed. No automated findings detected.'
             );
         }
 

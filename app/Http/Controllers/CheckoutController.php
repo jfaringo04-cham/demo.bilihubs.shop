@@ -395,6 +395,47 @@ class CheckoutController extends Controller
             return collect([$item]);
         }
 
+        $selectedCartItemIds = $request->session()->get('checkout.selected_cart_item_ids');
+
+        if ($selectedCartItemIds !== null) {
+            if (!is_array($selectedCartItemIds) || $selectedCartItemIds === []) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'cart' => 'Your selected cart items are invalid. Please return to your cart and select the items again.',
+                ]);
+            }
+
+            $normalizedIds = [];
+            foreach ($selectedCartItemIds as $selectedId) {
+                $validatedId = filter_var($selectedId, FILTER_VALIDATE_INT);
+                if (!$validatedId || $validatedId < 1) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'cart' => 'Your selected cart items are invalid. Please return to your cart and select the items again.',
+                    ]);
+                }
+                $normalizedIds[] = (int) $validatedId;
+            }
+
+            if (count(array_unique($normalizedIds)) !== count($normalizedIds)) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'cart' => 'Your selected cart items are invalid. Please return to your cart and select the items again.',
+                ]);
+            }
+
+            $selectedItems = CartItem::query()
+                ->where('user_id', Auth::id())
+                ->whereIn('id', $normalizedIds)
+                ->with(['product.sizes', 'product.seller', 'size', 'variation'])
+                ->get();
+
+            if ($selectedItems->count() !== count($normalizedIds)) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'cart' => 'One or more selected items are no longer in your cart. Please return to your cart and select the items again.',
+                ]);
+            }
+
+            return $selectedItems;
+        }
+
         return CartItem::where('user_id', Auth::id())
             ->with(['product.sizes', 'product.seller', 'size', 'variation'])
             ->get();
@@ -619,6 +660,8 @@ class CheckoutController extends Controller
         ]);
 
         $isBuyNow = $request->session()->has('checkout.buy_now');
+        $isSelectedCart = !$isBuyNow
+            && $request->session()->has('checkout.selected_cart_item_ids');
 
         $cartItems = $this->checkoutCartItems($request);
 
@@ -1305,6 +1348,9 @@ class CheckoutController extends Controller
         if ($isBuyNow) {
 
             $request->session()->forget('checkout.buy_now');
+        } elseif ($isSelectedCart) {
+
+            $request->session()->forget('checkout.selected_cart_item_ids');
         }
 
         $request->session()->forget('checkout.voucher_code');

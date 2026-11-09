@@ -227,7 +227,7 @@
 
         <div
           class="card border-0 shadow-sm rounded-2 sticky-top"
-          style="top:80px;">
+          style="top:80px; z-index:1;">
 
           <div class="card-header bg-white border-0 py-3">
             <h5 class="mb-0 fw-semibold">
@@ -463,7 +463,7 @@
               </span>
 
               <strong>
-                -â‚±{{ number_format($voucherDiscount, 2) }}
+                -&#8369;{{ number_format($voucherDiscount, 2) }}
               </strong>
             </div>
             @endif

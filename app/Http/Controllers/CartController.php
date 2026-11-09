@@ -13,7 +13,7 @@ class CartController extends Controller
     public function index()
     {
         $cartItems = CartItem::where('user_id', Auth::id())
-            ->with(['product', 'size', 'variation'])
+            ->with(['product.seller', 'product.sizes', 'size', 'variation'])
             ->get();
 
         $totalMinor = $cartItems->sum(function ($item) {
@@ -228,6 +228,42 @@ class CartController extends Controller
         return null;
     }
 
+    /**
+     * Store the buyer's selected cart rows as the checkout scope.
+     * The IDs are always re-queried against the authenticated buyer at checkout.
+     */
+    public function checkoutSelected(Request $request)
+    {
+        $validated = $request->validate([
+            'cart_item_ids' => ['required', 'array', 'min:1'],
+            'cart_item_ids.*' => ['required', 'integer', 'distinct', 'min:1'],
+        ]);
+
+        $selectedIds = collect($validated['cart_item_ids'])
+            ->map(fn ($id) => (int) $id)
+            ->values();
+
+        $ownedCount = CartItem::query()
+            ->where('user_id', Auth::id())
+            ->whereIn('id', $selectedIds)
+            ->count();
+
+        if ($ownedCount !== $selectedIds->count()) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'cart_item_ids' => 'One or more selected items are no longer available. Please refresh your cart and try again.',
+            ]);
+        }
+
+        // A new cart selection must not inherit a Buy Now item or an old voucher preview.
+        $request->session()->forget('checkout.buy_now');
+        $request->session()->forget('checkout.voucher_code');
+        $request->session()->put('checkout.selected_cart_item_ids', $selectedIds->all());
+
+        return redirect()
+            ->route('checkout.index')
+            ->with('success', $selectedIds->count() . ' cart item(s) selected for checkout.');
+    }
+
     public function store(Request $request, Product $product)
     {
         $validated = $request->validate([
@@ -336,7 +372,7 @@ class CartController extends Controller
             ->with('success', 'Cart updated.');
     }
 
-    public function destroy(CartItem $cartItem)
+    public function destroy(Request $request, CartItem $cartItem)
     {
         abort_unless(
             (int) $cartItem->user_id === (int) Auth::id(),
@@ -344,6 +380,20 @@ class CartController extends Controller
         );
 
         $cartItem->delete();
+
+        $selectedIds = $request->session()->get('checkout.selected_cart_item_ids');
+        if (is_array($selectedIds)) {
+            $selectedIds = array_values(array_filter(
+                $selectedIds,
+                fn ($id) => (int) $id !== (int) $cartItem->id
+            ));
+
+            if ($selectedIds === []) {
+                $request->session()->forget('checkout.selected_cart_item_ids');
+            } else {
+                $request->session()->put('checkout.selected_cart_item_ids', $selectedIds);
+            }
+        }
 
         return redirect()->route('cart.index')
             ->with('success', 'Item removed from cart.');
@@ -375,6 +425,9 @@ class CartController extends Controller
         if ($error) {
             return back()->with('error', $error);
         }
+
+        // Buy Now has its own isolated checkout scope.
+        $request->session()->forget('checkout.selected_cart_item_ids');
 
         // Keep existing Buy Now session structure.
         // Regular cart items are not modified.

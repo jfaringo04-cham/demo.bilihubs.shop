@@ -94,6 +94,9 @@ Route::middleware('auth')->group(function () {
 
         Route::get('/', [CartController::class, 'index'])->name('index');
 
+        Route::post('/checkout-selected', [CartController::class, 'checkoutSelected'])
+            ->name('checkoutSelected');
+
         Route::post('/{product}', [CartController::class, 'store'])->name('store');
 
         Route::put('/{cartItem}', [CartController::class, 'update'])->name('update');

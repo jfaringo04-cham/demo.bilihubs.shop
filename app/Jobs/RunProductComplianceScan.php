@@ -27,6 +27,13 @@ class RunProductComplianceScan implements ShouldQueue
             return;
         }
 
-        ComplianceMonitor::checkProduct($product->fresh(), true);
+        $product = $product->fresh();
+
+        if (!$product) {
+            return;
+        }
+
+        ComplianceMonitor::checkProduct($product);
+        ComplianceMonitor::recordPriceSnapshot($product->fresh() ?? $product);
     }
 }

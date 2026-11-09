@@ -14,7 +14,6 @@ use App\Models\ProductVariant;
 use App\Models\Review;
 use App\Models\Size;
 use App\Models\User;
-use App\Services\ComplianceMonitor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
@@ -362,7 +361,6 @@ class DashboardController extends Controller
         }
 
         if (!$isDraft) {
-            ComplianceMonitor::recordPriceSnapshot($product);
             \App\Jobs\RunProductComplianceScan::dispatch($product->id);
         }
 
@@ -764,7 +762,6 @@ class DashboardController extends Controller
         }
 
         if (!$isDraft) {
-            ComplianceMonitor::recordPriceSnapshot($product);
             \App\Jobs\RunProductComplianceScan::dispatch($product->id);
         }
 
@@ -821,6 +818,8 @@ class DashboardController extends Controller
             'admin_notes' => null,
             'flagged_at' => null,
         ]);
+
+        \App\Jobs\RunProductComplianceScan::dispatch($product->id);
 
         $admins = \App\Models\User::whereHas('roles', fn($q) => $q->where('name', 'admin'))->get();
         foreach ($admins as $admin) {
@@ -1759,7 +1758,10 @@ class DashboardController extends Controller
             ->where('status', 'published');
 
         if ($selectedSubcategory) {
-            $productsQuery->where('category_id', $selectedSubcategory->id);
+            $productsQuery->where(function ($query) use ($selectedSubcategory) {
+                $query->where('subcategory_id', $selectedSubcategory->id)
+                    ->orWhere('category_id', $selectedSubcategory->id);
+            });
         } elseif ($selectedCategory) {
             $categoryIds = $selectedCategory->subcategories
                 ->pluck('id')

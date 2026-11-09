@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\Notification;
-use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\Review;
@@ -26,48 +25,6 @@ class ComplianceMonitor
         'fake', 'counterfeit', 'scam', 'broken', 'toxic', 'stolen',
     ];
 
-    public const IMAGE_BANNED_KEYWORDS = [
-        'weapon', 'gun', 'pistol', 'rifle', 'bullet', 'ammo', 'drug', 'cocaine',
-        'heroin', 'meth', 'nude', 'nsfw', 'xxx', 'porn', 'gore', 'blood',
-        'violence', 'explosive', 'bomb', 'tnt', 'kill', 'murder', 'assault',
-        'terror', 'isis', 'al-qaeda', 'marijuana', 'weed', 'cannabis',
-        'methamphetamine', 'fentanyl', 'ecstasy', 'lsd', 'ketamine',
-        'sex', 'pussy', 'dick', 'penis', 'vagina', 'breast', 'boob',
-        'hentai', 'fetish', 'bdsm', 'rape', 'child', 'minor', 'infant',
-        'baby', 'toddler', 'kid', 'underage', 'jailbait', 'loli',
-        'racist', 'nazi', 'kkk', 'hitler', 'slave',
-        'counterfeit', 'replica', 'fake', 'bootleg', 'knockoff',
-        'stolen', 'illegal', 'contraband', 'smuggle',
-    ];
-
-    public const NUDITY_KEYWORDS = [
-        'nude', 'naked', 'nsfw', 'porn', 'xxx', 'sex', 'pussy', 'breast',
-        'boob', 'penis', 'vagina', 'hentai', 'fetish', 'bdsm', 'topless',
-        'bottomless', 'lingerie', 'underwear', 'bikini', 'swimsuit',
-        'undressed', 'strip', 'stripper', 'escort', 'prostitute',
-    ];
-
-    public const VIOLENCE_KEYWORDS = [
-        'weapon', 'gun', 'pistol', 'rifle', 'shotgun', 'bullet', 'ammo',
-        'grenade', 'bomb', 'tnt', 'explosive', 'knife', 'machete', 'sword',
-        'blood', 'gore', 'wound', 'corpse', 'dead body', 'murder', 'kill',
-        'assault', 'rape', 'torture', 'beheading', 'fight', 'war',
-        'soldier', 'terrorist', 'terror', 'isis', 'al-qaeda',
-    ];
-
-    public const DRUGS_KEYWORDS = [
-        'drug', 'cocaine', 'heroin', 'meth', 'methamphetamine', 'fentanyl',
-        'ecstasy', 'mdma', 'lsd', 'ketamine', 'marijuana', 'weed', 'cannabis',
-        'thc', 'cbd', 'pill', 'substance', 'narcotic', 'dealer',
-    ];
-
-    public const BRAND_COUNTERFEIT_KEYWORDS = [
-        'nike', 'adidas', 'puma', 'gucci', 'prada', 'louis vuitton', 'lv',
-        'apple', 'samsung', 'sony', 'lego', 'disney', 'hello kitty',
-        'supreme', 'rolex', 'chanel', 'hermes', 'versace', 'balenciaga',
-        'coach', 'michael kors', 'ray-ban', 'oakley', 'jordans',
-    ];
-
     public const RESTRICTED_CATEGORIES = [
         'weapons', 'firearms', 'drugs', 'alcohol', 'tobacco', 'adult',
         'ammunition', 'explosives', 'vapes',
@@ -79,357 +36,226 @@ class ComplianceMonitor
 
     public static function checkImageContent(Product $product): ?array
     {
-        $images = $product->images;
-        if ($images->isEmpty() && $product->image) {
-            $images = collect([(object)['path' => $product->image, 'alt_text' => $product->alt_text]]);
-        }
-        if ($images->isEmpty()) {
+        $product->loadMissing(['images', 'variants']);
+
+        // Scan every image path supported by the seller product workflow.
+        // Product names, alt text, and filenames are intentionally excluded:
+        // they describe listings and are not evidence of image content.
+        $imagePaths = collect()
+            ->merge($product->images->pluck('path'))
+            ->push(
+                $product->image,
+                $product->image_path,
+                $product->secondary_image_path
+            )
+            ->merge($product->variants->pluck('image'))
+            ->filter(fn ($path) => is_string($path) && trim($path) !== '')
+            ->map(fn ($path) => trim($path))
+            ->unique()
+            ->values();
+
+        if ($imagePaths->isEmpty()) {
             return null;
         }
 
+        $blacklistedImages = DB::table('blacklisted_images')
+            ->get(['image_hash', 'phash', 'reason']);
+        $blacklistedHashes = $blacklistedImages
+            ->pluck('image_hash')
+            ->filter()
+            ->all();
+        $blacklistedPerceptualHashes = $blacklistedImages
+            ->pluck('phash')
+            ->filter(fn ($hash) => is_string($hash) && $hash !== '')
+            ->values();
+
         $reasons = [];
         $severities = [];
-        $blacklistHashes = self::getBlacklistedImageHashes();
+        $autoFlag = false;
 
-        foreach ($images as $img) {
-            $imagePath = storage_path('app/public/' . $img->path);
-$temporaryImagePath = null;
+        foreach ($imagePaths as $imagePath) {
+            $resolvedImage = self::resolveImageForScan($imagePath, $product->id);
 
-if (!file_exists($imagePath)) {
-    try {
-        if (Storage::disk('s3')->exists($img->path)) {
-            $extension = pathinfo($img->path, PATHINFO_EXTENSION);
-
-            $temporaryImagePath = tempnam(
-                sys_get_temp_dir(),
-                'bilihub_scan_'
-            );
-
-            if ($temporaryImagePath !== false && $extension !== '') {
-                $newTempPath = $temporaryImagePath . '.' . $extension;
-
-                if (@rename($temporaryImagePath, $newTempPath)) {
-                    $temporaryImagePath = $newTempPath;
-                }
+            // A remote storage timeout or missing legacy file is an operational
+            // issue, not proof that a seller uploaded prohibited content.
+            if ($resolvedImage === null) {
+                continue;
             }
 
-            if ($temporaryImagePath !== false) {
-                file_put_contents(
-                    $temporaryImagePath,
-                    Storage::disk('s3')->get($img->path)
-                );
+            [$localImagePath, $isTemporary] = $resolvedImage;
 
-                $imagePath = $temporaryImagePath;
-            }
-        }
-    } catch (\Throwable $e) {
-        Log::warning('Compliance scan could not retrieve product image from Supabase.', [
-            'product_id' => $product->id,
-            'image_path' => $img->path,
-            'error' => $e->getMessage(),
-        ]);
-    }
-}
-            $fileName = strtolower(pathinfo($img->path, PATHINFO_FILENAME));
-            $altText = strtolower($img->alt_text ?? $product->alt_text ?? $product->name ?? '');
+            try {
+                $imageInfo = @getimagesize($localImagePath);
+                $mimeType = function_exists('mime_content_type')
+                    ? @mime_content_type($localImagePath)
+                    : ($imageInfo['mime'] ?? null);
 
-            $deobfuscated = self::deobfuscateText($fileName . ' ' . $altText);
-            $combinedText = $deobfuscated . ' ' . $fileName . ' ' . $altText;
-
-            foreach (self::NUDITY_KEYWORDS as $keyword) {
-                if (str_contains($combinedText, $keyword)) {
-                    $reasons[] = "image references nudity/sexual content ('{$keyword}')";
-                    $severities[] = 'critical';
-                    break;
-                }
-            }
-
-            foreach (self::VIOLENCE_KEYWORDS as $keyword) {
-                if (str_contains($combinedText, $keyword)) {
-                    $reasons[] = "image references violence/weapons ('{$keyword}')";
-                    $severities[] = 'critical';
-                    break;
-                }
-            }
-
-            foreach (self::DRUGS_KEYWORDS as $keyword) {
-                if (str_contains($combinedText, $keyword)) {
-                    $reasons[] = "image references drugs/illegal substances ('{$keyword}')";
-                    $severities[] = 'critical';
-                    break;
-                }
-            }
-
-            foreach (self::BRAND_COUNTERFEIT_KEYWORDS as $keyword) {
-                if (str_contains($combinedText, $keyword)) {
-                    $reasons[] = "image references branded/counterfeit product ('{$keyword}')";
+                if (
+                    $imageInfo === false
+                    || !is_string($mimeType)
+                    || !str_starts_with($mimeType, 'image/')
+                ) {
+                    $reasons[] = 'stored product image could not be validated as a readable image';
                     $severities[] = 'high';
-                    break;
+                    continue;
                 }
-            }
 
-            if (preg_match('/\b(underage|child|minor|kid|baby|toddler|infant)\b/i', $combinedText)) {
-                $reasons[] = "image references minors (CSAM risk)";
-                $severities[] = 'critical';
-            }
+                $imageHash = self::hashImage($localImagePath);
 
-            $metadataFindings = self::analyzeImageMetadata($imagePath, $fileName, $altText);
-            foreach ($metadataFindings as $finding) {
-                $reasons[] = $finding['reason'];
-                $severities[] = $finding['severity'];
-            }
+                if ($imageHash !== '' && in_array($imageHash, $blacklistedHashes, true)) {
+                    $blacklistEntry = $blacklistedImages->first(
+                        fn ($entry) => hash_equals((string) $entry->image_hash, $imageHash)
+                    );
+                    $blacklistReason = trim((string) ($blacklistEntry->reason ?? ''));
 
-            if (file_exists($imagePath)) {
-                $hash = self::hashImage($imagePath);
-                if (in_array($hash, $blacklistHashes, true)) {
-                    $reasons[] = 'image matches a blacklisted hash (counterfeit/illegal content)';
+                    $reasons[] = $blacklistReason !== ''
+                        ? 'image exactly matches an administrator-blacklisted image: ' . $blacklistReason
+                        : 'image exactly matches an image manually blacklisted by an administrator';
                     $severities[] = 'critical';
+                    $autoFlag = true;
+                    continue;
                 }
 
-                $phash = self::perceptualHash($imagePath);
-                if ($phash && self::matchesPerceptualBlacklist($phash)) {
-                    $reasons[] = 'image is a near-duplicate of a blacklisted image';
-                    $severities[] = 'critical';
-                }
+                // Perceptual hashes are approximate and can match unrelated
+                // product photos. They may alert admins, but must never hide a
+                // listing automatically.
+                $perceptualHash = self::perceptualHash($localImagePath);
+                if ($perceptualHash !== '') {
+                    $nearMatch = $blacklistedPerceptualHashes->contains(
+                        fn ($candidate) => self::hammingDistance(
+                            $perceptualHash,
+                            (string) $candidate
+                        ) <= 5
+                    );
 
-                $pixelFindings = self::analyzePixels($imagePath);
-                foreach ($pixelFindings as $finding) {
-                    $reasons[] = $finding['reason'];
-                    $severities[] = $finding['severity'];
+                    if ($nearMatch) {
+                        $reasons[] = 'image resembles an administrator-blacklisted image and requires manual verification';
+                        $severities[] = 'medium';
+                    }
                 }
-
-                $sizeFindings = self::analyzeFileSize($imagePath);
-                foreach ($sizeFindings as $finding) {
-                    $reasons[] = $finding['reason'];
-                    $severities[] = $finding['severity'];
+            } catch (\Throwable $e) {
+                Log::warning('Compliance scan could not validate a product image.', [
+                    'product_id' => $product->id,
+                    'image_path' => $imagePath,
+                    'error' => $e->getMessage(),
+                ]);
+            } finally {
+                if ($isTemporary && is_file($localImagePath)) {
+                    @unlink($localImagePath);
                 }
-            } else {
-                $reasons[] = "image file not found on disk: " . basename($imagePath);
-                $severities[] = 'high';
             }
+        }
 
-            // Remove temporary Supabase image after all compliance checks are finished.
-            if ($temporaryImagePath && file_exists($temporaryImagePath)) {
-                @unlink($temporaryImagePath);
+        if ($reasons === []) {
+            return null;
+        }
+
+        $severity = in_array('critical', $severities, true)
+            ? 'critical'
+            : (in_array('high', $severities, true) ? 'high' : 'medium');
+
+        return [
+            'bucket' => 'automated_bot',
+            'trigger' => 'image_content_violation',
+            'message' => 'Image compliance review found: ' . implode('; ', array_slice(array_unique($reasons), 0, 4)) . '.',
+            'severity' => $severity,
+            'auto_flag' => $autoFlag,
+            'manual_review' => !$autoFlag,
+            'reasons' => array_values(array_unique($reasons)),
+        ];
+    }
+
+    /**
+     * Resolve a stored product image to a local file for content validation.
+     * Returns [path, isTemporary], or null when storage is unavailable.
+     */
+    protected static function resolveImageForScan(string $path, ?int $productId): ?array
+    {
+        $normalizedPath = str_replace('\\', '/', trim($path));
+        $normalizedPath = ltrim($normalizedPath, '/');
+
+        if (
+            $normalizedPath === ''
+            || str_contains($normalizedPath, "\0")
+            || preg_match('#(^|/)\.\.?(?:/|$)#', $normalizedPath)
+        ) {
+            Log::warning('Compliance scan skipped an invalid product image path.', [
+                'product_id' => $productId,
+            ]);
+
+            return null;
+        }
+
+        try {
+            $publicDisk = Storage::disk('public');
+            $publicPath = $publicDisk->path($normalizedPath);
+
+            if (is_file($publicPath)) {
+                return [$publicPath, false];
+            }
+        } catch (\Throwable $e) {
+            // Continue to the configured object-storage disk.
+        }
+
+        foreach (['s3', 'public'] as $diskName) {
+            try {
+                $disk = Storage::disk($diskName);
+
+                if (!$disk->exists($normalizedPath)) {
+                    continue;
+                }
+
+                $contents = $disk->get($normalizedPath);
+                $temporaryPath = tempnam(sys_get_temp_dir(), 'bilihub_compliance_');
+
+                if ($temporaryPath === false) {
+                    return null;
+                }
+
+                if (file_put_contents($temporaryPath, $contents, LOCK_EX) === false) {
+                    @unlink($temporaryPath);
+                    return null;
+                }
+
+                return [$temporaryPath, true];
+            } catch (\Throwable $e) {
+                Log::warning('Compliance scan could not retrieve a product image from storage.', [
+                    'product_id' => $productId,
+                    'image_path' => $normalizedPath,
+                    'disk' => $diskName,
+                    'error' => $e->getMessage(),
+                ]);
             }
         }
 
-        $category = $product->category;
-        if ($category && in_array(strtolower($category->name), self::RESTRICTED_CATEGORIES, true)) {
-            $reasons[] = "product is in a restricted category ('{$category->name}') that requires manual review";
-            $severities[] = 'high';
-        }
-
-        if (!empty($reasons)) {
-            $hasCritical = in_array('critical', $severities, true);
-            return [
-                'bucket' => 'automated_bot',
-                'trigger' => 'image_content_violation',
-                'message' => 'Image scan flagged this listing: ' . implode('; ', array_slice(array_unique($reasons), 0, 4)) . '.',
-                'severity' => $hasCritical ? 'critical' : max($severities),
-                'auto_flag' => true,
-                'auto_suspend' => $hasCritical,
-                'reasons' => array_values(array_unique($reasons)),
-            ];
-        }
+        Log::warning('Compliance scan skipped an unavailable product image.', [
+            'product_id' => $productId,
+            'image_path' => $normalizedPath,
+        ]);
 
         return null;
     }
 
-    public static function deobfuscateText(string $text): string
-    {
-        $leet = [
-            '0' => 'o', '1' => 'i', '3' => 'e', '4' => 'a', '5' => 's',
-            '7' => 't', '8' => 'b', '9' => 'g', '@' => 'a', '$' => 's',
-            '!' => 'i', '+' => 't', '|' => 'i', '(' => 'c', ')' => 'o',
-        ];
-        $normalized = strtr($text, $leet);
-        $normalized = preg_replace('/[^a-z0-9]+/i', ' ', $normalized);
-        $normalized = preg_replace('/\s+/', ' ', $normalized);
-        return trim($normalized);
-    }
-
-    protected static function analyzeImageMetadata(string $imagePath, string $fileName, string $altText): array
-    {
-        $findings = [];
-        if (!file_exists($imagePath)) {
-            return $findings;
-        }
-
-        try {
-            $exif = function_exists('exif_read_data') ? @exif_read_data($imagePath) : false;
-        } catch (\Throwable $e) {
-            $exif = false;
-        }
-
-        if (is_array($exif) && !empty($exif)) {
-            if (!empty($exif['GPS'])) {
-                $findings[] = [
-                    'reason' => 'image contains GPS location data (privacy risk)',
-                    'severity' => 'medium',
-                ];
-            }
-            $cameraMake = strtolower($exif['Make'] ?? '');
-            $cameraModel = strtolower($exif['Model'] ?? '');
-            $software = strtolower($exif['Software'] ?? '');
-
-            $suspiciousMakers = ['darktable', 'gimp', 'photoshop'];
-            foreach ($suspiciousMakers as $m) {
-                if (str_contains($software, $m) || str_contains($cameraMake, $m)) {
-                    $findings[] = [
-                        'reason' => "image appears edited with '{$m}' (possible deepfake/manipulation)",
-                        'severity' => 'medium',
-                    ];
-                    break;
-                }
-            }
-        }
-
-        $ext = strtolower(pathinfo($imagePath, PATHINFO_EXTENSION));
-        $allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-        if (!in_array($ext, $allowedExts, true)) {
-            $findings[] = [
-                'reason' => "image has unusual file extension '{$ext}' (possible malware/spoofing)",
-                'severity' => 'high',
-            ];
-        }
-
-        $mime = function_exists('mime_content_type') ? @mime_content_type($imagePath) : false;
-        if ($mime && !str_starts_with($mime, 'image/')) {
-            $findings[] = [
-                'reason' => "file is not a real image (detected MIME: {$mime})",
-                'severity' => 'critical',
-            ];
-        }
-
-        $sizeBytes = @getimagesize($imagePath);
-        if ($sizeBytes !== false) {
-            $width = $sizeBytes[0] ?? 0;
-            $height = $sizeBytes[1] ?? 0;
-            if ($width > 0 && $height > 0) {
-                $ratio = $width / $height;
-                if ($ratio > 5 || $ratio < 0.2) {
-                    $findings[] = [
-                        'reason' => "image has unusual aspect ratio ({$width}x{$height}) â€” may be cropped banned content",
-                        'severity' => 'medium',
-                    ];
-                }
-                if ($width < 50 || $height < 50) {
-                    $findings[] = [
-                        'reason' => "image is too small ({$width}x{$height}) â€” likely a placeholder or icon, not a real product photo",
-                        'severity' => 'low',
-                    ];
-                }
-            }
-        }
-
-        return $findings;
-    }
-
-    protected static function analyzeFileSize(string $imagePath): array
-    {
-        $findings = [];
-        $size = @filesize($imagePath);
-        if ($size === false) {
-            return $findings;
-        }
-        if ($size > 8 * 1024 * 1024) {
-            $findings[] = [
-                'reason' => 'image file is unusually large (>8MB) â€” possible hidden data or non-image payload',
-                'severity' => 'medium',
-            ];
-        }
-        return $findings;
-    }
-
-    protected static function analyzePixels(string $imagePath): array
-    {
-        $findings = [];
-        if (!function_exists('getimagesize')) {
-            return $findings;
-        }
-        $info = @getimagesize($imagePath);
-        if ($info === false) {
-            return $findings;
-        }
-        $width = $info[0];
-        $height = $info[1];
-        $mime = $info['mime'] ?? '';
-
-        try {
-            $img = match ($mime) {
-                'image/jpeg' => @imagecreatefromjpeg($imagePath),
-                'image/png' => @imagecreatefrompng($imagePath),
-                'image/gif' => @imagecreatefromgif($imagePath),
-                'image/webp' => function_exists('imagecreatefromwebp') ? @imagecreatefromwebp($imagePath) : false,
-                default => false,
-            };
-        } catch (\Throwable $e) {
-            $img = false;
-        }
-
-        if (!$img) {
-            return $findings;
-        }
-
-        $samplePoints = 200;
-        $redDominant = 0;
-        $darkCount = 0;
-        $totalSampled = 0;
-
-        for ($i = 0; $i < $samplePoints; $i++) {
-            $x = mt_rand(0, $width - 1);
-            $y = mt_rand(0, $height - 1);
-            $rgb = imagecolorat($img, $x, $y);
-            $r = ($rgb >> 16) & 0xFF;
-            $g = ($rgb >> 8) & 0xFF;
-            $b = $rgb & 0xFF;
-
-            $totalSampled++;
-
-            if ($r > 150 && $r > $g * 1.5 && $r > $b * 1.5) {
-                $redDominant++;
-            }
-            if ($r < 30 && $g < 30 && $b < 30) {
-                $darkCount++;
-            }
-        }
-
-        
-
-        if ($totalSampled > 0) {
-            $darkPct = $darkCount / $totalSampled;
-            $redPct = $redDominant / $totalSampled;
-
-            if ($redPct > 0.30) {
-                $findings[] = [
-                    'reason' => sprintf('image has high red-dominance (%.0f%%) â€” possible blood/violence content', $redPct * 100),
-                    'severity' => 'high',
-                ];
-            }
-
-            if ($darkPct > 0.70) {
-                $findings[] = [
-                    'reason' => sprintf('image is very dark (%.0f%% near-black pixels) â€” possible hidden content', $darkPct * 100),
-                    'severity' => 'medium',
-                ];
-            }
-        }
-
-        return $findings;
-    }
-
     public static function hashImage(string $path): string
     {
-        if (!file_exists($path)) {
+        if (!is_file($path)) {
             return '';
         }
-        return hash_file('sha256', $path);
+
+        $hash = hash_file('sha256', $path);
+
+        return is_string($hash) ? $hash : '';
     }
 
     public static function perceptualHash(string $path): string
     {
-        if (!function_exists('getimagesize') || !file_exists($path)) {
+        if (
+            !function_exists('getimagesize')
+            || !function_exists('imagecreatetruecolor')
+            || !function_exists('imagecopyresampled')
+            || !function_exists('imagecolorat')
+            || !is_file($path)
+        ) {
             return '';
         }
         $info = @getimagesize($path);
@@ -484,43 +310,6 @@ if (!file_exists($imagePath)) {
             }
         }
         return $distance;
-    }
-
-    protected static function matchesPerceptualBlacklist(string $phash): bool
-    {
-        $blacklisted = \DB::table('blacklisted_images')
-            ->whereNotNull('phash')
-            ->pluck('phash')
-            ->toArray();
-        foreach ($blacklisted as $b) {
-            if (self::hammingDistance($phash, $b) <= 5) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    protected static function getBlacklistedImageHashes(): array
-    {
-        return \DB::table('blacklisted_images')->pluck('image_hash')->toArray();
-    }
-
-    protected static function isExifGpsEnabled(string $path): bool
-    {
-        if (!function_exists('exif_read_data') || !file_exists($path)) {
-            return false;
-        }
-        try {
-            $exif = @exif_read_data($path, 'GPS');
-            return !empty($exif);
-        } catch (\Throwable $e) {
-            return false;
-        }
-    }
-
-    protected static function hasFaceInImage(string $path): bool
-    {
-        return false;
     }
 
     public static function blacklistImage(string $imageHash, string $reason, ?string $phash = null): void
@@ -709,33 +498,55 @@ if (!file_exists($imagePath)) {
         $matchedBrands = [];
 
         foreach (self::BRAND_BLACKLIST as $brand) {
-            if (preg_match('/\b' . preg_quote($brand, '/') . '\b/i', $text)) {
+            if (preg_match('/\\b' . preg_quote($brand, '/') . '\\b/i', $text)) {
                 $matchedBrands[] = $brand;
             }
         }
 
-        $wordCount = str_word_count($product->description ?? '');
-        $isKeywordStuffing = $wordCount > 0
-            && substr_count(strtolower($product->description ?? ''), $product->name) > max(5, $wordCount * 0.1);
+        $counterfeitTerms = ['fake', 'counterfeit', 'replica', 'bootleg', 'knockoff'];
+        $matchedCounterfeitTerms = [];
 
-        if (!empty($matchedBrands) || $isKeywordStuffing) {
-            $reasons = [];
-            if (!empty($matchedBrands)) {
-                $reasons[] = 'unauthorized brand usage (' . implode(', ', array_unique($matchedBrands)) . ')';
+        foreach ($counterfeitTerms as $term) {
+            if (preg_match('/\\b' . preg_quote($term, '/') . '\\b/i', $text)) {
+                $matchedCounterfeitTerms[] = $term;
             }
-            if ($isKeywordStuffing) {
-                $reasons[] = 'possible keyword stuffing';
-            }
-            return [
-                'bucket' => 'automated_bot',
-                'trigger' => 'ip_text_matching',
-                'message' => 'IP/Text scan flagged this listing: ' . implode('; ', $reasons) . '.',
-                'severity' => 'high',
-                'auto_flag' => true,
-            ];
         }
 
-        return null;
+        $description = strtolower($product->description ?? '');
+        $wordCount = str_word_count($description);
+        $productName = strtolower(trim((string) $product->name));
+        $isKeywordStuffing = $wordCount > 0
+            && $productName !== ''
+            && substr_count($description, $productName) > max(5, $wordCount * 0.1);
+
+        $reasons = [];
+
+        if ($matchedCounterfeitTerms !== []) {
+            $brandContext = $matchedBrands !== []
+                ? ' involving brand reference(s): ' . implode(', ', array_unique($matchedBrands))
+                : '';
+            $reasons[] = 'counterfeit-related wording (' . implode(', ', $matchedCounterfeitTerms) . ')' . $brandContext;
+        }
+
+        if ($isKeywordStuffing) {
+            $reasons[] = 'possible keyword stuffing';
+        }
+
+        if ($reasons === []) {
+            // Mentioning a brand is not evidence that a product is counterfeit.
+            return null;
+        }
+
+        return [
+            'bucket' => 'automated_bot',
+            'trigger' => 'ip_text_matching',
+            'message' => 'Listing text requires compliance review: ' . implode('; ', $reasons) . '.',
+            'severity' => 'high',
+            // Text-only brand/counterfeit signals are not sufficient to hide a
+            // listing automatically. Keyword stuffing retains its existing hold.
+            'auto_flag' => $isKeywordStuffing,
+            'manual_review' => $matchedCounterfeitTerms !== [],
+        ];
     }
 
     public static function checkMedicalClaims(Product $product): ?array
@@ -753,7 +564,7 @@ if (!file_exists($imagePath)) {
             return [
                 'bucket' => 'automated_bot',
                 'trigger' => 'medical_claim_violation',
-                'message' => 'Prohibited medical/health claim detected: "' . implode('", "', array_slice($matched, 0, 3)) . '". Listing auto-suspended pending admin review.',
+                'message' => 'Potentially prohibited medical/health claim detected: "' . implode('", "', array_slice($matched, 0, 3)) . '". Admin review is required.',
                 'severity' => 'critical',
                 'auto_flag' => true,
             ];
@@ -838,70 +649,81 @@ if (!file_exists($imagePath)) {
 
     public static function notifyAdmins(Product $product, array $triggers): void
     {
-        $autoFlag = collect($triggers)->contains(fn($t) => $t['auto_flag'] ?? false);
-        $highSeverity = collect($triggers)->contains(fn($t) => in_array($t['severity'] ?? '', ['high', 'critical']));
-        $autoSuspend = collect($triggers)->contains(fn($t) => $t['auto_suspend'] ?? false);
-        $criticalImage = collect($triggers)->firstWhere('trigger', 'image_content_violation')
-            && collect($triggers)->firstWhere('trigger', 'image_content_violation')['severity'] === 'critical';
+        $autoFlag = collect($triggers)->contains(fn ($trigger) => $trigger['auto_flag'] ?? false);
+        $wasAlreadyAutoFlagged = $product->compliance_status === 'auto_flagged';
 
-        $admins = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->get();
+        $admins = User::whereHas('roles', fn ($query) => $query->where('name', 'admin'))->get();
 
-        $summary = collect($triggers)->map(function ($t) {
-            return 'â€¢ [' . strtoupper($t['severity']) . '] ' . $t['message'];
+        $summary = collect($triggers)->map(function ($trigger) {
+            return '[' . strtoupper($trigger['severity'] ?? 'info') . '] '
+                . ($trigger['message'] ?? 'Compliance review requested.');
         })->implode("\n");
 
         $title = 'Automated Compliance Alert: ' . $product->name;
 
         if ($autoFlag) {
             $imageTrigger = collect($triggers)->firstWhere('trigger', 'image_content_violation');
-            $flagReason = 'Automated compliance scan flagged this product. Triggers: ' . collect($triggers)->pluck('trigger')->implode(', ');
+            $flagReason = 'Automated compliance scan flagged this product for admin review. Triggers: '
+                . collect($triggers)->pluck('trigger')->filter()->implode(', ');
             $adminNotes = $summary;
+
             if ($imageTrigger && !empty($imageTrigger['reasons'])) {
-                $adminNotes .= "\n\nImage scan findings:\nâ€¢ " . implode("\nâ€¢ ", $imageTrigger['reasons']);
+                $adminNotes .= "\n\nImage scan findings:\n- "
+                    . implode("\n- ", $imageTrigger['reasons']);
             }
 
             $product->update([
                 'compliance_status' => 'auto_flagged',
                 'flagged_reason' => $flagReason,
                 'admin_notes' => $adminNotes,
-                'flagged_at' => now(),
+                'flagged_at' => $wasAlreadyAutoFlagged && $product->flagged_at
+                    ? $product->flagged_at
+                    : now(),
             ]);
 
+            // A product-level finding must never change the seller account state.
+            // Seller suspension remains an explicit admin action in ComplianceController.
             $sellerUser = $product->sellerUser;
 
-            if ($autoSuspend && $sellerUser) {
-                $sellerUser->update([
-                    'status' => User::STATUS_SUSPENDED,
-                    'suspended_at' => now(),
-                ]);
-
+            if ($sellerUser && !$wasAlreadyAutoFlagged) {
                 Notification::create([
                     'user_id' => $sellerUser->id,
-                    'title' => 'CRITICAL: Account Auto-Suspended',
-                    'message' => "Your seller account has been automatically suspended and the product \"{$product->name}\" has been hidden from buyers because the image scan detected critical violations (nudity, violence, drugs, CSAM, or other illegal content). Please contact admin support immediately.",
-                    'type' => 'account',
+                    'title' => 'Product Temporarily Hidden for Compliance Review',
+                    'message' => "Your product \"{$product->name}\" has been placed on hold while an administrator reviews an automated compliance finding. Your seller account remains active. You will be notified after the review.",
+                    'type' => 'product',
+                    'link' => route('seller.products.edit', $product),
                 ]);
             }
         }
 
         foreach ($admins as $admin) {
             $imageTrigger = collect($triggers)->firstWhere('trigger', 'image_content_violation');
-            $msg = "Product \"{$product->name}\" triggered " . count($triggers) . " compliance check(s):\n\n" . $summary;
+            $message = "Product \"{$product->name}\" triggered " . count($triggers)
+                . " compliance check(s):\n\n" . $summary;
+
             if ($imageTrigger && !empty($imageTrigger['reasons'])) {
-                $msg .= "\n\nImage scan findings:\nâ€¢ " . implode("\nâ€¢ ", $imageTrigger['reasons']);
+                $message .= "\n\nImage scan findings:\n- "
+                    . implode("\n- ", $imageTrigger['reasons']);
             }
-            $msg .= "\n\n" . ($autoSuspend ? 'ðŸš¨ SELLER AUTO-SUSPENDED (critical image violation).' : ($autoFlag ? 'âš  Product has been auto-flagged for review.' : ''));
+
+            $message .= $autoFlag
+                ? "\n\nThe product was automatically placed on hold for admin review. The seller account was not suspended."
+                : "\n\nManual review requested. No automatic product or seller status change was made.";
 
             Notification::create([
                 'user_id' => $admin->id,
                 'title' => $title,
-                'message' => $msg,
+                'message' => $message,
                 'type' => 'compliance_alert',
                 'link' => route('admin.compliance.show', $product),
             ]);
         }
 
-        Log::info("Compliance alert for product #{$product->id} ({$product->name}): " . count($triggers) . " trigger(s)" . ($autoSuspend ? ' [SELLER AUTO-SUSPENDED]' : ''));
+        Log::info(
+            "Compliance alert for product #{$product->id} ({$product->name}): "
+            . count($triggers) . ' trigger(s)'
+            . ($autoFlag ? ' [PRODUCT AUTO-FLAGGED]' : ' [MANUAL REVIEW ONLY]')
+        );
     }
 
     public static function recordPriceSnapshot(Product $product): void
@@ -921,7 +743,6 @@ if (!file_exists($imagePath)) {
             DB::table('product_price_history')->insert([
                 'product_id' => $product->id,
                 'price_minor' => $currentPriceMinor,
-
                 'changed_at' => now(),
                 'created_at' => now(),
                 'updated_at' => now(),

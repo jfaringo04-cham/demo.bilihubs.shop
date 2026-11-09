@@ -15,19 +15,29 @@
       <i class="bi bi-calendar-x me-2"></i>
       <strong>Seller on Vacation</strong>
       <div class="mt-1">
-        Your cart contains products from a seller who is currently
-        on vacation. Remove those products to continue checkout,
-        or return when the seller is available.
+        Some products are from a seller who is currently on vacation.
+        Those products cannot be selected, but you can still check out other available items.
       </div>
     </div>
   @endif
 
   @if($cartItems->count() > 0)
   <div class="card border-0 shadow-sm rounded-2">
+    <form id="cart-selection-form" action="{{ route('cart.checkoutSelected') }}" method="POST" class="d-none">
+      @csrf
+    </form>
+
     <div class="table-responsive">
       <table class="table align-middle mb-0">
         <thead class="table-light">
           <tr>
+            <th class="border-0 text-center" style="width: 52px;">
+              <input
+                type="checkbox"
+                class="form-check-input"
+                id="select-all-cart-items"
+                aria-label="Select all available cart items">
+            </th>
             <th class="border-0">Product</th>
             <th class="border-0">Price</th>
             <th class="border-0">Quantity</th>
@@ -37,7 +47,39 @@
         </thead>
         <tbody>
           @foreach($cartItems as $item)
+          @php
+            $availableStock = $item->product ? (int) $item->product->stock : 0;
+
+            if ($item->variation) {
+              $availableStock = min($availableStock, (int) $item->variation->stock);
+            }
+
+            if ($item->size_id && $item->product) {
+              $selectedSize = $item->product->sizes->firstWhere('id', $item->size_id);
+              $availableStock = $selectedSize
+                ? min($availableStock, (int) ($selectedSize->pivot->stock ?? 0))
+                : 0;
+            }
+
+            $sellerOnVacation = $item->product?->seller?->isOnVacation() ?? false;
+            $productUnavailable = !$item->product || !$item->product->isPublished() || !$item->product->seller_id;
+            $itemUnavailable = $sellerOnVacation || $productUnavailable || $availableStock < (int) $item->quantity;
+          @endphp
           <tr>
+            <td class="text-center">
+              <input
+                type="checkbox"
+                class="form-check-input cart-item-select"
+                name="cart_item_ids[]"
+                value="{{ $item->id }}"
+                form="cart-selection-form"
+                data-subtotal-minor="{{ $item->subtotal_minor }}"
+                aria-label="Select {{ $item->product?->name ?? 'cart item' }}"
+                {{ $itemUnavailable ? 'disabled' : '' }}>
+              @if($itemUnavailable)
+                <small class="d-block text-muted mt-1" style="font-size: 0.7rem;">Unavailable</small>
+              @endif
+            </td>
             <td>
               <div class="d-flex align-items-center">
                 @if($item->variation)
@@ -86,25 +128,6 @@
             <td class="text-muted">&#8369;{{ number_format(($item->variation ? $item->variation->effective_price_minor : $item->product->effective_price_minor) / 100, 2) }}</td>
             <td>
 
-              @php
-              $availableStock = (int) $item->product->stock;
-
-              if ($item->variation) {
-              $availableStock = min(
-              $availableStock,
-              (int) $item->variation->stock
-              );
-              }
-
-              if ($item->size_id) {
-              $selectedSize = $item->product->sizes
-              ->firstWhere('id', $item->size_id);
-
-              $availableStock = $selectedSize
-              ? min($availableStock, (int) ($selectedSize->pivot->stock ?? 0))
-              : 0;
-              }
-              @endphp
               <!-- #region -->
               <form action="{{ route('cart.update', $item) }}" method="POST" class="d-inline">
                 @csrf
@@ -216,22 +239,28 @@
     @endif
 
     <div class="card-footer bg-white border-0 py-3">
-      <div class="d-flex justify-content-between align-items-center">
-        <h4 class="mb-0 fw-bold">Total: <span class="text-sky-500">&#8369;{{ number_format($total, 2) }}</span></h4>
-        @if($hasVacationItems)
-          <button type="button"
-                  class="btn btn-secondary rounded-xl px-4"
-                  disabled
-                  title="Remove unavailable products before checkout">
-            <i class="bi bi-lock me-1"></i>
-            Checkout Unavailable
-          </button>
-        @else
-          <a href="{{ route('checkout.index') }}"
-             class="btn btn-primary rounded-xl px-4">
-            Proceed to Checkout
-          </a>
-        @endif
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+        <div>
+          <div class="fw-semibold">
+            Cart total:
+            <span class="text-sky-500">&#8369;{{ number_format($total, 2) }}</span>
+          </div>
+          <div class="mt-1">
+            Selected subtotal:
+            <strong id="selected-cart-total">&#8369;0.00</strong>
+            <small class="text-muted ms-1" id="selected-cart-count">0 items selected</small>
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          form="cart-selection-form"
+          id="checkout-selected-button"
+          class="btn btn-primary rounded-xl px-4"
+          disabled>
+          <i class="bi bi-bag-check me-1"></i>
+          Checkout Selected
+        </button>
       </div>
     </div>
   </div>
@@ -247,4 +276,51 @@
   </div>
   @endif
 </div>
+@if($cartItems->isNotEmpty())
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const selectAll = document.getElementById('select-all-cart-items');
+    const checkboxes = Array.from(document.querySelectorAll('.cart-item-select:not(:disabled)'));
+    const checkoutButton = document.getElementById('checkout-selected-button');
+    const selectedTotal = document.getElementById('selected-cart-total');
+    const selectedCount = document.getElementById('selected-cart-count');
+
+    if (!selectAll || !checkoutButton || !selectedTotal || !selectedCount) {
+        return;
+    }
+
+    const formatPeso = (minorUnits) => '₱' + (minorUnits / 100).toLocaleString('en-PH', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+
+    const updateSelectionSummary = () => {
+        const selected = checkboxes.filter((checkbox) => checkbox.checked);
+        const totalMinor = selected.reduce((sum, checkbox) => {
+            return sum + Number(checkbox.dataset.subtotalMinor || 0);
+        }, 0);
+
+        selectedTotal.textContent = formatPeso(totalMinor);
+        selectedCount.textContent = selected.length + (selected.length === 1 ? ' item selected' : ' items selected');
+        checkoutButton.disabled = selected.length === 0;
+        selectAll.checked = checkboxes.length > 0 && selected.length === checkboxes.length;
+        selectAll.indeterminate = selected.length > 0 && selected.length < checkboxes.length;
+        selectAll.disabled = checkboxes.length === 0;
+    };
+
+    selectAll.addEventListener('change', function () {
+        checkboxes.forEach((checkbox) => {
+            checkbox.checked = selectAll.checked;
+        });
+        updateSelectionSummary();
+    });
+
+    checkboxes.forEach((checkbox) => {
+        checkbox.addEventListener('change', updateSelectionSummary);
+    });
+
+    updateSelectionSummary();
+});
+</script>
+@endif
 @endsection
