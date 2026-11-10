@@ -10,6 +10,7 @@ use App\Models\Voucher;
 use App\Services\ComplianceMonitor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class ProductController extends Controller
 {
@@ -185,22 +186,37 @@ class ProductController extends Controller
 
             if (Auth::check()) {
                 $userId = (int) Auth::id();
+                $claimedVoucherIds = DB::table('buyer_voucher_claims')
+                    ->where('user_id', $userId)
+                    ->pluck('voucher_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all();
 
-                $availableSellerVouchers =
-                    $availableSellerVouchers
-                        ->filter(function ($voucher) use ($userId) {
-                            if ($voucher->per_user_limit === null) {
-                                return true;
-                            }
+                $availableSellerVouchers = $availableSellerVouchers
+                    ->filter(function ($voucher) use ($userId) {
+                        if ($voucher->per_user_limit === null) {
+                            return true;
+                        }
 
-                            $used = $voucher->redemptions()
-                                ->where('user_id', $userId)
-                                ->where('status', 'redeemed')
-                                ->count();
+                        $activeUses = $voucher->redemptions()
+                            ->where('user_id', $userId)
+                            ->whereIn(
+                                'status',
+                                \App\Models\VoucherRedemption::ACTIVE_STATUSES
+                            )
+                            ->count();
 
-                            return $used < (int) $voucher->per_user_limit;
-                        })
-                        ->values();
+                        return $activeUses < (int) $voucher->per_user_limit;
+                    })
+                    ->map(function ($voucher) use ($claimedVoucherIds) {
+                        $voucher->setAttribute(
+                            'claimed_by_buyer',
+                            in_array((int) $voucher->id, $claimedVoucherIds, true)
+                        );
+
+                        return $voucher;
+                    })
+                    ->values();
             }
         }
 

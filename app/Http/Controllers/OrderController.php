@@ -274,46 +274,11 @@ class OrderController extends Controller
                         }
                     }
 
-                    /*
-|--------------------------------------------------------------------------
-| REVERSE VOUCHER REDEMPTION
-|--------------------------------------------------------------------------
-|
-| Restore one voucher usage when the buyer successfully cancels
-| an order. Only reverse an active redeemed record.
-|
-*/
-                    $redemption = \App\Models\VoucherRedemption::query()
-                        ->where('order_id', $lockedOrder->id)
-                        ->lockForUpdate()
-                        ->first();
-
-                    if ($redemption && $redemption->status === 'redeemed') {
-                        $lockedVoucher = \App\Models\Voucher::query()
-                            ->whereKey($redemption->voucher_id)
-                            ->lockForUpdate()
-                            ->first();
-
-                        if (!$lockedVoucher) {
-                            throw new \RuntimeException(
-                                'The voucher associated with this order could not be found.'
-                            );
-                        }
-
-                        // Mark redemption as reversed first, while holding its row lock.
-                        $redemption->update([
-                            'status' => 'reversed',
-                            'reversed_at' => now(),
-                        ]);
-
-                        // Restore one global voucher usage without allowing a negative count.
-                        $lockedVoucher->usage_count = max(
-                            0,
-                            (int) $lockedVoucher->usage_count - 1
-                        );
-
-                        $lockedVoucher->save();
-                    }
+                    // Reverse active voucher usage exactly once as part of
+                    // the order-cancellation transaction.
+                    app(\App\Services\VoucherRedemptionService::class)->reverseForOrder(
+                        (int) $lockedOrder->id
+                    );
 
                     /*
                 |--------------------------------------------------------------------------

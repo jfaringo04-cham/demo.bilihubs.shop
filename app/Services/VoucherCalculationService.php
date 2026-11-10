@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Voucher;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class VoucherCalculationService
@@ -31,6 +32,19 @@ class VoucherCalculationService
             throw ValidationException::withMessages(['voucher_code' => 'This voucher is invalid or not currently available.']);
         }
 
+        // Claiming is required for every buyer-facing entry point. Keeping
+        // this rule here prevents web/mobile checkout paths from diverging.
+        $hasClaim = DB::table('buyer_voucher_claims')
+            ->where('voucher_id', $voucher->id)
+            ->where('user_id', $userId)
+            ->exists();
+
+        if (!$hasClaim) {
+            throw ValidationException::withMessages([
+                'voucher_code' => 'Please claim this voucher before using it.',
+            ]);
+        }
+
         if (!in_array($voucher->owner_type, ['seller', 'platform'], true)) {
             throw ValidationException::withMessages(['voucher_code' => 'Unsupported voucher owner.']);
         }
@@ -43,9 +57,10 @@ class VoucherCalculationService
             throw ValidationException::withMessages(['voucher_code' => 'This voucher has reached its usage limit.']);
         }
 
+        // Active reservations, including uncollected COD orders, consume the buyer's limit.
         $usedByBuyer = $voucher->redemptions()
             ->where('user_id', $userId)
-            ->where('status', 'redeemed')
+            ->whereIn('status', \App\Models\VoucherRedemption::ACTIVE_STATUSES)
             ->count();
         if ($voucher->per_user_limit !== null && $usedByBuyer >= $voucher->per_user_limit) {
             throw ValidationException::withMessages(['voucher_code' => 'You have reached your usage limit for this voucher.']);
@@ -115,17 +130,49 @@ class VoucherCalculationService
             throw ValidationException::withMessages(['voucher_code' => 'This voucher provides no discount for these items.']);
         }
 
-        // Proportional allocation in centavos; last item receives remainder.
+        // Largest-remainder allocation keeps the total exact without ever
+        // assigning more discount to an item than that item's eligible value.
         $allocated = 0;
-        $lastIndex = count($eligible) - 1;
-        foreach ($eligible as $i => &$row) {
-            $part = $i === $lastIndex
-                ? $discount - $allocated
-                : intdiv($discount * $row['eligible_subtotal_minor'], $subtotal);
-            $row['discount_minor'] = $part;
-            $allocated += $part;
+        $remainders = [];
+
+        foreach ($eligible as $index => &$row) {
+            $numerator = $discount * $row['eligible_subtotal_minor'];
+            $baseShare = intdiv($numerator, $subtotal);
+
+            $row['discount_minor'] = $baseShare;
+            $remainders[$index] = $numerator % $subtotal;
+            $allocated += $baseShare;
         }
         unset($row);
+
+        $remaining = $discount - $allocated;
+        $remainderOrder = array_keys($eligible);
+
+        usort($remainderOrder, function (int $left, int $right) use ($remainders): int {
+            $byRemainder = $remainders[$right] <=> $remainders[$left];
+
+            return $byRemainder !== 0
+                ? $byRemainder
+                : ($left <=> $right);
+        });
+
+        foreach ($remainderOrder as $index) {
+            if ($remaining <= 0) {
+                break;
+            }
+
+            if (
+                $remainders[$index] > 0 &&
+                $eligible[$index]['discount_minor'] < $eligible[$index]['eligible_subtotal_minor']
+            ) {
+                $eligible[$index]['discount_minor']++;
+                $remaining--;
+            }
+        }
+
+        if ($remaining !== 0) {
+            throw new \LogicException('Voucher discount could not be allocated safely.');
+        }
 
         $isSellerFunded = $voucher->owner_type === 'seller';
         return [

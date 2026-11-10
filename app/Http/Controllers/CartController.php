@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Models\Voucher;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class CartController extends Controller
 {
@@ -30,7 +31,7 @@ class CartController extends Controller
 
         $total = $totalMinor / 100;
 
-        $availableSellerVouchers = collect();
+        $availableVouchers = collect();
 
         if ($cartItems->isNotEmpty()) {
             $sellerIds = $cartItems
@@ -40,107 +41,113 @@ class CartController extends Controller
                 ->unique()
                 ->values();
 
-            if ($sellerIds->isNotEmpty()) {
-                $vouchers = Voucher::query()
-                    ->with([
-                        'seller',
-                        'products:id',
-                    ])
-                    ->currentlyActive()
-                    ->where('owner_type', 'seller')
-                    ->whereIn('seller_id', $sellerIds)
-                    ->whereHas('seller', function ($query) {
-                        $query->where('status', 'approved');
-                    })
-                    ->where(function ($query) {
-                        $query
-                            ->whereNull('usage_limit')
-                            ->orWhereColumn(
-                                'usage_count',
-                                '<',
-                                'usage_limit'
-                            );
-                    })
-                    ->orderBy('ends_at')
-                    ->orderBy('id')
-                    ->get();
+            $userId = (int) Auth::id();
 
-                $userId = (int) Auth::id();
+            $claimedVoucherIds = DB::table('buyer_voucher_claims')
+                ->where('user_id', $userId)
+                ->pluck('voucher_id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
 
-                $availableSellerVouchers = $vouchers
-                    ->filter(function ($voucher) use ($userId) {
-                        if ($voucher->per_user_limit === null) {
-                            return true;
-                        }
+            $vouchers = Voucher::query()
+                ->with(['seller', 'products:id'])
+                ->currentlyActive()
+                ->where(function ($query) use ($sellerIds) {
+                    $query->where('owner_type', 'platform');
 
-                        $used = $voucher->redemptions()
-                            ->where('user_id', $userId)
-                            ->where('status', 'redeemed')
-                            ->count();
+                    if ($sellerIds->isNotEmpty()) {
+                        $query->orWhere(function ($sellerQuery) use ($sellerIds) {
+                            $sellerQuery
+                                ->where('owner_type', 'seller')
+                                ->whereIn('seller_id', $sellerIds)
+                                ->whereHas('seller', function ($seller) {
+                                    $seller->where('status', 'approved');
+                                });
+                        });
+                    }
+                })
+                ->where(function ($query) {
+                    $query
+                        ->whereNull('usage_limit')
+                        ->orWhereColumn('usage_count', '<', 'usage_limit');
+                })
+                ->orderBy('ends_at')
+                ->orderBy('id')
+                ->get();
 
-                        return $used < (int) $voucher->per_user_limit;
-                    })
-                    ->map(function ($voucher) use ($cartItems) {
-                        $eligibleItems = $cartItems
-                            ->filter(
-                                fn ($item) =>
-                                    $item->product &&
-                                    (int) $item->product->seller_id ===
-                                        (int) $voucher->seller_id
-                            );
+            $availableVouchers = $vouchers
+                ->filter(function ($voucher) use ($userId) {
+                    if ($voucher->per_user_limit === null) {
+                        return true;
+                    }
 
-                        if ($voucher->product_scope === 'selected') {
-                            $allowedProductIds = $voucher->products
-                                ->pluck('id')
-                                ->map(fn ($id) => (int) $id)
-                                ->all();
+                    $activeUses = $voucher->redemptions()
+                        ->where('user_id', $userId)
+                        ->whereIn(
+                            'status',
+                            \App\Models\VoucherRedemption::ACTIVE_STATUSES
+                        )
+                        ->count();
 
-                            $eligibleItems = $eligibleItems
-                                ->filter(
-                                    fn ($item) =>
-                                        in_array(
-                                            (int) $item->product_id,
-                                            $allowedProductIds,
-                                            true
-                                        )
-                                );
-                        } elseif ($voucher->product_scope !== 'all') {
-                            return null;
-                        }
+                    return $activeUses < (int) $voucher->per_user_limit;
+                })
+                ->map(function ($voucher) use ($cartItems, $claimedVoucherIds) {
+                    $eligibleItems = $cartItems;
 
-                        $eligibleSubtotalMinor = $eligibleItems
-                            ->sum(function ($item) {
-                                $priceMinor = $item->variation
-                                    ? (int) $item->variation
-                                        ->effective_price_minor
-                                    : (int) $item->product
-                                        ->effective_price_minor;
-
-                                return $priceMinor *
-                                    (int) $item->quantity;
-                            });
-
-                        if ($eligibleSubtotalMinor <= 0) {
-                            return null;
-                        }
-
-                        $minimumSpendMinor =
-                            (int) $voucher->minimum_spend_minor;
-
-                        $voucher->setAttribute(
-                            'remaining_spend_minor',
-                            max(
-                                0,
-                                $minimumSpendMinor -
-                                    $eligibleSubtotalMinor
-                            )
+                    if ($voucher->owner_type === 'seller') {
+                        $eligibleItems = $eligibleItems->filter(
+                            fn ($item) =>
+                                $item->product &&
+                                (int) $item->product->seller_id === (int) $voucher->seller_id
                         );
+                    }
 
-                        return $voucher;
-                    })
-                    ->filter()
-                    ->values();
-            }
+                    if ($voucher->product_scope === 'selected') {
+                        $allowedProductIds = $voucher->products
+                            ->pluck('id')
+                            ->map(fn ($id) => (int) $id)
+                            ->all();
+
+                        $eligibleItems = $eligibleItems->filter(
+                            fn ($item) =>
+                                $item->product &&
+                                in_array((int) $item->product_id, $allowedProductIds, true)
+                        );
+                    } elseif ($voucher->product_scope !== 'all') {
+                        return null;
+                    }
+
+                    $eligibleSubtotalMinor = $eligibleItems->sum(function ($item) {
+                        if (!$item->product) {
+                            return 0;
+                        }
+
+                        $priceMinor = $item->variation
+                            ? (int) $item->variation->effective_price_minor
+                            : (int) $item->product->effective_price_minor;
+
+                        return $priceMinor * (int) $item->quantity;
+                    });
+
+                    if ($eligibleSubtotalMinor <= 0) {
+                        return null;
+                    }
+
+                    $minimumSpendMinor = (int) $voucher->minimum_spend_minor;
+
+                    $voucher->setAttribute(
+                        'remaining_spend_minor',
+                        max(0, $minimumSpendMinor - $eligibleSubtotalMinor)
+                    );
+                    $voucher->setAttribute(
+                        'claimed_by_buyer',
+                        in_array((int) $voucher->id, $claimedVoucherIds, true)
+                    );
+
+                    return $voucher;
+                })
+                ->filter()
+                ->values();
         }
 
         return view(
@@ -148,7 +155,7 @@ class CartController extends Controller
             compact(
                 'cartItems',
                 'total',
-                'availableSellerVouchers'
+                'availableVouchers'
             )
         );
     }

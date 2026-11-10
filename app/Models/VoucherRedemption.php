@@ -7,6 +7,15 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class VoucherRedemption extends Model
 {
+    public const STATUS_RESERVED = 'reserved';
+    public const STATUS_REDEEMED = 'redeemed';
+    public const STATUS_REVERSED = 'reversed';
+
+    public const ACTIVE_STATUSES = [
+        self::STATUS_RESERVED,
+        self::STATUS_REDEEMED,
+    ];
+
     protected $fillable = [
         'voucher_id',
         'user_id',

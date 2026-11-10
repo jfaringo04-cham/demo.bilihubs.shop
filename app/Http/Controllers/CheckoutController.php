@@ -1313,22 +1313,17 @@ class CheckoutController extends Controller
 
             } // End foreach sellers
 
-            // Exactly one redemption for the parent order. Use an existing seller order
-            // as the FK anchor even if seller_order_id is NOT NULL in this schema.
+            // The web checkout supports COD only. Keep the voucher reserved
+            // until the rider records full collection of the parent order.
             if ($voucherResult && $lockedVoucher) {
-                \App\Models\VoucherRedemption::create([
-                    'voucher_id' => $lockedVoucher->id,
-                    'user_id' => Auth::id(),
-                    'order_id' => $order->id,
-                    'seller_order_id' => $firstSellerOrderId,
-                    'voucher_code_snapshot' => $voucherResult['code'],
-                    'funded_by' => $voucherResult['funded_by'],
-                    'discount_minor' => $voucherDiscountMinor,
-                    'status' => 'redeemed',
-                    'redeemed_at' => now(),
-                ]);
-
-                $lockedVoucher->increment('usage_count');
+                app(\App\Services\VoucherRedemptionService::class)->recordForOrder(
+                    (int) $order->id,
+                    $firstSellerOrderId ? (int) $firstSellerOrderId : null,
+                    (int) $lockedVoucher->id,
+                    (int) Auth::id(),
+                    $voucherResult,
+                    true
+                );
             }
 
             // Create one shipment per seller order within the checkout transaction.
