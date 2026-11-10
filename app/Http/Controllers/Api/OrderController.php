@@ -43,18 +43,17 @@ class OrderController extends Controller
         $orders = $query->paginate($perPage);
 
         return response()->json([
-    'data' => collect($orders->items())->map(function ($order) {
-        return $this->formatOrder($order);
-    })->values(),
-    'meta' => [
-        'current_page' => $orders->currentPage(),
-        'last_page' => $orders->lastPage(),
-        'per_page' => $orders->perPage(),
-        'total' => $orders->total(),
-    ],
-]);
+            'data' => collect($orders->items())->map(function ($order) {
+                return $this->formatOrder($order);
+            })->values(),
+            'meta' => [
+                'current_page' => $orders->currentPage(),
+                'last_page' => $orders->lastPage(),
+                'per_page' => $orders->perPage(),
+                'total' => $orders->total(),
+            ],
+        ]);
     }
-
 
     public function store(Request $request)
     {
@@ -215,7 +214,6 @@ class OrderController extends Controller
         DB::beginTransaction();
 
         try {
-
             $voucherCode = trim((string) $request->input('voucher_code', ''));
 
             $voucherResult = null;
@@ -236,6 +234,18 @@ class OrderController extends Controller
                 if (!$lockedVoucher) {
                     throw ValidationException::withMessages([
                         'voucher_code' => 'The selected voucher is no longer available.',
+                    ]);
+                }
+
+                // Require the authenticated buyer to claim this voucher before checkout.
+                $hasClaimedVoucher = DB::table('buyer_voucher_claims')
+                    ->where('voucher_id', $lockedVoucher->id)
+                    ->where('user_id', Auth::id())
+                    ->exists();
+
+                if (!$hasClaimedVoucher) {
+                    throw ValidationException::withMessages([
+                        'voucher_code' => 'Please claim this voucher before using it.',
                     ]);
                 }
 
@@ -282,8 +292,6 @@ class OrderController extends Controller
                 + $shippingFeeMinor
                 + $serviceFeeMinor
                 - $voucherDiscountMinor;
-
-
 
             $order = Order::create([
                 'user_id' => Auth::id(),
@@ -332,7 +340,6 @@ class OrderController extends Controller
 
             foreach ($itemsBySeller as $sellerId => $sellerItems) {
                 $sellerIndex++;
-
 
                 $sellerSubtotalMinor = (int) $sellerItems->sum('subtotal_minor');
 
@@ -401,7 +408,6 @@ class OrderController extends Controller
                 if ($firstSellerOrderId === null) {
                     $firstSellerOrderId = $sellerOrder->id;
                 }
-
 
                 foreach ($sellerItems as $item) {
                     $product = Product::find($item['product_id']);
@@ -566,7 +572,6 @@ class OrderController extends Controller
         }
     }
 
-
     public function show(Order $order)
     {
         if ($order->user_id !== Auth::id()) {
@@ -625,15 +630,15 @@ class OrderController extends Controller
                     ->get();
 
                 /*
-            |--------------------------------------------------------------------------
-            | PHYSICAL CUSTODY GUARD
-            |--------------------------------------------------------------------------
-            |
-            | Once the parcel has already been physically collected by a rider
-            | or entered the logistics flow, normal buyer cancellation is no
-            | longer allowed.
-            |
-            */
+                |--------------------------------------------------------------------------
+                | PHYSICAL CUSTODY GUARD
+                |--------------------------------------------------------------------------
+                |
+                | Once the parcel has already been physically collected by a rider
+                | or entered the logistics flow, normal buyer cancellation is no
+                | longer allowed.
+                |
+                */
                 foreach ($shipments as $shipment) {
                     if (
                         in_array(
@@ -662,14 +667,14 @@ class OrderController extends Controller
                 }
 
                 /*
-            |--------------------------------------------------------------------------
-            | RELEASE RESERVED RIDER CAPACITY
-            |--------------------------------------------------------------------------
-            |
-            | A rider assignment reserves one capacity slot. If cancellation
-            | happens before physical pickup, release the slot exactly once.
-            |
-            */
+                |--------------------------------------------------------------------------
+                | RELEASE RESERVED RIDER CAPACITY
+                |--------------------------------------------------------------------------
+                |
+                | A rider assignment reserves one capacity slot. If cancellation
+                | happens before physical pickup, release the slot exactly once.
+                |
+                */
                 foreach ($shipments as $shipment) {
                     $riderIds = collect([
                         $shipment->pickup_rider_id,
@@ -724,10 +729,10 @@ class OrderController extends Controller
                 }
 
                 /*
-            |--------------------------------------------------------------------------
-            | RESTORE INVENTORY
-            |--------------------------------------------------------------------------
-            */
+                |--------------------------------------------------------------------------
+                | RESTORE INVENTORY
+                |--------------------------------------------------------------------------
+                */
                 $lockedOrder->loadMissing([
                     'items.product',
                     'items.variation',
@@ -776,10 +781,10 @@ class OrderController extends Controller
                 }
 
                 /*
-            |--------------------------------------------------------------------------
-            | KEEP ALL ORDER LEVELS IN SYNC
-            |--------------------------------------------------------------------------
-            */
+                |--------------------------------------------------------------------------
+                | KEEP ALL ORDER LEVELS IN SYNC
+                |--------------------------------------------------------------------------
+                */
                 $lockedOrder->sellerOrders()->update([
                     'status' => 'cancelled',
                 ]);
@@ -861,138 +866,134 @@ class OrderController extends Controller
     }
 
     private function formatOrder(Order $order): array
-{
-    $order->loadMissing([
-        'items.product',
-        'items.variation',
-        'items.size',
-        'sellerOrders.seller',
-        'sellerOrders.shipment.rider',
-        'rider',
-    ]);
+    {
+        $order->loadMissing([
+            'items.product',
+            'items.variation',
+            'items.size',
+            'sellerOrders.seller',
+            'sellerOrders.shipment.rider',
+            'rider',
+        ]);
 
-    return [
-        'id' => $order->id,
-        'order_number' => $order->order_number,
-        'status' => $order->status,
-        'delivery_status' => $order->delivery_status,
-        'payment_method' => $order->payment_method,
-        'payment_status' => $order->payment_status,
+        return [
+            'id' => $order->id,
+            'order_number' => $order->order_number,
+            'status' => $order->status,
+            'delivery_status' => $order->delivery_status,
+            'payment_method' => $order->payment_method,
+            'payment_status' => $order->payment_status,
 
-        'subtotal' => $order->subtotal_minor / 100,
-        'shipping_fee' => $order->shipping_minor / 100,
+            'subtotal' => $order->subtotal_minor / 100,
+            'shipping_fee' => $order->shipping_minor / 100,
 
-        // Platform Service Fee: 3% of product subtotal before voucher discounts.
-        'service_fee' => (
-            $order->service_fee_minor ?? 0
-        ) / 100,
+            // Platform Service Fee: 3% of product subtotal before voucher discounts.
+            'service_fee' => (
+                $order->service_fee_minor ?? 0
+            ) / 100,
 
-        // Voucher discount breakdown.
-        'discount' => (
-            $order->discount_minor ?? 0
-        ) / 100,
-        'seller_discount' => (
-            $order->seller_discount_minor ?? 0
-        ) / 100,
-        'platform_discount' => (
-            $order->platform_discount_minor ?? 0
-        ) / 100,
+            // Voucher discount breakdown.
+            'discount' => (
+                $order->discount_minor ?? 0
+            ) / 100,
+            'seller_discount' => (
+                $order->seller_discount_minor ?? 0
+            ) / 100,
+            'platform_discount' => (
+                $order->platform_discount_minor ?? 0
+            ) / 100,
 
-        'total' => $order->total_minor / 100,
-        'notes' => $order->notes,
-        'shipping_address' => $order->shipping_address,
-        'created_at' => $order->created_at?->toISOString(),
-        'confirmed_at' => $order->confirmed_at?->toISOString(),
-        'delivered_at' => $order->delivered_at?->toISOString(),
+            'total' => $order->total_minor / 100,
+            'notes' => $order->notes,
+            'shipping_address' => $order->shipping_address,
+            'created_at' => $order->created_at?->toISOString(),
+            'confirmed_at' => $order->confirmed_at?->toISOString(),
+            'delivered_at' => $order->delivered_at?->toISOString(),
 
-        'address' => [
-            'full_address' => collect($order->shipping_address)
-                ->only([
-                    'address_line1',
-                    'address_line2',
-                    'barangay',
-                    'city',
-                    'province',
-                    'postal_code',
-                    'country',
-                ])
-                ->filter()
-                ->implode(', '),
-        ],
+            'address' => [
+                'full_address' => collect($order->shipping_address)
+                    ->only([
+                        'address_line1',
+                        'address_line2',
+                        'barangay',
+                        'city',
+                        'province',
+                        'postal_code',
+                        'country',
+                    ])
+                    ->filter()
+                    ->implode(', '),
+            ],
 
-        'items' => $order->items->map(function ($item) {
-            return [
-                'id' => $item->id,
-                'product_id' => $item->product_id,
-                'product_name' => $item->product?->name ?? 'Unknown',
-                'product_image' => $item->product?->thumbnail
-                    ?? $item->product?->image,
-                'variation_name' => $item->variation?->name,
-                'size_name' => $item->size?->name,
-                'quantity' => $item->quantity,
-                'price' => $item->price_minor / 100,
-                'subtotal' => $item->subtotal_minor / 100,
+            'items' => $order->items->map(function ($item) {
+                return [
+                    'id' => $item->id,
+                    'product_id' => $item->product_id,
+                    'product_name' => $item->product?->name ?? 'Unknown',
+                    'product_image' => $item->product?->thumbnail
+                        ?? $item->product?->image,
+                    'variation_name' => $item->variation?->name,
+                    'size_name' => $item->size?->name,
+                    'quantity' => $item->quantity,
+                    'price' => $item->price_minor / 100,
+                    'subtotal' => $item->subtotal_minor / 100,
 
-                // Voucher discount breakdown.
-                'discount' => ($item->discount_minor ?? 0) / 100,
-                'seller_discount' => ($item->seller_discount_minor ?? 0) / 100,
-                'platform_discount' => ($item->platform_discount_minor ?? 0) / 100,
-            ];
-        }),
+                    // Voucher discount breakdown.
+                    'discount' => ($item->discount_minor ?? 0) / 100,
+                    'seller_discount' => ($item->seller_discount_minor ?? 0) / 100,
+                    'platform_discount' => ($item->platform_discount_minor ?? 0) / 100,
+                ];
+            }),
 
-        'seller_orders' => $order->sellerOrders->map(function ($sellerOrder) {
-            $shipment = $sellerOrder->shipment;
+            'seller_orders' => $order->sellerOrders->map(function ($sellerOrder) {
+                $shipment = $sellerOrder->shipment;
 
-            return [
-                'id' => $sellerOrder->id,
-                'seller_id' => $sellerOrder->seller_id,
+                return [
+                    'id' => $sellerOrder->id,
+                    'seller_id' => $sellerOrder->seller_id,
 
-                'seller' => $sellerOrder->seller ? [
-                    'id' => $sellerOrder->seller->id,
-                    'name' => $sellerOrder->seller->name,
-                    'slug' => $sellerOrder->seller->slug,
-                ] : null,
-
-                'status' => $sellerOrder->status,
-                'subtotal' => $sellerOrder->subtotal_minor / 100,
-                'discount' => ($sellerOrder->discount_minor ?? 0) / 100,
-                'seller_discount' => ($sellerOrder->seller_discount_minor ?? 0) / 100,
-                'platform_discount' => ($sellerOrder->platform_discount_minor ?? 0) / 100,
-                'service_fee' => (
-                    $sellerOrder->service_fee_minor ?? 0
-                ) / 100,
-                'shipping' => $sellerOrder->shipping_minor / 100,
-                'total' => $sellerOrder->total_minor / 100,
-
-                'shipment' => $shipment ? [
-                    'id' => $shipment->id,
-                    'seller_order_id' => $shipment->seller_order_id,
-                    'tracking_number' => $shipment->tracking_number,
-                    'status' => $shipment->status,
-                    'picked_up_at' => $shipment->picked_up_at?->toISOString(),
-                    'delivered_at' => $shipment->delivered_at?->toISOString(),
-
-                    'rider' => $shipment->rider ? [
-                        'id' => $shipment->rider->id,
-                        'name' => $shipment->rider->name,
-                        'phone' => $shipment->rider->phone,
-                        'vehicle_type' => $shipment->rider->vehicle_type,
-                        'latitude' => $shipment->rider->latitude,
-                        'longitude' => $shipment->rider->longitude,
+                    'seller' => $sellerOrder->seller ? [
+                        'id' => $sellerOrder->seller->id,
+                        'name' => $sellerOrder->seller->name,
+                        'slug' => $sellerOrder->seller->slug,
                     ] : null,
-                ] : null,
-            ];
-        })->values(),
 
-        'rider' => $order->rider ? [
-            'id' => $order->rider->id,
-            'name' => $order->rider->name,
-            'phone' => $order->rider->phone,
-        ] : null,
-    ];
+                    'status' => $sellerOrder->status,
+                    'subtotal' => $sellerOrder->subtotal_minor / 100,
+                    'discount' => ($sellerOrder->discount_minor ?? 0) / 100,
+                    'seller_discount' => ($sellerOrder->seller_discount_minor ?? 0) / 100,
+                    'platform_discount' => ($sellerOrder->platform_discount_minor ?? 0) / 100,
+                    'service_fee' => (
+                        $sellerOrder->service_fee_minor ?? 0
+                    ) / 100,
+                    'shipping' => $sellerOrder->shipping_minor / 100,
+                    'total' => $sellerOrder->total_minor / 100,
+
+                    'shipment' => $shipment ? [
+                        'id' => $shipment->id,
+                        'seller_order_id' => $shipment->seller_order_id,
+                        'tracking_number' => $shipment->tracking_number,
+                        'status' => $shipment->status,
+                        'picked_up_at' => $shipment->picked_up_at?->toISOString(),
+                        'delivered_at' => $shipment->delivered_at?->toISOString(),
+
+                        'rider' => $shipment->rider ? [
+                            'id' => $shipment->rider->id,
+                            'name' => $shipment->rider->name,
+                            'phone' => $shipment->rider->phone,
+                            'vehicle_type' => $shipment->rider->vehicle_type,
+                            'latitude' => $shipment->rider->latitude,
+                            'longitude' => $shipment->rider->longitude,
+                        ] : null,
+                    ] : null,
+                ];
+            })->values(),
+
+            'rider' => $order->rider ? [
+                'id' => $order->rider->id,
+                'name' => $order->rider->name,
+                'phone' => $order->rider->phone,
+            ] : null,
+        ];
+    }
 }
-}
-
-
-
-

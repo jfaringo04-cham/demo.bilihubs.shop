@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\AddressController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\ShipmentController;
 use App\Http\Controllers\Api\AddressApiController;
+use App\Http\Controllers\Api\Buyer\VoucherController as BuyerVoucherController;
 
 // ============================================================
 // RIDER MOBILE API CONTROLLERS
@@ -356,6 +357,39 @@ Route::middleware('auth:sanctum')
             '/orders/{order}/rate',
             [OrderController::class, 'rate']
         );
+
+        // ====================================================
+        // BUYER VOUCHERS - MOBILE APP
+        // ====================================================
+
+        Route::prefix('buyer/vouchers')
+            ->name('buyer.vouchers.')
+            ->group(function () {
+
+                // Retrieve available vouchers
+                Route::get(
+                    '/',
+                    [BuyerVoucherController::class, 'index']
+                )->name('index');
+
+                // Retrieve vouchers claimed by authenticated buyer
+                Route::get(
+                    '/claimed',
+                    [BuyerVoucherController::class, 'claimed']
+                )->name('claimed');
+
+                // Claim a voucher
+                Route::post(
+                    '/{voucher}/claim',
+                    [BuyerVoucherController::class, 'claim']
+                )->name('claim');
+
+                // Preview voucher discount
+                Route::post(
+                    '/preview',
+                    [BuyerVoucherController::class, 'preview']
+                )->name('preview');
+            });
 
         // ====================================================
         // GENERAL NOTIFICATIONS
