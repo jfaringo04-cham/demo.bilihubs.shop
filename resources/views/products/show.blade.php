@@ -126,9 +126,26 @@
       </small>
       @endif
 
-      <small class="text-muted d-block mt-1">
-        Use code <strong>{{ $voucher->code }}</strong> during checkout.
-      </small>
+      <div class="d-flex align-items-center justify-content-between gap-2 mt-2">
+        <small class="text-muted">
+          Voucher code: <strong>{{ $voucher->code }}</strong>
+        </small>
+
+        @auth
+          @if($voucher->claimed_by_buyer ?? false)
+            <span class="badge text-bg-success">Claimed</span>
+          @else
+            <form method="POST" action="{{ route('cart.vouchers.claim', $voucher) }}">
+              @csrf
+              <button type="submit" class="btn btn-sm btn-primary">
+                <i class="bi bi-ticket-perforated me-1"></i> Claim
+              </button>
+            </form>
+          @endif
+        @else
+          <a href="{{ route('login') }}" class="btn btn-sm btn-outline-primary">Log in to claim</a>
+        @endauth
+      </div>
     </div>
     @endforeach
   </div>

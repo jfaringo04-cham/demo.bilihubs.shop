@@ -100,6 +100,32 @@ class RiderCodCollectionTest extends SQLiteTestCase
             $table->timestamps();
         });
 
+
+        Schema::create('voucher_redemptions', function (Blueprint $table) {
+            $table->id();
+
+            $table->unsignedBigInteger('voucher_id');
+            $table->unsignedBigInteger('user_id');
+            $table->unsignedBigInteger('order_id');
+            $table->unsignedBigInteger('seller_order_id')->nullable();
+
+            $table->string('voucher_code_snapshot', 80);
+            $table->string('funded_by', 20);
+
+            $table->unsignedBigInteger('discount_minor');
+
+            $table->string('status', 20)->default('reserved');
+
+            $table->timestamp('redeemed_at')->nullable();
+            $table->timestamp('reversed_at')->nullable();
+
+            $table->timestamps();
+
+            $table->index(['voucher_id', 'user_id', 'status']);
+            $table->index(['order_id', 'status']);
+        });
+
+
         DB::table('roles')->insert([
             'id' => 1,
             'name' => 'rider',

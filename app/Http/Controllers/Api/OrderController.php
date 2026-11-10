@@ -10,10 +10,10 @@ use App\Models\Product;
 use App\Models\Address;
 use App\Models\CartItem;
 use App\Models\Voucher;
-use App\Models\VoucherRedemption;
 use App\Models\Shipment;
 use App\Services\ShippingFeeService;
 use App\Services\VoucherCalculationService;
+use App\Services\VoucherRedemptionService;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -516,21 +516,17 @@ class OrderController extends Controller
                 }
             }
 
-            // Record voucher redemption once for the parent order.
+            // Reserve the COD voucher until all shipment payments are collected
+            // and the parent order transitions to paid.
             if ($voucherResult && $lockedVoucher) {
-                VoucherRedemption::create([
-                    'voucher_id' => $lockedVoucher->id,
-                    'user_id' => Auth::id(),
-                    'order_id' => $order->id,
-                    'seller_order_id' => $firstSellerOrderId,
-                    'voucher_code_snapshot' => $voucherResult['code'],
-                    'funded_by' => $voucherResult['funded_by'],
-                    'discount_minor' => $voucherDiscountMinor,
-                    'status' => 'redeemed',
-                    'redeemed_at' => now(),
-                ]);
-
-                $lockedVoucher->increment('usage_count');
+                app(VoucherRedemptionService::class)->recordForOrder(
+                    (int) $order->id,
+                    $firstSellerOrderId ? (int) $firstSellerOrderId : null,
+                    (int) $lockedVoucher->id,
+                    (int) Auth::id(),
+                    $voucherResult,
+                    true
+                );
             }
 
             // Clear the cart items included in this order.
@@ -665,6 +661,12 @@ class OrderController extends Controller
                         ]);
                     }
                 }
+
+                // Reverse any active voucher reservation/redemption in the
+                // same transaction as cancellation and inventory restoration.
+                app(VoucherRedemptionService::class)->reverseForOrder(
+                    (int) $lockedOrder->id
+                );
 
                 /*
                 |--------------------------------------------------------------------------

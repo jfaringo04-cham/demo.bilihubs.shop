@@ -94,6 +94,11 @@ Route::middleware('auth')->group(function () {
 
         Route::get('/', [CartController::class, 'index'])->name('index');
 
+        Route::post(
+            '/vouchers/{voucher}/claim',
+            [\App\Http\Controllers\Buyer\VoucherClaimController::class, 'store']
+        )->name('vouchers.claim');
+
         Route::post('/checkout-selected', [CartController::class, 'checkoutSelected'])
             ->name('checkoutSelected');
 

@@ -166,25 +166,25 @@
       </table>
     </div>
 
-    @if(($availableSellerVouchers ?? collect())->isNotEmpty())
+    @if(($availableVouchers ?? collect())->isNotEmpty())
     <div
       class="border-top p-3"
       data-buyer-voucher-discovery="cart"
     >
       <div class="fw-bold mb-2">
         <i class="bi bi-ticket-perforated-fill text-primary me-1"></i>
-        Seller Vouchers Available
+        Vouchers Available for Your Cart
       </div>
 
       <div class="row g-2">
-        @foreach($availableSellerVouchers as $voucher)
+        @foreach($availableVouchers as $voucher)
         <div class="col-lg-6">
           <div class="border rounded-3 p-3 h-100">
             <div class="d-flex justify-content-between gap-2">
               <div>
                 <div class="fw-semibold">{{ $voucher->name }}</div>
                 <small class="text-muted">
-                  {{ $voucher->seller->name ?? 'Seller Voucher' }}
+                  {{ $voucher->owner_type === 'platform' ? 'BiliHub Platform Voucher' : ($voucher->seller->name ?? 'Seller Voucher') }}
                 </small>
               </div>
 
@@ -206,7 +206,7 @@
 
             @if($voucher->minimum_spend_minor > 0)
             <small class="text-muted d-block mt-1">
-              Minimum seller spend:
+              Minimum eligible spend:
               &#8369;{{ number_format($voucher->minimum_spend_minor / 100, 2) }}
             </small>
             @endif
@@ -223,9 +223,22 @@
             </small>
             @endif
 
-            <div class="small mt-2">
-              Checkout code:
-              <strong>{{ $voucher->code }}</strong>
+            <div class="d-flex align-items-center justify-content-between gap-2 mt-3">
+              <div class="small">
+                Voucher code:
+                <strong>{{ $voucher->code }}</strong>
+              </div>
+
+              @if($voucher->claimed_by_buyer)
+                <span class="badge text-bg-success">Claimed</span>
+              @else
+                <form method="POST" action="{{ route('cart.vouchers.claim', $voucher) }}">
+                  @csrf
+                  <button type="submit" class="btn btn-sm btn-primary">
+                    <i class="bi bi-ticket-perforated me-1"></i> Claim
+                  </button>
+                </form>
+              @endif
             </div>
           </div>
         </div>
@@ -233,7 +246,7 @@
       </div>
 
       <small class="text-muted d-block mt-2">
-        Enter one voucher code in the existing voucher field during checkout.
+        Claim a voucher first, then enter its code in the existing voucher field during checkout.
       </small>
     </div>
     @endif

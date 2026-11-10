@@ -83,8 +83,16 @@ class VoucherController extends Controller
             $usedCount = DB::table('voucher_redemptions')
                 ->where('voucher_id', $voucher->id)
                 ->where('user_id', $userId)
-                ->where('status', 'redeemed')
+                ->where('status', \App\Models\VoucherRedemption::STATUS_REDEEMED)
                 ->count();
+
+            $reservedCount = DB::table('voucher_redemptions')
+                ->where('voucher_id', $voucher->id)
+                ->where('user_id', $userId)
+                ->where('status', \App\Models\VoucherRedemption::STATUS_RESERVED)
+                ->count();
+
+            $activeUseCount = $usedCount + $reservedCount;
 
             $isExpired = now()->greaterThanOrEqualTo($voucher->ends_at);
             $isScheduled = now()->lessThan($voucher->starts_at);
@@ -92,9 +100,10 @@ class VoucherController extends Controller
             $isExhausted = $voucher->usage_limit !== null
                 && $voucher->usage_count >= $voucher->usage_limit;
 
-            $perUserLimit = $voucher->per_user_limit ?? 1;
+            $perUserLimit = $voucher->per_user_limit;
 
-            $isUsed = $usedCount >= $perUserLimit;
+            $isUsed = $perUserLimit !== null
+                && $activeUseCount >= (int) $perUserLimit;
 
             if ($isExpired) {
                 $status = 'expired';
@@ -107,6 +116,7 @@ class VoucherController extends Controller
             } elseif ($isUsed) {
                 $status = 'used';
             } else {
+                // Keep the existing mobile API status vocabulary.
                 $status = 'claimed';
             }
 
@@ -130,7 +140,10 @@ class VoucherController extends Controller
                 'usage_limit' => $voucher->usage_limit,
                 'per_user_limit' => $perUserLimit,
                 'used_by_buyer' => $usedCount,
-                'remaining_uses' => max(0, $perUserLimit - $usedCount),
+                'reserved_by_buyer' => $reservedCount,
+                'remaining_uses' => $perUserLimit === null
+                    ? null
+                    : max(0, (int) $perUserLimit - $activeUseCount),
                 'status' => $status,
             ];
         });
@@ -144,100 +157,27 @@ class VoucherController extends Controller
     /**
      * Claim an active voucher for the authenticated buyer.
      */
-    public function claim(Request $request, Voucher $voucher)
-    {
-        $userId = Auth::id();
+    public function claim(
+        Request $request,
+        Voucher $voucher,
+        \App\Services\VoucherClaimService $claimService
+    ) {
+        $userId = (int) Auth::id();
 
         try {
-            $result = DB::transaction(function () use ($voucher, $userId) {
-                $lockedVoucher = Voucher::query()
-                    ->whereKey($voucher->id)
-                    ->lockForUpdate()
-                    ->firstOrFail();
-
-                if (!$lockedVoucher->is_enabled) {
-                    throw ValidationException::withMessages([
-                        'voucher' => 'This voucher is currently disabled.',
-                    ]);
-                }
-
-                if (
-                    !$lockedVoucher->starts_at ||
-                    !$lockedVoucher->ends_at ||
-                    $lockedVoucher->starts_at->isFuture() ||
-                    !$lockedVoucher->ends_at->isFuture()
-                ) {
-                    throw ValidationException::withMessages([
-                        'voucher' => 'This voucher is not currently available.',
-                    ]);
-                }
-
-                if (
-                    $lockedVoucher->usage_limit !== null &&
-                    $lockedVoucher->usage_count >= $lockedVoucher->usage_limit
-                ) {
-                    throw ValidationException::withMessages([
-                        'voucher' => 'This voucher has reached its usage limit.',
-                    ]);
-                }
-
-                if (!in_array(
-                    $lockedVoucher->owner_type,
-                    ['platform', 'seller'],
-                    true
-                )) {
-                    throw ValidationException::withMessages([
-                        'voucher' => 'Unsupported voucher owner.',
-                    ]);
-                }
-
-                if (
-                    $lockedVoucher->owner_type === 'seller' &&
-                    (
-                        !$lockedVoucher->seller_id ||
-                        $lockedVoucher->seller?->status !== 'approved'
-                    )
-                ) {
-                    throw ValidationException::withMessages([
-                        'voucher' => 'This seller voucher is unavailable.',
-                    ]);
-                }
-
-                $alreadyClaimed = DB::table('buyer_voucher_claims')
-                    ->where('voucher_id', $lockedVoucher->id)
-                    ->where('user_id', $userId)
-                    ->exists();
-
-                if ($alreadyClaimed) {
-                    throw ValidationException::withMessages([
-                        'voucher' => 'You have already claimed this voucher.',
-                    ]);
-                }
-
-                DB::table('buyer_voucher_claims')->insert([
-                    'voucher_id' => $lockedVoucher->id,
-                    'user_id' => $userId,
-                    'claimed_at' => now(),
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-
-                return $lockedVoucher;
-            });
+            $claimedVoucher = $claimService->claim($userId, (int) $voucher->id);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Voucher successfully claimed.',
-                'data' => $this->formatVoucher($result),
+                'data' => $this->formatVoucher($claimedVoucher),
             ], 201);
-
         } catch (ValidationException $exception) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unable to claim voucher.',
                 'errors' => $exception->errors(),
             ], 422);
-
         } catch (Throwable $exception) {
             report($exception);
 
