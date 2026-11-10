@@ -27,6 +27,14 @@ class _CheckoutState extends State<Checkout> {
 
   String paymentMethod = 'cod';
 
+  // Buyer voucher state.
+  List<Map<String, dynamic>> claimedVouchers = <Map<String, dynamic>>[];
+  Map<String, dynamic>? selectedVoucher;
+  String? appliedVoucherCode;
+  int voucherDiscountMinor = 0;
+  bool isLoadingVouchers = true;
+  bool isApplyingVoucher = false;
+
   bool isLoadingCheckout = true;
   bool isPlacingOrder = false;
 
@@ -44,6 +52,7 @@ class _CheckoutState extends State<Checkout> {
   void initState() {
     super.initState();
     _loadCheckoutInformation();
+    _loadClaimedVouchers();
   }
 
   @override
@@ -127,6 +136,250 @@ class _CheckoutState extends State<Checkout> {
   }
 
   // ============================================================
+  // BUYER VOUCHERS
+  // ============================================================
+
+  Future<void> _loadClaimedVouchers() async {
+    final Map<String, dynamic> result =
+        await ApiService.getClaimedBuyerVouchers();
+
+    if (!mounted) {
+      return;
+    }
+
+    if (result['success'] == true) {
+      final List<dynamic> rawVouchers = result['data'] is List
+          ? List<dynamic>.from(result['data'])
+          : <dynamic>[];
+
+      final List<Map<String, dynamic>> parsed = rawVouchers
+          .whereType<Map>()
+          .map((Map item) => Map<String, dynamic>.from(item))
+          .where((Map<String, dynamic> voucher) {
+            final String status =
+                voucher['status']?.toString().toLowerCase() ?? '';
+            return status == 'claimed';
+          })
+          .toList();
+
+      setState(() {
+        claimedVouchers = parsed;
+        isLoadingVouchers = false;
+      });
+      return;
+    }
+
+    setState(() {
+      isLoadingVouchers = false;
+    });
+  }
+
+  List<Map<String, dynamic>> _buildCheckoutApiItems() {
+    return widget.items.map((CartItem item) {
+      return <String, dynamic>{
+        'product_id': item.product.id,
+        // The supplied CartItem implementation does not expose
+        // selected variant/size fields here.
+        'variant_id': null,
+        'size_id': null,
+        'quantity': item.quantity,
+      };
+    }).toList();
+  }
+
+  Future<void> _showVoucherPicker() async {
+    if (isPlacingOrder || isApplyingVoucher || isLoadingVouchers) {
+      return;
+    }
+
+    final Map<String, dynamic>?
+    picked = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (BuildContext sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Choose a Voucher', style: BuyerStyle.sectionTitle),
+                const SizedBox(height: 12),
+                if (claimedVouchers.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(
+                      child: Text(
+                        'You have no usable claimed vouchers.',
+                        style: BuyerStyle.small,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: claimedVouchers.length,
+                      separatorBuilder: (_, _) =>
+                          const Divider(height: 1, color: BuyerColors.border),
+                      itemBuilder: (BuildContext context, int index) {
+                        final Map<String, dynamic> voucher =
+                            claimedVouchers[index];
+                        final String code = voucher['code']?.toString() ?? '';
+                        final String name =
+                            voucher['name']?.toString() ?? 'Voucher';
+                        final String description =
+                            voucher['description']?.toString() ?? '';
+                        final bool isSelected =
+                            selectedVoucher?['id']?.toString() ==
+                            voucher['id']?.toString();
+
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(
+                            Icons.confirmation_number_outlined,
+                            color: BuyerColors.primary,
+                          ),
+                          title: Text(name, style: BuyerStyle.cardTitle),
+                          subtitle: Text(
+                            [
+                              if (code.isNotEmpty) code,
+                              if (description.isNotEmpty) description,
+                            ].join(' • '),
+                            style: BuyerStyle.small,
+                          ),
+                          trailing: Icon(
+                            isSelected
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_off,
+                            color: BuyerColors.primary,
+                          ),
+                          onTap: () {
+                            Navigator.pop(sheetContext, voucher);
+                          },
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (picked == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      selectedVoucher = picked;
+      appliedVoucherCode = null;
+      voucherDiscountMinor = 0;
+    });
+  }
+
+  Future<void> _applySelectedVoucher() async {
+    if (isApplyingVoucher || isPlacingOrder) {
+      return;
+    }
+
+    if (selectedVoucher == null) {
+      _showMessage('Please choose a claimed voucher first.');
+      return;
+    }
+
+    final String code =
+        selectedVoucher!['code']?.toString().trim().toUpperCase() ?? '';
+
+    if (code.isEmpty) {
+      _showMessage('The selected voucher has no valid code.');
+      return;
+    }
+
+    setState(() {
+      isApplyingVoucher = true;
+    });
+
+    final Map<String, dynamic> result = await ApiService.previewBuyerVoucher(
+      voucherCode: code,
+      items: _buildCheckoutApiItems(),
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      isApplyingVoucher = false;
+    });
+
+    if (result['success'] != true) {
+      setState(() {
+        appliedVoucherCode = null;
+        voucherDiscountMinor = 0;
+      });
+      _showMessage(_extractApiErrorMessage(result));
+      return;
+    }
+
+    final dynamic rawData = result['data'];
+    final Map<String, dynamic> data = rawData is Map
+        ? Map<String, dynamic>.from(rawData)
+        : <String, dynamic>{};
+
+    final int returnedVoucherId =
+        int.tryParse(data['voucher_id']?.toString() ?? '') ?? 0;
+    final int selectedVoucherId =
+        int.tryParse(selectedVoucher!['id']?.toString() ?? '') ?? 0;
+
+    final int discountMinor =
+        int.tryParse(data['discount_minor']?.toString() ?? '') ?? 0;
+    final String returnedCode =
+        data['code']?.toString().trim().toUpperCase() ?? '';
+
+    if (discountMinor <= 0 ||
+        returnedCode != code ||
+        (selectedVoucherId > 0 &&
+            returnedVoucherId > 0 &&
+            returnedVoucherId != selectedVoucherId)) {
+      setState(() {
+        appliedVoucherCode = null;
+        voucherDiscountMinor = 0;
+      });
+      _showMessage(
+        'The server returned an invalid voucher preview. Please try again.',
+      );
+      return;
+    }
+
+    setState(() {
+      appliedVoucherCode = code;
+      voucherDiscountMinor = discountMinor;
+    });
+
+    _showMessage(
+      'Voucher applied! You saved '
+      '${MoneyFormatter.peso(discountMinor / 100)}.',
+    );
+  }
+
+  void _removeAppliedVoucher() {
+    if (isPlacingOrder || isApplyingVoucher) {
+      return;
+    }
+
+    setState(() {
+      selectedVoucher = null;
+      appliedVoucherCode = null;
+      voucherDiscountMinor = 0;
+    });
+  }
+
+  // ============================================================
   // TOTALS
   // ============================================================
 
@@ -158,8 +411,11 @@ class _CheckoutState extends State<Checkout> {
     return serviceFeeMinor / 100;
   }
 
+  double get voucherDiscount => voucherDiscountMinor / 100;
+
   double get grandTotal {
-    return subtotal + shippingFee + serviceFee;
+    final double total = subtotal + shippingFee + serviceFee - voucherDiscount;
+    return total < 0 ? 0 : total;
   }
 
   // ============================================================
@@ -203,7 +459,6 @@ class _CheckoutState extends State<Checkout> {
 
     return label.isNotEmpty ? label : 'Delivery Address';
   }
-
   // ============================================================
   // ADDRESS PICKER
   // ============================================================
@@ -347,16 +602,7 @@ class _CheckoutState extends State<Checkout> {
     final int addressId =
         int.tryParse(selectedAddress?['id']?.toString() ?? '') ?? 0;
 
-    final List<Map<String, dynamic>> orderItems = widget.items
-        .map(
-          (CartItem item) => <String, dynamic>{
-            'product_id': item.product.id,
-            'variant_id': null,
-            'size_id': null,
-            'quantity': item.quantity,
-          },
-        )
-        .toList();
+    final List<Map<String, dynamic>> orderItems = _buildCheckoutApiItems();
 
     setState(() {
       isPlacingOrder = true;
@@ -367,6 +613,7 @@ class _CheckoutState extends State<Checkout> {
       paymentMethod: paymentMethod,
       notes: notesController.text,
       items: orderItems,
+      voucherCode: appliedVoucherCode,
     );
 
     if (!mounted) {
@@ -595,6 +842,8 @@ class _CheckoutState extends State<Checkout> {
                   const SizedBox(height: 20),
                   _buildPaymentMethod(),
                   const SizedBox(height: 20),
+                  _buildVoucherSection(),
+                  const SizedBox(height: 20),
                   _buildNotes(),
                   const SizedBox(height: 20),
                   _buildPaymentSummary(),
@@ -606,7 +855,6 @@ class _CheckoutState extends State<Checkout> {
             ),
     );
   }
-
   // ============================================================
   // ORDER SUMMARY
   // ============================================================
@@ -741,6 +989,7 @@ class _CheckoutState extends State<Checkout> {
       ),
     );
   }
+
   // ============================================================
   // DELIVERY ADDRESS
   // ============================================================
@@ -979,6 +1228,148 @@ class _CheckoutState extends State<Checkout> {
       ),
     );
   }
+  // ============================================================
+  // VOUCHER SECTION
+  // ============================================================
+
+  Widget _buildVoucherSection() {
+    final String selectedName =
+        selectedVoucher?['name']?.toString().trim() ?? '';
+    final String selectedCode =
+        selectedVoucher?['code']?.toString().trim() ?? '';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BuyerStyle.card,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(
+                Icons.confirmation_number_outlined,
+                color: BuyerColors.primary,
+                size: 22,
+              ),
+              SizedBox(width: 9),
+              Text('Voucher', style: BuyerStyle.sectionTitle),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (isLoadingVouchers)
+            const Row(
+              children: [
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: BuyerColors.primary,
+                  ),
+                ),
+                SizedBox(width: 10),
+                Text('Loading your claimed vouchers...'),
+              ],
+            )
+          else if (claimedVouchers.isEmpty)
+            const Text(
+              'No available claimed vouchers. Claim vouchers from My Vouchers.',
+              style: BuyerStyle.small,
+            )
+          else ...[
+            InkWell(
+              onTap: isPlacingOrder || isApplyingVoucher
+                  ? null
+                  : _showVoucherPicker,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: BuyerColors.lightPurple,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: BuyerColors.border),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.local_offer_outlined,
+                      color: BuyerColors.primary,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            selectedVoucher == null
+                                ? 'Select a claimed voucher'
+                                : selectedName,
+                            style: BuyerStyle.cardTitle,
+                          ),
+                          if (selectedCode.isNotEmpty)
+                            Text(selectedCode, style: BuyerStyle.small),
+                        ],
+                      ),
+                    ),
+                    const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: BuyerColors.textGrey,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (appliedVoucherCode != null)
+              Row(
+                children: [
+                  const Icon(
+                    Icons.check_circle_rounded,
+                    color: BuyerColors.success,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      'Applied: $appliedVoucherCode',
+                      style: const TextStyle(
+                        color: BuyerColors.success,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _removeAppliedVoucher,
+                    child: const Text('Remove'),
+                  ),
+                ],
+              )
+            else
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed:
+                      selectedVoucher == null ||
+                          isApplyingVoucher ||
+                          isPlacingOrder
+                      ? null
+                      : _applySelectedVoucher,
+                  child: isApplyingVoucher
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Apply Voucher'),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
 
   // ============================================================
   // NOTES
@@ -1051,6 +1442,15 @@ class _CheckoutState extends State<Checkout> {
 
           _summaryRow('Service Fee (3%)', MoneyFormatter.peso(serviceFee)),
 
+          if (voucherDiscountMinor > 0) ...[
+            const SizedBox(height: 12),
+            _summaryRow(
+              'Voucher Discount',
+              '-${MoneyFormatter.peso(voucherDiscount)}',
+              valueColor: BuyerColors.success,
+            ),
+          ],
+
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 15),
             child: Divider(height: 1, color: BuyerColors.border),
@@ -1086,12 +1486,12 @@ class _CheckoutState extends State<Checkout> {
     );
   }
 
-  Widget _summaryRow(String label, String value) {
+  Widget _summaryRow(String label, String value, {Color? valueColor}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(label, style: BuyerStyle.small),
-        Text(value, style: BuyerStyle.cardTitle),
+        Text(value, style: BuyerStyle.cardTitle.copyWith(color: valueColor)),
       ],
     );
   }

@@ -580,16 +580,12 @@ class ApiService {
   }
 
   // ============================================================
-  // PLACE BUYER ORDER
-  // POST /api/orders
+  // BUYER VOUCHERS
   // ============================================================
 
-  static Future<Map<String, dynamic>> createOrder({
-    required int addressId,
-    required String paymentMethod,
-    required List<Map<String, dynamic>> items,
-    String? notes,
-  }) async {
+  /// GET /api/buyer/vouchers
+  /// Loads active vouchers that the authenticated buyer has not claimed.
+  static Future<Map<String, dynamic>> getBuyerVouchers() async {
     try {
       final String? token = await AuthStorage.getToken();
 
@@ -597,101 +593,285 @@ class ApiService {
         return {
           'success': false,
           'status_code': 401,
-          'message':
-              'Authentication token not found. '
-              'Please login again.',
+          'message': 'Session expired. Please login again.',
         };
       }
 
-      if (addressId <= 0) {
+      final http.Response response = await http
+          .get(
+            Uri.parse('$baseUrl/buyer/vouchers'),
+            headers: _authHeaders(token),
+          )
+          .timeout(const Duration(seconds: 25));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 && decoded is Map) {
         return {
-          'success': false,
-          'status_code': 422,
-          'message':
-              'Please select a valid '
-              'delivery address.',
+          'success': decoded['success'] != false,
+          'status_code': 200,
+          'data': _extractList(decoded, keys: const ['data', 'vouchers']),
         };
       }
 
-      const Set<String> allowedPaymentMethods = {
-        'cod',
-        'gcash',
-        'maya',
-        'card',
-        'bank_transfer',
-      };
-
-      final String normalizedPaymentMethod = paymentMethod.trim().toLowerCase();
-
-      if (!allowedPaymentMethods.contains(normalizedPaymentMethod)) {
-        return {
-          'success': false,
-          'status_code': 422,
-          'message':
-              'Please select a valid '
-              'payment method.',
-        };
-      }
-
-      if (items.isEmpty) {
-        return {
-          'success': false,
-          'status_code': 422,
-          'message': 'Your checkout has no items.',
-        };
-      }
-
-      final List<Map<String, dynamic>> normalizedItems =
-          <Map<String, dynamic>>[];
-
-      for (final Map<String, dynamic> item in items) {
-        final int productId =
-            int.tryParse(item['product_id']?.toString() ?? '') ?? 0;
-
-        final int quantity =
-            int.tryParse(item['quantity']?.toString() ?? '') ?? 0;
-
-        if (productId <= 0 || quantity <= 0) {
-          return {
-            'success': false,
-            'status_code': 422,
-            'message':
-                'One or more checkout '
-                'items are invalid.',
-          };
-        }
-
-        normalizedItems.add({
-          'product_id': productId,
-          'variant_id': item['variant_id'],
-          'size_id': item['size_id'],
-          'quantity': quantity,
-        });
-      }
-
-      final http.Response response = await http.post(
-        Uri.parse('$baseUrl/orders'),
-        headers: _authHeaders(token, json: true),
-        body: jsonEncode({
-          'address_id': addressId,
-          'payment_method': normalizedPaymentMethod,
-          'notes': notes?.trim().isNotEmpty == true ? notes!.trim() : null,
-          'items': normalizedItems,
-        }),
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'You cannot access buyer vouchers.',
+        notFoundMessage: 'Buyer voucher API is not available.',
+        fallback: 'Unable to load available vouchers.',
       );
+    } on TimeoutException {
+      return {
+        'success': false,
+        'message': 'Loading vouchers timed out. Please try again.',
+      };
+    } catch (error) {
+      debugPrint('Get buyer vouchers error: $error');
+      return {
+        'success': false,
+        'message': 'Unable to load vouchers. Please check your connection.',
+      };
+    }
+  }
+
+  /// GET /api/buyer/vouchers/claimed
+  /// Loads all vouchers claimed by the authenticated buyer.
+  static Future<Map<String, dynamic>> getClaimedBuyerVouchers() async {
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Session expired. Please login again.',
+        };
+      }
+
+      final http.Response response = await http
+          .get(
+            Uri.parse('$baseUrl/buyer/vouchers/claimed'),
+            headers: _authHeaders(token),
+          )
+          .timeout(const Duration(seconds: 25));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 && decoded is Map) {
+        return {
+          'success': decoded['success'] != false,
+          'status_code': 200,
+          'data': _extractList(decoded, keys: const ['data', 'vouchers']),
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'You cannot access your claimed vouchers.',
+        notFoundMessage: 'Claimed vouchers API is not available.',
+        fallback: 'Unable to load your claimed vouchers.',
+      );
+    } on TimeoutException {
+      return {
+        'success': false,
+        'message': 'Loading claimed vouchers timed out. Please try again.',
+      };
+    } catch (error) {
+      debugPrint('Get claimed vouchers error: $error');
+      return {
+        'success': false,
+        'message': 'Unable to load claimed vouchers. Please try again.',
+      };
+    }
+  }
+
+  /// POST /api/buyer/vouchers/{voucherId}/claim
+  /// Claims a voucher for the authenticated buyer.
+  static Future<Map<String, dynamic>> claimBuyerVoucher({
+    required int voucherId,
+  }) async {
+    if (voucherId <= 0) {
+      return {
+        'success': false,
+        'status_code': 422,
+        'message': 'Invalid voucher ID.',
+      };
+    }
+
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Session expired. Please login again.',
+        };
+      }
+
+      final http.Response response = await http
+          .post(
+            Uri.parse('$baseUrl/buyer/vouchers/$voucherId/claim'),
+            headers: _authHeaders(token, json: true),
+            body: jsonEncode(<String, dynamic>{}),
+          )
+          .timeout(const Duration(seconds: 25));
 
       final dynamic decoded = _decodeResponse(response.body);
 
       if ((response.statusCode == 200 || response.statusCode == 201) &&
-          decoded is Map<String, dynamic>) {
+          decoded is Map &&
+          decoded['success'] != false) {
         final dynamic rawData = decoded['data'];
-
         return {
           'success': true,
           'status_code': response.statusCode,
           'message': _getMessage(
             decoded,
-            fallback: 'Order placed successfully.',
+            fallback: 'Voucher successfully claimed.',
+          ),
+          'data': rawData is Map
+              ? Map<String, dynamic>.from(rawData)
+              : <String, dynamic>{},
+        };
+      }
+
+      if (response.statusCode == 422) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': _getMessage(decoded, fallback: 'Unable to claim voucher.'),
+          'errors': decoded is Map ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'You cannot claim this voucher.',
+        notFoundMessage: 'Voucher was not found.',
+        fallback: 'Unable to claim voucher. Please try again.',
+      );
+    } on TimeoutException {
+      return {
+        'success': false,
+        'message': 'Claim request timed out. Please refresh your vouchers.',
+      };
+    } catch (error) {
+      debugPrint('Claim buyer voucher error: $error');
+      return {
+        'success': false,
+        'message': 'Unable to claim voucher. Please check your connection.',
+      };
+    }
+  }
+
+  /// POST /api/buyer/vouchers/preview
+  /// Previews a claimed voucher against the exact items selected for checkout.
+  static Future<Map<String, dynamic>> previewBuyerVoucher({
+    required String voucherCode,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    final String normalizedCode = voucherCode.trim().toUpperCase();
+
+    if (normalizedCode.isEmpty) {
+      return {
+        'success': false,
+        'status_code': 422,
+        'message': 'Please enter a voucher code.',
+      };
+    }
+
+    if (items.isEmpty) {
+      return {
+        'success': false,
+        'status_code': 422,
+        'message': 'There are no selected checkout items to preview.',
+      };
+    }
+
+    final List<Map<String, dynamic>> normalizedItems = <Map<String, dynamic>>[];
+
+    for (final Map<String, dynamic> item in items) {
+      final int productId =
+          int.tryParse(item['product_id']?.toString() ?? '') ?? 0;
+      final int quantity =
+          int.tryParse(item['quantity']?.toString() ?? '') ?? 0;
+      final int? variantId = item['variant_id'] == null
+          ? null
+          : int.tryParse(item['variant_id'].toString());
+      final int? sizeId = item['size_id'] == null
+          ? null
+          : int.tryParse(item['size_id'].toString());
+
+      if (productId <= 0 || quantity <= 0) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'One or more checkout items are invalid.',
+        };
+      }
+
+      if (item['variant_id'] != null && (variantId == null || variantId <= 0)) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'One or more selected product variants are invalid.',
+        };
+      }
+
+      if (item['size_id'] != null && (sizeId == null || sizeId <= 0)) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'One or more selected product sizes are invalid.',
+        };
+      }
+
+      normalizedItems.add({
+        'product_id': productId,
+        'variant_id': variantId,
+        'size_id': sizeId,
+        'quantity': quantity,
+      });
+    }
+
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Session expired. Please login again.',
+        };
+      }
+
+      final http.Response response = await http
+          .post(
+            Uri.parse('$baseUrl/buyer/vouchers/preview'),
+            headers: _authHeaders(token, json: true),
+            body: jsonEncode({
+              'voucher_code': normalizedCode,
+              'items': normalizedItems,
+            }),
+          )
+          .timeout(const Duration(seconds: 25));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 &&
+          decoded is Map &&
+          decoded['success'] != false) {
+        final dynamic rawData = decoded['data'];
+        return {
+          'success': true,
+          'status_code': 200,
+          'message': _getMessage(
+            decoded,
+            fallback: 'Voucher preview calculated successfully.',
           ),
           'data': rawData is Map
               ? Map<String, dynamic>.from(rawData)
@@ -705,32 +885,238 @@ class ApiService {
           'status_code': 422,
           'message': _getMessage(
             decoded,
-            fallback:
-                'Please check your '
-                'order information.',
+            fallback: 'Voucher cannot be applied.',
           ),
-          'errors': decoded is Map<String, dynamic> ? decoded['errors'] : null,
+          'errors': decoded is Map ? decoded['errors'] : null,
         };
       }
 
       return _authApiError(
         response.statusCode,
         decoded,
-        forbiddenMessage:
-            'This account cannot place '
-            'buyer orders.',
-        notFoundMessage:
-            'Buyer order API '
-            'is not available.',
+        forbiddenMessage: 'You cannot preview this voucher.',
+        notFoundMessage: 'Voucher preview API is not available.',
+        fallback: 'Unable to preview voucher.',
+      );
+    } on TimeoutException {
+      return {
+        'success': false,
+        'message': 'Voucher preview timed out. Please try again.',
+      };
+    } catch (error) {
+      debugPrint('Preview buyer voucher error: $error');
+      return {
+        'success': false,
+        'message': 'Unable to preview voucher. Please check your connection.',
+      };
+    }
+  }
+
+  // ============================================================
+  // PLACE BUYER ORDER
+  // POST /api/orders
+  // ============================================================
+
+  static Future<Map<String, dynamic>> createOrder({
+    required int addressId,
+    required String paymentMethod,
+    required List<Map<String, dynamic>> items,
+    String? notes,
+    String? voucherCode,
+  }) async {
+    if (addressId <= 0) {
+      return {
+        'success': false,
+        'status_code': 422,
+        'message': 'Please select a valid delivery address.',
+      };
+    }
+
+    const Set<String> allowedPaymentMethods = {
+      'cod',
+      'gcash',
+      'maya',
+      'card',
+      'bank_transfer',
+    };
+
+    final String normalizedPaymentMethod = paymentMethod.trim().toLowerCase();
+
+    if (!allowedPaymentMethods.contains(normalizedPaymentMethod)) {
+      return {
+        'success': false,
+        'status_code': 422,
+        'message': 'Please select a valid payment method.',
+      };
+    }
+
+    if (items.isEmpty) {
+      return {
+        'success': false,
+        'status_code': 422,
+        'message': 'Your checkout has no items.',
+      };
+    }
+
+    final List<Map<String, dynamic>> normalizedItems = <Map<String, dynamic>>[];
+
+    for (final Map<String, dynamic> item in items) {
+      final int productId =
+          int.tryParse(item['product_id']?.toString() ?? '') ?? 0;
+      final int quantity =
+          int.tryParse(item['quantity']?.toString() ?? '') ?? 0;
+
+      final int? variantId = item['variant_id'] == null
+          ? null
+          : int.tryParse(item['variant_id'].toString());
+      final int? sizeId = item['size_id'] == null
+          ? null
+          : int.tryParse(item['size_id'].toString());
+
+      if (productId <= 0 || quantity <= 0) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'One or more checkout items are invalid.',
+        };
+      }
+
+      if (item['variant_id'] != null && (variantId == null || variantId <= 0)) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'One or more selected product variants are invalid.',
+        };
+      }
+
+      if (item['size_id'] != null && (sizeId == null || sizeId <= 0)) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': 'One or more selected product sizes are invalid.',
+        };
+      }
+
+      normalizedItems.add({
+        'product_id': productId,
+        'variant_id': variantId,
+        'size_id': sizeId,
+        'quantity': quantity,
+      });
+    }
+
+    final String normalizedVoucherCode =
+        voucherCode?.trim().toUpperCase() ?? '';
+    final String normalizedNotes = notes?.trim() ?? '';
+
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Authentication token not found. Please login again.',
+        };
+      }
+
+      // Payload matches OrderController@store:
+      // address_id, payment_method, notes, voucher_code, items[].
+      final Map<String, dynamic> requestBody = {
+        'address_id': addressId,
+        'payment_method': normalizedPaymentMethod,
+        'notes': normalizedNotes.isNotEmpty ? normalizedNotes : null,
+        'items': normalizedItems,
+        if (normalizedVoucherCode.isNotEmpty)
+          'voucher_code': normalizedVoucherCode,
+      };
+
+      final http.Response response = await http
+          .post(
+            Uri.parse('$baseUrl/orders'),
+            headers: _authHeaders(token, json: true),
+            body: jsonEncode(requestBody),
+          )
+          .timeout(const Duration(seconds: 45));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (decoded is! Map) {
+          return {
+            'success': false,
+            'status_code': response.statusCode,
+            'message': 'The server returned an invalid order response.',
+          };
+        }
+
+        final Map<String, dynamic> responseMap = Map<String, dynamic>.from(
+          decoded,
+        );
+        final dynamic rawData = responseMap['data'];
+
+        if (rawData is! Map) {
+          return {
+            'success': false,
+            'status_code': response.statusCode,
+            'message': _getMessage(
+              responseMap,
+              fallback: 'The order response did not contain order details.',
+            ),
+          };
+        }
+
+        final Map<String, dynamic> orderData = Map<String, dynamic>.from(
+          rawData,
+        );
+
+        return {
+          'success': true,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            responseMap,
+            fallback: 'Order placed successfully.',
+          ),
+          'data': orderData,
+        };
+      }
+
+      if (response.statusCode == 422) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': _getMessage(
+            decoded,
+            fallback: 'Please check your order information.',
+          ),
+          'errors': decoded is Map ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'This account cannot place buyer orders.',
+        notFoundMessage: 'Buyer order API is not available.',
         fallback: 'Unable to place your order.',
       );
-    } catch (_) {
+    } on TimeoutException {
+      // The server may have completed checkout before the response timed out.
+      // Refresh the buyer's order list before attempting checkout again.
       return {
         'success': false,
         'message':
-            'Unable to place your order. '
-            'Please check your internet connection '
-            'and try again.',
+            'The order request timed out. Please check your order history '
+            'before trying again to avoid placing a duplicate order.',
+        'result_uncertain': true,
+      };
+    } catch (error) {
+      debugPrint('Create buyer order error: $error');
+      return {
+        'success': false,
+        'message':
+            'Unable to place your order. Please check your internet '
+            'connection and try again.',
       };
     }
   }
