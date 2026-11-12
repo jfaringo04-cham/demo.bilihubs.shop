@@ -9,6 +9,8 @@ use App\Services\ComplianceMonitor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class OrderController extends Controller
 {
@@ -48,19 +50,22 @@ class OrderController extends Controller
             }
         }
 
-        $order->load('items.product', 'items.size', 'items.variation', 'rider', 'sellerOrders.shipment');
+        $order->load('items.product', 'items.size', 'items.variation', 'rider', 'sellerOrders.shipment', 'sellerOrders.returnShipment', 'sellerOrders.items.size', 'sellerOrders.items.variation');
 
         return view('orders.show', compact('order'));
     }
 
     public function requestReturn(Request $request, Order $order)
     {
-        if ($order->user_id !== Auth::id()) {
+        if ((int) $order->user_id !== (int) Auth::id()) {
             abort(403);
         }
 
         $validated = $request->validate([
             'seller_order_id' => 'required|integer',
+            'return_item_id' => 'required|integer',
+            'return_quantity' => 'required|integer|min:1',
+            'return_photo' => 'required|image|mimes:jpg,jpeg,png,webp|max:2048',
             'return_reason' => 'required|string|max:1000',
         ]);
 
@@ -69,28 +74,50 @@ class OrderController extends Controller
             ->whereKey($validated['seller_order_id'])
             ->firstOrFail();
 
-        if ($sellerOrder->status !== 'delivered') {
+        if ($sellerOrder->status !== 'delivered' || $sellerOrder->return_status !== 'none') {
             return back()->with(
                 'error',
                 'This seller order is not eligible for return.'
             );
         }
 
-        $updated = $order->sellerOrders()
-            ->whereKey($sellerOrder->id)
-            ->where('status', 'delivered')
-            ->where('return_status', 'none')
-            ->update([
-                'return_status' => 'requested',
-                'return_reason' => $validated['return_reason'],
-                'return_requested_at' => now(),
+        $item = $sellerOrder->items()->find($validated['return_item_id']);
+        if (!$item || $validated['return_quantity'] > $item->quantity) {
+            throw ValidationException::withMessages([
+                'return_quantity' => 'Choose an item from this seller and enter a quantity within the amount purchased.',
             ]);
+        }
+
+        $disk = Storage::disk('local');
+        $photoPath = $request->file('return_photo')->store('order-return-proofs', 'local');
+        if (!$photoPath) {
+            throw ValidationException::withMessages([
+                'return_photo' => 'The photo could not be saved. Please try uploading it again.',
+            ]);
+        }
+
+        try {
+            $updated = $order->sellerOrders()
+                ->whereKey($sellerOrder->id)
+                ->where('status', 'delivered')
+                ->where('return_status', 'none')
+                ->update([
+                    'return_status' => 'requested',
+                    'return_reason' => $validated['return_reason'],
+                    'return_requested_at' => now(),
+                    'return_order_item_id' => $item->id,
+                    'return_quantity' => $validated['return_quantity'],
+                    'return_photo_path' => $photoPath,
+                ]);
+        } catch (\Throwable $exception) {
+            $disk->delete($photoPath);
+            throw $exception;
+        }
 
         if ($updated !== 1) {
-            return back()->with(
-                'error',
-                'This seller order is no longer eligible for a new return request.'
-            );
+            $disk->delete($photoPath);
+
+            return back()->with('error', 'This seller order is no longer eligible for a new return request.');
         }
 
         $this->createNotification(
@@ -120,6 +147,27 @@ class OrderController extends Controller
             'success',
             'Return request submitted successfully.'
         );
+    }
+
+
+    public function returnPhoto(Request $request, Order $order, int $sellerOrderId)
+    {
+        $sellerOrder = $order->sellerOrders()->findOrFail($sellerOrderId);
+        $user = $request->user();
+
+        abort_unless(
+            (int) $order->user_id === (int) $user->id
+                || (int) $sellerOrder->seller_id === (int) $user->seller?->id,
+            403
+        );
+
+        $disk = Storage::disk('local');
+        abort_unless($sellerOrder->return_photo_path && $disk->exists($sellerOrder->return_photo_path), 404);
+
+        return $disk->response($sellerOrder->return_photo_path, null, [
+            'Cache-Control' => 'private, no-store',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
     }
 
     public function requestReschedule(Request $request, Order $order)

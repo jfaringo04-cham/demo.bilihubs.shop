@@ -196,6 +196,65 @@ $statusColor = $colors[$status] ?? 'secondary';
         {{ $sellerOrder->return_reason ?? 'N/A' }}
       </p>
 
+      @include('orders.return-details')
+      @error('return_refund')
+      <p class="alert alert-danger">{{ $message }}</p>
+      @enderror
+
+      @error('return_pickup')
+      <p class="alert alert-danger">{{ $message }}</p>
+      @enderror
+
+      @if($sellerOrder->return_status === 'requested'
+          || ($sellerOrder->return_status === 'approved' && !$sellerOrder->return_received_at && !$sellerOrder->returnShipment))
+      @php
+        $returnShippingFee = \App\Models\ReturnShipment::quoteSellerShippingFee($sellerOrder);
+      @endphp
+      <p><strong>Return shipping fee covered by seller:</strong> ₱{{ number_format($returnShippingFee / 100, 2) }}.
+        The fee will be recorded when the return is delivered.</p>
+      @endif
+
+      @if($sellerOrder->return_status === 'approved' && !$sellerOrder->return_received_at && !$sellerOrder->returnShipment)
+      <form method="POST" action="{{ route('seller.orders.approveReturn', $order) }}" class="mb-2">
+        @csrf
+        <input type="hidden" name="seller_order_id" value="{{ $sellerOrder->id }}">
+        <input type="hidden" name="seller_shipping_fee_minor" value="{{ $returnShippingFee }}">
+        <button type="submit" class="btn btn-outline-primary btn-sm">Book return pickup</button>
+      </form>
+      @endif
+
+      @if($sellerOrder->return_status === 'approved' && !$sellerOrder->return_received_at
+          && (!$sellerOrder->returnShipment || $sellerOrder->returnShipment->delivered_at))
+      <form method="POST" action="{{ route('seller.orders.receiveReturn', $order) }}">
+        @csrf
+        <input type="hidden" name="seller_order_id" value="{{ $sellerOrder->id }}">
+        <button type="submit" class="btn btn-primary btn-sm">Mark returned item received</button>
+      </form>
+      @elseif($sellerOrder->return_status === 'approved' && $sellerOrder->return_received_at && !$sellerOrder->return_resolved_at)
+      <form method="POST" action="{{ route('seller.orders.resolveReturn', $order) }}">
+        @csrf
+        <input type="hidden" name="seller_order_id" value="{{ $sellerOrder->id }}">
+        <label for="return-resolution-{{ $sellerOrder->id }}" class="form-label">Outcome provided to buyer</label>
+        <select id="return-resolution-{{ $sellerOrder->id }}" name="return_resolution" class="form-select mb-2" required>
+          <option value="">Select an outcome</option>
+          @if($order->payment_method === 'cod' && $order->payment_status === 'paid')
+            <option value="refund">Start refund</option>
+          @endif
+          <option value="replacement">Replacement provided</option>
+        </select>
+        <button type="submit" class="btn btn-primary btn-sm">Record outcome</button>
+      </form>
+      @endif
+
+      @if($sellerOrder->return_received_at && $sellerOrder->returnShipment?->rider_payout_minor !== null
+          && !$sellerOrder->returnShipment->wallet_settled_at)
+      <form method="POST" action="{{ route('seller.orders.receiveReturn', $order) }}" class="mt-2">
+        @csrf
+        <input type="hidden" name="seller_order_id" value="{{ $sellerOrder->id }}">
+        <button type="submit" class="btn btn-outline-primary btn-sm">Retry return shipping payout</button>
+      </form>
+      @endif
+
       @if($sellerOrder->return_status === 'requested')
       <div class="d-flex gap-2">
         <form method="POST"
@@ -205,6 +264,7 @@ $statusColor = $colors[$status] ?? 'secondary';
           <input type="hidden"
             name="seller_order_id"
             value="{{ $sellerOrder->id }}">
+          <input type="hidden" name="seller_shipping_fee_minor" value="{{ $returnShippingFee }}">
           <button type="submit" class="btn btn-success btn-sm">
             Approve Return
           </button>

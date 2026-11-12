@@ -8,6 +8,8 @@ use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\SellerOrder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use App\Models\Product;
 use App\Models\ProductImage;
 use App\Models\ProductVariant;
@@ -1003,6 +1005,7 @@ class DashboardController extends Controller
                         'items.product',
                         'items.size',
                         'items.variation',
+                        'returnShipment',
                         'shipment.logistic',
                         'shipment.rider',
                     ]);
@@ -1100,39 +1103,79 @@ class DashboardController extends Controller
     {
         $validated = $request->validate([
             'seller_order_id' => 'required|integer',
+            'seller_shipping_fee_minor' => 'required|integer|min:0',
         ]);
+        $shopId = $request->user()->seller?->id;
+        abort_unless($shopId, 403);
 
-        $shopId = Auth::user()->seller?->id;
+        $approved = DB::transaction(function () use ($order, $shopId, $validated) {
+            $sellerOrder = $order->sellerOrders()->where('seller_id', $shopId)
+                ->lockForUpdate()->findOrFail($validated['seller_order_id']);
 
-        if (!$shopId) {
-            abort(403, 'No seller shop is linked to this account.');
-        }
+            if (!in_array($sellerOrder->return_status, ['requested', 'approved'], true)
+                || $sellerOrder->return_received_at || $sellerOrder->returnShipment()->exists()) {
+                throw ValidationException::withMessages([
+                    'return_pickup' => 'This return is no longer eligible for pickup booking.',
+                ]);
+            }
 
-        $sellerOrder = $order->sellerOrders()
-            ->where('seller_id', $shopId)
-            ->whereKey($validated['seller_order_id'])
-            ->firstOrFail();
+            $outbound = $sellerOrder->shipment;
+            $buyerAddress = trim((string) $outbound?->delivery_address);
+            $sellerAddress = trim((string) $outbound?->pickup_address);
 
-        $updated = $order->sellerOrders()
-            ->whereKey($sellerOrder->id)
-            ->where('seller_id', $shopId)
-            ->where('return_status', 'requested')
-            ->update(['return_status' => 'approved']);
+            if (!$outbound?->logistic_id || $buyerAddress === '' || $sellerAddress === ''
+                || $buyerAddress === 'Delivery address unavailable' || $sellerAddress === 'Seller address') {
+                throw ValidationException::withMessages([
+                    'return_pickup' => 'The original shipment needs a logistics provider and both addresses before return pickup can be booked.',
+                ]);
+            }
 
-        if ($updated !== 1) {
-            return back()->with('error', 'This return request is no longer pending.');
-        }
+            $shippingFee = \App\Models\ReturnShipment::quoteSellerShippingFee($sellerOrder);
+            if ($shippingFee !== (int) $validated['seller_shipping_fee_minor']) {
+                throw ValidationException::withMessages([
+                    'return_pickup' => 'The return shipping fee changed. Review the updated amount before approving.',
+                ]);
+            }
+
+            $returnShipment = $sellerOrder->returnShipment()->create([
+                'seller_shipping_fee_minor' => $shippingFee,
+                'rider_payout_minor' => \App\Services\ReturnShippingSettlementService::quoteRiderShare(
+                    $sellerOrder,
+                    $shippingFee
+                ),
+                'logistic_id' => $outbound->logistic_id,
+                'tracking_number' => 'RET-' . Str::upper((string) Str::ulid()),
+                'pickup_address' => $buyerAddress,
+                'delivery_address' => $sellerAddress,
+            ]);
+
+            $logisticsOwnerId = $outbound->logistic?->owner_user_id;
+
+            if ($logisticsOwnerId) {
+                $this->createNotification(
+                    $logisticsOwnerId,
+                    'New Return Pickup',
+                    'Assign a rider to pick up return ' . $returnShipment->tracking_number . '.',
+                    'return',
+                    route('logistic.returns.index', [], false)
+                );
+            }
+
+            $newApproval = $sellerOrder->return_status === 'requested';
+            $sellerOrder->update(['return_status' => 'approved']);
+
+            return $newApproval;
+        });
 
         $this->createNotification(
             $order->user_id,
-            'Return Approved',
-            'Your return request for seller order #' . $sellerOrder->id
-                . ' under order ' . $order->order_number . ' has been approved.',
+            $approved ? 'Return Approved' : 'Return Pickup Requested',
+            'Logistics will arrange pickup for your approved return under order ' . $order->order_number . '.',
             'return',
             route('orders.show', $order)
         );
 
-        return back()->with('success', 'Return request approved.');
+        return back()->with('success', 'Return pickup queued for logistics.');
     }
 
     public function rejectReturn(Request $request, Order $order)
@@ -1174,6 +1217,71 @@ class DashboardController extends Controller
         return back()->with('success', 'Return request rejected.');
     }
 
+
+    public function receiveReturn(Request $request, Order $order)
+    {
+        $validated = $request->validate(['seller_order_id' => 'required|integer']);
+        $shopId = $request->user()->seller?->id;
+        abort_unless($shopId, 403);
+
+        $result = DB::transaction(function () use ($order, $shopId, $validated) {
+            $sellerOrder = $order->sellerOrders()->where('seller_id', $shopId)
+                ->lockForUpdate()->findOrFail($validated['seller_order_id']);
+
+            if ($sellerOrder->return_status !== 'approved'
+                || ($sellerOrder->returnShipment && !$sellerOrder->returnShipment->delivered_at)) {
+                return 'invalid';
+            }
+
+            if (!$sellerOrder->return_received_at) {
+                $sellerOrder->return_received_at = now();
+                $sellerOrder->save();
+            }
+
+            return app(\App\Services\ReturnShippingSettlementService::class)->settle($sellerOrder)
+                ? 'received'
+                : 'pending';
+        });
+
+        return match ($result) {
+            'received' => back()->with('success', 'Returned item receipt confirmed.'),
+            'pending' => back()->with('error', 'Receipt confirmed. The return shipping payout is pending. Check your available Seller Wallet balance and retry.'),
+            default => back()->with('error', 'This return cannot be marked as received.'),
+        };
+    }
+
+    public function resolveReturn(Request $request, Order $order)
+    {
+        $validated = $request->validate([
+            'seller_order_id' => 'required|integer',
+            'return_resolution' => 'required|in:refund,replacement',
+        ]);
+        $shopId = $request->user()->seller?->id;
+        abort_unless($shopId, 403);
+
+        $updated = DB::transaction(function () use ($order, $shopId, $validated) {
+            $sellerOrder = $order->sellerOrders()->where('seller_id', $shopId)
+                ->lockForUpdate()->findOrFail($validated['seller_order_id']);
+
+            if ($sellerOrder->return_status !== 'approved' || !$sellerOrder->return_received_at
+                || $sellerOrder->return_resolved_at) {
+                return false;
+            }
+
+            if ($validated['return_resolution'] === 'refund') {
+                app(\App\Services\ReturnRefundService::class)->start($sellerOrder);
+            }
+
+            $sellerOrder->return_resolution = $validated['return_resolution'];
+            $sellerOrder->return_resolved_at = now();
+
+            return $sellerOrder->save();
+        });
+
+        return $updated
+            ? back()->with('success', 'Return outcome recorded.')
+            : back()->with('error', 'This return cannot be resolved.');
+    }
 
     public function approveReschedule(Request $request, Order $order)
     {

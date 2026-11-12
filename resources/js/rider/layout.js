@@ -56,3 +56,6 @@ window.markAsRead = function (notificationId, element, event) {
 
   return false;
 };
+if (document.querySelector('[data-return-pickup]')) {
+    import('./return-pickup.js');
+}

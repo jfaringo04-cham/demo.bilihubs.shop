@@ -81,6 +81,11 @@ Route::get('/about', [HomeController::class, 'about'])->name('about');
 
 
 Route::middleware('auth')->group(function () {
+    Route::get('/return-shipments/{returnShipment}/proof', [\App\Http\Controllers\ReturnShipmentController::class, 'proof'])
+        ->name('return-shipments.proof');
+    Route::get('/return-shipments/{returnShipment}/pickup-qr', [\App\Http\Controllers\ReturnShipmentController::class, 'pickupQr'])
+        ->name('return-shipments.pickup-qr');
+
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
 
@@ -140,6 +145,9 @@ Route::middleware('auth')->group(function () {
 
 
 
+    Route::get('/orders/{order}/return-photo/{sellerOrderId}', [OrderController::class, 'returnPhoto'])
+        ->whereNumber('sellerOrderId')->name('orders.returnPhoto');
+
     Route::prefix('orders')->name('orders.')->middleware('customer')->group(function () {
 
         Route::get('/', [OrderController::class, 'index'])->name('index');
@@ -147,6 +155,11 @@ Route::middleware('auth')->group(function () {
         Route::get('/{order}', [OrderController::class, 'show'])->name('show');
 
         Route::post('/{order}/return', [OrderController::class, 'requestReturn'])->name('return');
+        Route::post('/{order}/returns/{sellerOrderId}/refund-method', [\App\Http\Controllers\ReturnRefundController::class, 'saveMethod'])
+            ->whereNumber('sellerOrderId')->name('returns.refundMethod');
+        Route::post('/{order}/returns/{sellerOrderId}/refund-response', [\App\Http\Controllers\ReturnRefundController::class, 'respond'])
+            ->whereNumber('sellerOrderId')->name('returns.refundResponse');
+
 
         Route::post('/{order}/reschedule', [OrderController::class, 'requestReschedule'])->name('reschedule');
 
@@ -471,6 +484,13 @@ Route::middleware('auth')->group(function () {
 
         Route::post('/orders/{order}/approve-return', [SellerDashboardController::class, 'approveReturn'])->name('orders.approveReturn');
 
+        Route::post('/orders/{order}/receive-return', [SellerDashboardController::class, 'receiveReturn'])->name('orders.receiveReturn');
+        Route::post('/orders/{order}/resolve-return', [SellerDashboardController::class, 'resolveReturn'])->name('orders.resolveReturn');
+        Route::post('/orders/{order}/returns/{sellerOrderId}/refund-start', [\App\Http\Controllers\ReturnRefundController::class, 'startExisting'])
+            ->whereNumber('sellerOrderId')->name('orders.startRefund');
+        Route::post('/orders/{order}/returns/{sellerOrderId}/refund-sent', [\App\Http\Controllers\ReturnRefundController::class, 'markSent'])
+            ->whereNumber('sellerOrderId')->name('orders.markRefundSent');
+
         Route::post('/orders/{order}/reject-return', [SellerDashboardController::class, 'rejectReturn'])->name('orders.rejectReturn');
 
         Route::post('/orders/{order}/approve-reschedule', [SellerDashboardController::class, 'approveReschedule'])->name('orders.approveReschedule');
@@ -515,6 +535,10 @@ Route::middleware('auth')->group(function () {
 
 
     Route::prefix('rider')->name('rider.')->middleware('rider')->group(function () {
+        Route::get('/return-shipments', [\App\Http\Controllers\ReturnShipmentController::class, 'rider'])->name('returns.index');
+        Route::post('/return-shipments/{returnShipment}/pickup', [\App\Http\Controllers\ReturnShipmentController::class, 'pickup'])->name('returns.pickup');
+        Route::post('/return-shipments/{returnShipment}/deliver', [\App\Http\Controllers\ReturnShipmentController::class, 'deliver'])->name('returns.deliver');
+
 
 
 
@@ -671,6 +695,9 @@ Route::middleware('auth')->group(function () {
 
 
     Route::prefix('logistic')->name('logistic.')->middleware('logistic_owner')->group(function () {
+        Route::get('/return-shipments', [\App\Http\Controllers\ReturnShipmentController::class, 'logistics'])->name('returns.index');
+        Route::post('/return-shipments/{returnShipment}/assign', [\App\Http\Controllers\ReturnShipmentController::class, 'assign'])->name('returns.assign');
+
         // Pickup exception monitoring and safe rider offer retry.
         Route::get(
             '/pickup-exceptions',

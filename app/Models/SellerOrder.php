@@ -91,4 +91,9 @@ class SellerOrder extends Model
     {
         return $this->hasOne(Shipment::class, 'seller_order_id');
     }
+
+    public function returnShipment(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(\App\Models\ReturnShipment::class);
+    }
 }

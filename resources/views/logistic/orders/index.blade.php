@@ -10,6 +10,7 @@
     <div class="d-flex justify-content-between flex-wrap align-items-center pt-3 pb-2 mb-4">
         <div>
             <h1 class="fw-bold text-slate-900 mb-1">Order Management</h1>
+            <a class="btn btn-outline-primary" href="{{ route('logistic.returns.index') }}">Return Shipments</a>
             <p class="text-muted mb-0">
                 View and manage orders assigned to {{ $logistic->company_name }}.
             </p>

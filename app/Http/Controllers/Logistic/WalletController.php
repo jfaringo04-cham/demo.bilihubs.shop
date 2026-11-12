@@ -26,11 +26,17 @@ class WalletController extends Controller
             ->get();
 
         $totalEarnedMinor = (int) $wallet->transactions()
-            ->where('type', LogisticWalletService::TYPE_SHIPMENT_CREDIT)
+            ->whereIn('type', [
+                LogisticWalletService::TYPE_SHIPMENT_CREDIT,
+                \App\Services\ReturnShippingSettlementService::CREDIT_TYPE,
+            ])
             ->sum('amount_minor');
 
         $todayEarnedMinor = (int) $wallet->transactions()
-            ->where('type', LogisticWalletService::TYPE_SHIPMENT_CREDIT)
+            ->whereIn('type', [
+                LogisticWalletService::TYPE_SHIPMENT_CREDIT,
+                \App\Services\ReturnShippingSettlementService::CREDIT_TYPE,
+            ])
             ->where('created_at', '>=', now()->startOfDay())
             ->sum('amount_minor');
 

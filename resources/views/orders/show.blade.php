@@ -263,16 +263,25 @@
       </div>
       @endif
       @foreach($order->sellerOrders as $sellerOrder)
-      @if($sellerOrder->status === 'delivered')
+      @if($sellerOrder->status === 'delivered' || $sellerOrder->return_status !== 'none')
       <div class="border rounded p-3 mb-3">
         <h6 class="mb-2">
           Return Request &mdash; {{ $sellerOrder->seller?->name ?? 'Seller' }}
         </h6>
 
         @if($sellerOrder->return_status === 'none')
+        @if((int) old('seller_order_id') === (int) $sellerOrder->id && $errors->any())
+        <ul class="alert alert-danger ps-5">
+          @foreach($errors->all() as $error)
+          <li>{{ $error }}</li>
+          @endforeach
+        </ul>
+        @endif
+
         <form action="{{ route('orders.return', $order) }}"
           method="POST"
-          onsubmit="return confirm('Submit return request for this seller?')">
+          enctype="multipart/form-data"
+          onsubmit="return confirm('Submit this damaged-item return request?')">
           @csrf
 
           <input type="hidden"
@@ -280,13 +289,69 @@
             value="{{ $sellerOrder->id }}">
 
           <div class="mb-2">
-            <label class="form-label">Return Reason</label>
-            <textarea name="return_reason"
+            <label for="return-item-{{ $sellerOrder->id }}" class="form-label">Damaged item</label>
+            <select id="return-item-{{ $sellerOrder->id }}" name="return_item_id" class="form-select" required>
+              <option value="">Select an item</option>
+              @foreach($sellerOrder->items as $item)
+              <option value="{{ $item->id }}" data-quantity="{{ $item->quantity }}" @selected((int) old('return_item_id') === (int) $item->id)>
+                {{ $item->product_name }}{{ $item->variation ? ' / ' . ($item->variation->display_name ?: $item->variation->name) : '' }}{{ $item->size ? ' / ' . $item->size->name : '' }}
+                ({{ $item->quantity }} purchased)
+              </option>
+              @endforeach
+            </select>
+          </div>
+
+          <div class="mb-2">
+            <label for="return-quantity-{{ $sellerOrder->id }}" class="form-label">Quantity to return</label>
+            <select id="return-quantity-{{ $sellerOrder->id }}" name="return_quantity"
+              class="form-select" required disabled
+              data-previous="{{ (int) old('seller_order_id') === (int) $sellerOrder->id ? old('return_quantity', 1) : 1 }}">
+              <option value="">Select a damaged item first</option>
+            </select>
+            <script>
+              (() => {
+                const item = document.getElementById('return-item-{{ $sellerOrder->id }}');
+                const quantity = document.getElementById('return-quantity-{{ $sellerOrder->id }}');
+
+                function updateReturnQuantity() {
+                  const purchased = Number(item.selectedOptions[0]?.dataset.quantity || 0);
+                  quantity.replaceChildren();
+                  quantity.disabled = purchased < 1;
+
+                  if (quantity.disabled) {
+                    quantity.add(new Option('Select a damaged item first', ''));
+                    return;
+                  }
+
+                  for (let count = 1; count <= purchased; count++) {
+                    quantity.add(new Option(String(count), String(count)));
+                  }
+                }
+
+                item.addEventListener('change', updateReturnQuantity);
+                updateReturnQuantity();
+
+                if (Array.from(quantity.options).some(option => option.value === quantity.dataset.previous)) {
+                  quantity.value = quantity.dataset.previous;
+                }
+              })();
+            </script>
+          </div>
+
+          <div class="mb-2">
+            <label for="return-photo-{{ $sellerOrder->id }}" class="form-label">Damage photo (JPG, PNG or WebP, up to 2 MB)</label>
+            <input id="return-photo-{{ $sellerOrder->id }}" type="file" name="return_photo"
+              class="form-control" accept="image/jpeg,image/png,image/webp" required>
+          </div>
+
+          <div class="mb-2">
+            <label for="return-reason-{{ $sellerOrder->id }}" class="form-label">Return reason</label>
+            <textarea id="return-reason-{{ $sellerOrder->id }}" name="return_reason"
               class="form-control"
               rows="2"
               maxlength="1000"
               required
-              placeholder="Please provide a reason for return"></textarea>
+              placeholder="Describe the damage">{{ (int) old('seller_order_id') === (int) $sellerOrder->id ? old('return_reason') : '' }}</textarea>
           </div>
 
           <button type="submit" class="btn btn-warning btn-sm">
@@ -298,6 +363,7 @@
           Return Status:
           <strong>{{ ucfirst($sellerOrder->return_status) }}</strong>
         </p>
+        @include('orders.return-details')
         @endif
       </div>
       @endif

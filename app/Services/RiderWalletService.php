@@ -35,6 +35,7 @@ class RiderWalletService
             self::TYPE_PICKUP_CREDIT,
             self::TYPE_LINEHAUL_CREDIT,
             self::TYPE_DELIVERY_CREDIT,
+            ReturnShippingSettlementService::CREDIT_TYPE,
         ];
     }
 
