@@ -156,6 +156,9 @@
             <a class="nav-link {{ request()->routeIs('admin.orders*') ? 'active' : '' }}" href="{{ route('admin.orders') }}">
               <i class="bi bi-receipt"></i> Orders
             </a>
+            <a class="nav-link {{ request()->routeIs('admin.refund-disputes.*') ? 'active' : '' }}" href="{{ route('admin.refund-disputes.index', [], false) }}">
+              <i class="bi bi-arrow-return-left" aria-hidden="true"></i> Refund Disputes
+            </a>
             <a class="nav-link {{ request()->routeIs('admin.riders') ? 'active' : '' }}" href="{{ route('admin.riders') }}">
               <i class="bi bi-bicycle"></i> Riders
             </a>

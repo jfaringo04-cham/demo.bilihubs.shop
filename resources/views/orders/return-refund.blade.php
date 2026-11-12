@@ -30,6 +30,29 @@
 
     @if($refund->sent_at)
       <p><strong>Transfer reference:</strong> {{ $refund->transfer_reference }}</p>
+      @if($refund->reported_at)
+        <p><strong>Refund dispute:</strong> {{ $refund->dispute_status_label }}</p>
+        @if($refund->dispute_resolution)
+          <p><strong>Admin resolution:</strong> {{ $refund->dispute_resolution }}</p>
+        @endif
+        @if($isRefundSeller && $refund->dispute_status_label !== 'Resolved' && $refund->dispute_proof_requested_at)
+          @if($refund->dispute_proof_submitted_at)
+            <p>Transfer proof submitted to admin.</p>
+          @else
+            <form method="POST" enctype="multipart/form-data"
+                  action="{{ route('seller.refund-disputes.proof', $refund, false) }}" class="mb-2">
+              @csrf
+              <label for="refund-proof-{{ $refund->id }}" class="form-label">Transfer receipt (JPG, PNG, or WebP up to 2 MB)</label>
+              <input id="refund-proof-{{ $refund->id }}" class="form-control mb-2" type="file"
+                     name="refund_proof" accept="image/jpeg,image/png,image/webp" required>
+              <button class="btn btn-outline-primary btn-sm">Submit transfer proof</button>
+            </form>
+          @endif
+          @error('refund_proof')
+            <p class="text-danger">{{ $message }}</p>
+          @enderror
+        @endif
+      @endif
       @if($isRefundBuyer && !$refund->received_at)
         <form method="POST" action="{{ route('orders.returns.refundResponse', $refundRouteParams, false) }}">
           @csrf

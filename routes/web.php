@@ -174,6 +174,13 @@ Route::middleware('auth')->group(function () {
 
         Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
+        Route::get('/refund-disputes', [\App\Http\Controllers\Admin\RefundDisputeController::class, 'index'])
+            ->name('refund-disputes.index');
+        Route::post('/refund-disputes/{returnRefund}', [\App\Http\Controllers\Admin\RefundDisputeController::class, 'update'])
+            ->name('refund-disputes.update');
+        Route::get('/refund-disputes/{returnRefund}/proof', [\App\Http\Controllers\Admin\RefundDisputeController::class, 'proof'])
+            ->name('refund-disputes.proof');
+
         Route::get('/seller-settlements', [SellerSettlementController::class, 'index'])
             ->name('seller-settlements.index');
 
@@ -428,6 +435,9 @@ Route::middleware('auth')->group(function () {
 
 
     Route::prefix('seller')->name('seller.')->middleware('seller')->group(function () {
+        Route::post('/refund-disputes/{returnRefund}/proof', [\App\Http\Controllers\RefundDisputeProofController::class, 'store'])
+            ->name('refund-disputes.proof');
+
 
         Route::get('/dashboard', [SellerDashboardController::class, 'index'])->name('dashboard');
 
