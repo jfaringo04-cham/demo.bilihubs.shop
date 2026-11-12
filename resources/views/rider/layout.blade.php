@@ -78,34 +78,80 @@
             <a class="nav-link dropdown-toggle" href="#" id="riderUserDropdown" role="button" data-bs-toggle="dropdown">
               <i class="bi bi-person-circle"></i> {{ Auth::user()->name }}
             </a>
-            <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="riderUserDropdown">
-              <li><a class="dropdown-item" href="{{ route('rider.dashboard') }}"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
-              <li><a class="dropdown-item" href="{{ route('rider.deliveries') }}"><i class="bi bi-bell"></i> Delivery Notifications</a></li>
-              <li><a class="dropdown-item" href="{{ route('rider.pickups') }}"><i class="bi bi-box-seam"></i> Available Pickups</a></li>
-              <li><a class="dropdown-item" href="{{ route('rider.orders') }}"><i class="bi bi-receipt"></i> My Deliveries</a></li>
-              <li><a class="dropdown-item" href="{{ route('rider.addresses') }}"><i class="bi bi-geo-alt"></i> Addresses</a></li>
-              <li><a class="dropdown-item" href="{{ route('rider.history') }}"><i class="bi bi-clock-history"></i> Delivery History</a></li>
-              <li><a class="dropdown-item" href="{{ route('rider.profit') }}"><i class="bi bi-graph-up"></i> Profit</a></li>
+            <ul class="dropdown-menu dropdown-menu-end overflow-auto" aria-labelledby="riderUserDropdown"
+              style="max-height: min(70vh, 36rem);">
+              <li><h6 class="dropdown-header">Deliveries</h6></li>
               <li>
-                <a
-                  class="dropdown-item {{ request()->routeIs('rider.wallet.*') ? 'active' : '' }}"
-                  href="{{ route('rider.wallet.index') }}">
-                  <i class="bi bi-wallet2"></i>
-                  Wallet
+                <a class="dropdown-item {{ request()->routeIs('rider.dashboard') ? 'active' : '' }}"
+                  href="{{ route('rider.dashboard') }}" @if (request()->routeIs('rider.dashboard')) aria-current="page" @endif>
+                  <i class="bi bi-speedometer2 me-1" aria-hidden="true"></i> Dashboard
                 </a>
               </li>
               <li>
-                <a class="dropdown-item {{ request()->routeIs('rider.cod-remittances.*') ? 'active' : '' }}"
-                  href="{{ route('rider.cod-remittances.index') }}">
-                  <i class="bi bi-cash-coin"></i>
-                  COD Remittances
+                <a class="dropdown-item {{ request()->routeIs('rider.pickups', 'rider.pickups.*') ? 'active' : '' }}"
+                  href="{{ route('rider.pickups') }}" @if (request()->routeIs('rider.pickups')) aria-current="page" @endif>
+                  <i class="bi bi-box-seam me-1" aria-hidden="true"></i> Available Pickups
                 </a>
               </li>
-              <li><a class="dropdown-item" href="{{ route('rider.messages.index') }}"><i class="bi bi-chat-dots"></i> Messages</a></li>
-              <li><a class="dropdown-item" href="{{ route('rider.account') }}"><i class="bi bi-person"></i> Account</a></li>
               <li>
-                <hr class="dropdown-divider">
+                <a class="dropdown-item {{ request()->routeIs('rider.orders', 'rider.orders.*', 'rider.shipments.*') ? 'active' : '' }}"
+                  href="{{ route('rider.orders') }}" @if (request()->routeIs('rider.orders')) aria-current="page" @endif>
+                  <i class="bi bi-receipt me-1" aria-hidden="true"></i> My Deliveries
+                </a>
               </li>
+              <li>
+                <a class="dropdown-item {{ request()->routeIs('rider.deliveries') ? 'active' : '' }}"
+                  href="{{ route('rider.deliveries') }}" @if (request()->routeIs('rider.deliveries')) aria-current="page" @endif>
+                  <i class="bi bi-bell me-1" aria-hidden="true"></i> Delivery Notifications
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item {{ request()->routeIs('rider.history') ? 'active' : '' }}"
+                  href="{{ route('rider.history') }}" @if (request()->routeIs('rider.history')) aria-current="page" @endif>
+                  <i class="bi bi-clock-history me-1" aria-hidden="true"></i> Delivery History
+                </a>
+              </li>
+              <li><hr class="dropdown-divider"></li>
+              <li><h6 class="dropdown-header">Earnings</h6></li>
+              <li>
+                <a class="dropdown-item {{ request()->routeIs('rider.wallet.index', 'rider.wallet.*') ? 'active' : '' }}"
+                  href="{{ route('rider.wallet.index') }}" @if (request()->routeIs('rider.wallet.index')) aria-current="page" @endif>
+                  <i class="bi bi-wallet2 me-1" aria-hidden="true"></i> Wallet
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item {{ request()->routeIs('rider.profit') ? 'active' : '' }}"
+                  href="{{ route('rider.profit') }}" @if (request()->routeIs('rider.profit')) aria-current="page" @endif>
+                  <i class="bi bi-graph-up me-1" aria-hidden="true"></i> Earnings Summary
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item {{ request()->routeIs('rider.cod-remittances.index', 'rider.cod-remittances.*') ? 'active' : '' }}"
+                  href="{{ route('rider.cod-remittances.index') }}" @if (request()->routeIs('rider.cod-remittances.index')) aria-current="page" @endif>
+                  <i class="bi bi-cash-coin me-1" aria-hidden="true"></i> COD Remittances
+                </a>
+              </li>
+              <li><hr class="dropdown-divider"></li>
+              <li><h6 class="dropdown-header">Account</h6></li>
+              <li>
+                <a class="dropdown-item {{ request()->routeIs('rider.messages.index', 'rider.messages.*') ? 'active' : '' }}"
+                  href="{{ route('rider.messages.index') }}" @if (request()->routeIs('rider.messages.index')) aria-current="page" @endif>
+                  <i class="bi bi-chat-dots me-1" aria-hidden="true"></i> Messages
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item {{ request()->routeIs('rider.addresses', 'rider.addresses.*') ? 'active' : '' }}"
+                  href="{{ route('rider.addresses') }}" @if (request()->routeIs('rider.addresses')) aria-current="page" @endif>
+                  <i class="bi bi-geo-alt me-1" aria-hidden="true"></i> Addresses
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item {{ request()->routeIs('rider.account', 'rider.account.*') ? 'active' : '' }}"
+                  href="{{ route('rider.account') }}" @if (request()->routeIs('rider.account')) aria-current="page" @endif>
+                  <i class="bi bi-person me-1" aria-hidden="true"></i> Account Settings
+                </a>
+              </li>
+              <li><hr class="dropdown-divider"></li>
               <li>
                 <form method="POST" action="{{ route('logout') }}" class="d-inline">
                   @csrf

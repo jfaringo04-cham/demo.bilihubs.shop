@@ -35,7 +35,39 @@
       </div>
       <div class="col-md-6">
         <label class="form-label text-muted">Address</label>
-        <p class="fw-bold">{{ $rider->address ?? 'N/A' }}</p>
+        @php
+          $street = trim(implode(' ', array_filter([$rider->house_number, $rider->street_address])));
+          $addressParts = $rider->address ? [
+            ['text' => $rider->address, 'urls' => []],
+          ] : [
+            ['text' => $street, 'urls' => []],
+          ];
+
+          if (!$rider->address) {
+            foreach ([
+              'barangay' => ['barangay'],
+              'municipality' => ['municipality', 'city'],
+              'province' => ['province', 'city'],
+              'region' => ['region'],
+            ] as $field => $lookups) {
+              $name = trim((string) $rider->{$field . '_name'});
+              $code = trim((string) $rider->{$field});
+              $value = $name ?: $code;
+              if ($value === '') {
+                continue;
+              }
+
+              $urls = preg_match('/^\d{9,10}$/D', $value)
+                ? array_map(fn ($lookup) => route('api.addresses.' . $lookup, [$value], false), $lookups)
+                : [];
+              $addressParts[] = ['text' => $value, 'urls' => $urls];
+            }
+          }
+
+          $addressLabel = collect($addressParts)->pluck('text')->filter()->unique()->implode(', ');
+        @endphp
+        <p class="fw-bold" id="riderReviewAddress"
+           data-address-parts="{{ json_encode($addressParts) }}">{{ $addressLabel ?: 'N/A' }}</p>
       </div>
       <div class="col-md-6">
         <label class="form-label text-muted">Vehicle Type</label>
@@ -73,6 +105,26 @@
   </div>
 </div>
 
+<section class="card border-0 shadow-sm mt-3" aria-labelledby="riderDocumentsHeading">
+  <div class="card-body">
+    <h2 id="riderDocumentsHeading" class="h5 mb-3">Submitted Documents</h2>
+    <div class="row g-3">
+      @foreach(['or_document' => 'Official Receipt (OR)', 'cr_document' => 'Certificate of Registration (CR)'] as $field => $label)
+        <div class="col-md-6">
+          <p class="fw-semibold mb-2">{{ $label }}</p>
+          @if($rider->{$field})
+            <a class="btn btn-outline-primary btn-sm"
+               href="{{ route('logistic.riders.documents.show', [$rider, $field], false) }}"
+               target="_blank" rel="noopener">View {{ $field === 'or_document' ? 'OR' : 'CR' }}</a>
+          @else
+            <p class="text-muted mb-0">No file uploaded.</p>
+          @endif
+        </div>
+      @endforeach
+    </div>
+  </div>
+</section>
+
 <div class="modal fade" id="rejectModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -98,4 +150,36 @@
 </div>
 @endsection
 
+@push('scripts')
+<script>
+(() => {
+    const address = document.getElementById('riderReviewAddress');
+    if (!address) return;
 
+    const parts = JSON.parse(address.dataset.addressParts);
+    if (!parts.some(part => part.urls.length)) return;
+
+    async function resolvePart(part) {
+        for (const url of part.urls) {
+            try {
+                const response = await fetch(url, { headers: { Accept: 'application/json' } });
+                if (!response.ok) continue;
+
+                const result = await response.json();
+                if (typeof result?.name === 'string' && result.name.trim()) {
+                    return result.name.trim();
+                }
+            } catch {
+                // Preserve the saved code if the lookup is unavailable.
+            }
+        }
+
+        return part.text;
+    }
+
+    Promise.all(parts.map(resolvePart)).then(values => {
+        address.textContent = [...new Set(values.filter(Boolean))].join(', ');
+    });
+})();
+</script>
+@endpush

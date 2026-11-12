@@ -23,7 +23,19 @@ if (auth()->check()) {
 @section('content')
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
   <h1 class="h2">Messages</h1>
+  @if ($logisticsContact ?? null)
+    <a href="{{ route('rider.messages.show', $logisticsContact) }}" class="btn btn-outline-primary">
+      <i class="bi bi-chat-dots me-1" aria-hidden="true"></i> Message Logistics
+    </a>
+  @endif
 </div>
+
+@if ($messageRoutePrefix === 'rider')
+  <p class="text-muted">
+    To contact a seller or buyer, open your assigned <a href="{{ route('rider.pickups') }}">pickup</a>
+    or <a href="{{ route('rider.orders') }}">delivery</a>.
+  </p>
+@endif
 
 <div class="table-container">
   <div class="table-responsive">

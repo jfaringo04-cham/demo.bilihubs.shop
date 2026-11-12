@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Shared;
 
 use App\Http\Controllers\Controller;
 use App\Models\Message;
+use App\Models\Shipment;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -22,9 +23,35 @@ class MessageController extends Controller
             'You cannot message yourself.'
         );
 
-        if ($currentUser->isCustomer() && !$user->isSeller()) {
-            abort(403, 'Buyers can only message sellers.');
+        abort_unless(
+            $this->canMessage($currentUser, $user),
+            403,
+            'You are not allowed to open this conversation.'
+        );
+    }
+
+    private function canMessage(User $currentUser, User $user): bool
+    {
+        if (!$currentUser->isRider() && !$user->isRider()) {
+            return !$currentUser->isCustomer() || $user->isSeller();
         }
+
+        $rider = $currentUser->isRider() ? $currentUser : $user;
+        $contact = $currentUser->isRider() ? $user : $currentUser;
+
+        return match (true) {
+            $contact->isLogisticOwner() => $rider->logistic_id !== null
+                && $contact->ownedLogistic()->whereKey($rider->logistic_id)->exists(),
+            $contact->isSeller() => Shipment::query()
+                ->where('pickup_rider_id', $rider->id)
+                ->whereHas('sellerOrder.seller', fn ($seller) => $seller->where('user_id', $contact->id))
+                ->exists(),
+            $contact->isCustomer() => Shipment::query()
+                ->where('rider_id', $rider->id)
+                ->whereHas('sellerOrder.order', fn ($order) => $order->where('user_id', $contact->id))
+                ->exists(),
+            default => false,
+        };
     }
 
     private function conversationLinkFor(User $recipient, User $sender): string
@@ -44,18 +71,17 @@ class MessageController extends Controller
 
     public function index()
     {
-        $userId = Auth::id();
+        $currentUser = Auth::user();
+        $userId = $currentUser->id;
 
-        $partnerIds = Message::where('sender_id', $userId)
-            ->orWhere('receiver_id', $userId)
-            ->pluck('sender_id', 'receiver_id')
-            ->flatten()
+        $partnerIds = Message::where('sender_id', $userId)->distinct()->pluck('receiver_id')
+            ->merge(Message::where('receiver_id', $userId)->distinct()->pluck('sender_id'))
             ->unique()
-            ->reject(fn ($id) => $id == $userId)
-            ->values();
+            ->reject(fn ($id) => $id == $userId);
 
         $conversations = User::whereIn('id', $partnerIds)
             ->get()
+            ->filter(fn (User $user) => $this->canMessage($currentUser, $user))
             ->map(function ($user) use ($userId) {
                 $last = Message::where(function ($q) use ($userId, $user) {
                     $q->where('sender_id', $userId)->where('receiver_id', $user->id);
@@ -73,7 +99,15 @@ class MessageController extends Controller
                 return $user;
             })->sortByDesc('last_activity');
 
-        return view('shared.messages.index', compact('conversations'));
+        $logisticsContact = $currentUser->isRider() && $currentUser->logistic_id
+            ? \App\Models\Logistic::find($currentUser->logistic_id)?->owner
+            : null;
+
+        if ($logisticsContact && !$this->canMessage($currentUser, $logisticsContact)) {
+            $logisticsContact = null;
+        }
+
+        return view('shared.messages.index', compact('conversations', 'logisticsContact'));
     }
 
     public function show(User $user)

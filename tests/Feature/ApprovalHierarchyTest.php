@@ -20,6 +20,7 @@ class ApprovalHierarchyTest extends SQLiteTestCase
         parent::setUp();
 
         $this->migrateApprovalSchema();
+        (require database_path('migrations/2026_11_12_180000_add_logistics_rider_application_policies.php'))->up();
 
         foreach (['buyer', 'seller', 'logistics', 'rider', 'admin'] as $role) {
             Role::firstOrCreate(['name' => $role]);
@@ -34,6 +35,7 @@ class ApprovalHierarchyTest extends SQLiteTestCase
     protected function tearDown(): void
     {
         Schema::disableForeignKeyConstraints();
+        Schema::dropIfExists('rider_policy_acceptances');
 
         foreach (['email_verification_otps', 'notifications', 'orders', 'products', 'role_user', 'roles', 'logistics', 'users'] as $table) {
             Schema::dropIfExists($table);
@@ -198,7 +200,9 @@ class ApprovalHierarchyTest extends SQLiteTestCase
     {
         $owner = $this->makeUser('logistics', $userStatus);
 
-        $logistic = Logistic::create([
+        $logistic = Logistic::forceCreate([
+            'rider_application_terms' => 'Test terms',
+            'rider_application_privacy' => 'Test privacy policy',
             'owner_user_id' => $owner->id,
             'company_name' => 'Acme Logistics',
             'contact_person' => $owner->name,
@@ -436,9 +440,48 @@ class ApprovalHierarchyTest extends SQLiteTestCase
         $this->post(route('apply.rider.store'), $this->riderApplicationPayload([
             'email' => 'applicant@example.com',
             'logistic_id' => $pendingLogistic->id,
-        ]))->assertNotFound();
+        ]))->assertSessionHasErrors('logistic_id');
 
         $this->assertDatabaseMissing('users', ['email' => 'applicant@example.com']);
+    }
+
+    public function test_blank_rider_application_shows_required_field_errors(): void
+    {
+        $this->from(route('apply.rider'))->post(route('apply.rider.store'))
+            ->assertRedirect(route('apply.rider'))
+            ->assertSessionHasErrors(['logistic_id', 'first_name', 'or_document', 'accept_rider_policy']);
+    }
+
+    public function test_rider_application_rejects_a_stale_policy_version(): void
+    {
+        [, $logistic] = $this->makeLogistics('active');
+        $payload = $this->riderApplicationPayload(['logistic_id' => $logistic->id]);
+        $logistic->forceFill(['rider_application_terms' => 'Updated terms'])->save();
+
+        $this->post(route('apply.rider.store'), $payload)->assertSessionHasErrors('rider_policy_version');
+        $this->assertDatabaseMissing('users', ['email' => $payload['email']]);
+    }
+
+    public function test_only_the_applicants_logistics_company_can_open_private_rider_documents(): void
+    {
+        [$owner, $logistic] = $this->makeLogistics('active');
+        [$otherOwner] = $this->makeLogistics('active');
+        $rider = $this->makeRider('pending', $logistic);
+        $rider->forceFill(['or_document' => 'rider-documents/test-or.png'])->save();
+        $disk = Storage::fake('supabase_private');
+        $disk->put($rider->or_document, base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDioAAAAASUVORK5CYII='
+        ));
+
+        $orUrl = route('logistic.riders.documents.show', [$rider, 'or_document']);
+        $this->actingAs($otherOwner)->get($orUrl)->assertForbidden();
+        $this->actingAs($owner)->get($orUrl)
+            ->assertOk()
+            ->assertHeader('Content-Type', 'image/png');
+        $this->get(route('logistic.riders.documents.show', [$rider, 'cr_document']))
+            ->assertNotFound();
+        $this->get(route('logistic.riders.documents.show', [$rider, 'business_permit']))
+            ->assertNotFound();
     }
 
     public function test_rider_application_is_pending_until_the_company_approves(): void
@@ -451,6 +494,13 @@ class ApprovalHierarchyTest extends SQLiteTestCase
         ]))->assertRedirect(route('login'));
 
         $applicant = User::where('email', 'applicant@example.com')->firstOrFail();
+
+        $this->assertDatabaseHas('rider_policy_acceptances', [
+            'user_id' => $applicant->id,
+            'logistic_id' => $logistic->id,
+            'terms' => 'Test terms',
+            'privacy_policy' => 'Test privacy policy',
+        ]);
 
         $this->assertTrue($applicant->isRider());
         $this->assertSame(User::STATUS_PENDING, $applicant->status);
@@ -599,6 +649,8 @@ class ApprovalHierarchyTest extends SQLiteTestCase
     private function riderApplicationPayload(array $overrides = []): array
     {
         $payload = array_merge([
+            'accept_rider_policy' => '1',
+            'rider_policy_version' => Logistic::find($overrides['logistic_id'] ?? null)?->riderApplicationPolicyVersion(),
             'first_name' => 'Juan',
             'last_name' => 'Dela Cruz',
             'sex' => 'Male',
@@ -619,7 +671,7 @@ class ApprovalHierarchyTest extends SQLiteTestCase
         ], $overrides);
 
         // The fake disk keeps the registration flow from touching real storage.
-        Storage::fake('public');
+        Storage::fake('supabase_private');
 
         return $payload;
     }

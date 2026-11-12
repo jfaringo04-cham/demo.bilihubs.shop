@@ -12,12 +12,6 @@
     </div>
   </div>
 
-  @if(session('success'))
-  <div class="alert alert-success">
-    {{ session('success') }}
-  </div>
-  @endif
-
   {{-- Rider Profile Summary --}}
   <div class="card border-0 shadow-sm mb-4">
     <div class="card-body p-4">

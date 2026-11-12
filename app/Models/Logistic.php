@@ -60,6 +60,18 @@ class Logistic extends Model
         'longitude' => 'decimal:7',
     ];
 
+    public function riderApplicationPolicyVersion(): ?string
+    {
+        if (trim((string) $this->rider_application_terms) === ''
+            || trim((string) $this->rider_application_privacy) === '') {
+            return null;
+        }
+
+        return hash('sha256', json_encode([
+            $this->id, $this->company_name, $this->rider_application_terms, $this->rider_application_privacy,
+        ], JSON_THROW_ON_ERROR));
+    }
+
     public function owner(): BelongsTo
     {
         return $this->belongsTo(User::class, 'owner_user_id');

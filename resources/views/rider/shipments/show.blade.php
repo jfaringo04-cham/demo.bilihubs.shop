@@ -80,9 +80,16 @@ $canCollectCod = $isCod
             </div>
         </div>
 
-        <span class="badge bg-{{ $statusColor }} fs-6 px-3 py-2">
-            {{ ucwords(str_replace('_', ' ', $status)) }}
-        </span>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            @if ($order?->user_id && (int) $order->user_id !== (int) auth()->id())
+                <a href="{{ route('rider.messages.show', $order->user_id) }}" class="btn btn-outline-primary">
+                    <i class="bi bi-chat-dots me-1" aria-hidden="true"></i> Message Buyer
+                </a>
+            @endif
+            <span class="badge bg-{{ $statusColor }} fs-6 px-3 py-2">
+                {{ ucwords(str_replace('_', ' ', $status)) }}
+            </span>
+        </div>
     </div>
 
     

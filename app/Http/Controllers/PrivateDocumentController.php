@@ -92,6 +92,22 @@ class PrivateDocumentController extends Controller
     {
         abort_unless(Auth::user()?->isAdmin(), 403);
 
+        return $this->streamRegistrationDocument($user, $type);
+    }
+
+    public function showRiderDocument(User $rider, string $type)
+    {
+        $logistic = Auth::user()?->ownedLogistic;
+
+        abort_unless($logistic && $rider->isRider()
+            && (int) $rider->logistic_id === (int) $logistic->id, 403);
+        abort_unless(in_array($type, ['or_document', 'cr_document'], true), 404);
+
+        return $this->streamRegistrationDocument($rider, $type);
+    }
+
+    private function streamRegistrationDocument(User $user, string $type)
+    {
         $allowedTypes = [
             'id_verification',
             'business_permit',

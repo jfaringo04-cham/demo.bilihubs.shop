@@ -2195,14 +2195,18 @@ class DashboardController extends Controller
             'Only riders can update availability.'
         );
 
-        abort_unless(
-            $rider->status === 'active'
-                && $rider->logistic_status === 'approved'
-                && $rider->logistic_id !== null
-                && $rider->hub_id !== null,
-            422,
-            'Your rider account must be approved and assigned to a hub.'
-        );
+        if (
+            $rider->status !== 'active'
+            || $rider->logistic_status !== 'approved'
+            || $rider->logistic_id === null
+            || $rider->hub_id === null
+        ) {
+            $message = 'Your rider account must be active, approved, and assigned to a hub. Contact your logistics company for help.';
+
+            abort_if($request->expectsJson(), 422, $message);
+
+            return back()->with('error', $message);
+        }
 
         if (
             $validated['availability_status'] === 'available'

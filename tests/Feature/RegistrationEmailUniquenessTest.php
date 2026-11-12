@@ -53,6 +53,7 @@ class RegistrationEmailUniquenessTest extends SQLiteTestCase
         );
 
         $this->migrateRegistrationSchema();
+        (require database_path('migrations/2026_11_12_180000_add_logistics_rider_application_policies.php'))->up();
 
         foreach (['buyer', 'seller', 'logistics', 'rider', 'admin'] as $role) {
             Role::firstOrCreate(['name' => $role]);
@@ -69,6 +70,7 @@ class RegistrationEmailUniquenessTest extends SQLiteTestCase
             config('database.connections.sqlite.database') === ':memory:'
         ) {
             Schema::disableForeignKeyConstraints();
+            Schema::dropIfExists('rider_policy_acceptances');
 
             foreach (
                 [
@@ -259,9 +261,11 @@ class RegistrationEmailUniquenessTest extends SQLiteTestCase
 
     private function riderPayload(array $overrides = []): array
     {
-        Storage::fake('public');
+        Storage::fake('supabase_private');
 
         return array_merge([
+            'accept_rider_policy' => '1',
+            'rider_policy_version' => Logistic::find($overrides['logistic_id'] ?? null)?->riderApplicationPolicyVersion(),
             'first_name' => 'Juan',
             'last_name' => 'Dela Cruz',
             'sex' => 'Male',
@@ -287,7 +291,9 @@ class RegistrationEmailUniquenessTest extends SQLiteTestCase
         $owner = User::factory()->create(['status' => User::STATUS_ACTIVE]);
         $owner->roles()->syncWithoutDetaching([Role::where('name', 'logistics')->value('id')]);
 
-        return Logistic::create([
+        return Logistic::forceCreate([
+            'rider_application_terms' => 'Test terms',
+            'rider_application_privacy' => 'Test privacy policy',
             'owner_user_id' => $owner->id,
             'company_name' => 'Acme Logistics',
             'status' => 'active',

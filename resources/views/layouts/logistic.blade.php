@@ -42,13 +42,12 @@
         </a>
       </div>
 
-      <nav class="sidebar-menu">
+      <nav class="sidebar-menu" aria-label="Logistics navigation">
 
-        <!-- MAIN -->
-        <div class="sidebar-label">MAIN</div>
+        <div class="sidebar-label">OVERVIEW</div>
 
         <a href="{{ route('logistic.dashboard') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.dashboard') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.dashboard') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-speedometer2"></i>
           </span>
@@ -56,40 +55,45 @@
         </a>
 
         <a href="{{ route('logistic.home') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.home') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.home') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-house"></i>
           </span>
-          <span>Home</span>
+          <span>Company Overview</span>
         </a>
 
+        <div class="sidebar-divider"></div>
+
+        <div class="sidebar-label">OPERATIONS</div>
+
         <a href="{{ route('logistic.orders') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.orders*') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.orders*') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-receipt"></i>
           </span>
           <span>Orders</span>
         </a>
 
-        <a href="{{ route('logistic.riders') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.riders') ? 'active' : '' }}">
-          <span class="sidebar-icon">
-            <i class="bi bi-people"></i>
-          </span>
-          <span>Riders</span>
-        </a>
-
         <a href="{{ route('logistic.shipments') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.shipments*') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.shipments*') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-box-seam"></i>
           </span>
           <span>Shipments</span>
         </a>
 
-        <!-- NEW: PICKUP EXCEPTION HANDLING -->
+        @if (\Illuminate\Support\Facades\Route::has('logistic.returns.index'))
+          <a href="{{ route('logistic.returns.index') }}"
+            class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.returns.*') ? 'active' : '' }}">
+            <span class="sidebar-icon">
+              <i class="bi bi-arrow-return-left"></i>
+            </span>
+            <span>Return Shipments</span>
+          </a>
+        @endif
+
         <a href="{{ route('logistic.pickup-exceptions.index') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.pickup-exceptions.*') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.pickup-exceptions.*') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-exclamation-triangle"></i>
           </span>
@@ -97,7 +101,7 @@
         </a>
 
         <a href="{{ route('logistic.sorting-area') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.sorting-area') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.sorting-area') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-clipboard-data"></i>
           </span>
@@ -105,7 +109,7 @@
         </a>
 
         <a href="{{ route('logistic.linehaul-trips.index') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.linehaul-trips.*') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.linehaul-trips.*') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-truck"></i>
           </span>
@@ -114,11 +118,38 @@
 
         <div class="sidebar-divider"></div>
 
-        <!-- FINANCE -->
+        <div class="sidebar-label">RIDERS &amp; HUBS</div>
+
+        <a href="{{ route('logistic.riders') }}"
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.riders', 'logistic.riders.*') ? 'active' : '' }}">
+          <span class="sidebar-icon">
+            <i class="bi bi-people"></i>
+          </span>
+          <span>Riders</span>
+        </a>
+
+        <a href="{{ route('logistic.applications') }}"
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.applications') ? 'active' : '' }}">
+          <span class="sidebar-icon">
+            <i class="bi bi-person-check"></i>
+          </span>
+          <span>Rider Applications</span>
+        </a>
+
+        <a href="{{ route('logistic.hubs') }}"
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.hubs*') ? 'active' : '' }}">
+          <span class="sidebar-icon">
+            <i class="bi bi-geo-alt"></i>
+          </span>
+          <span>Hubs</span>
+        </a>
+
+        <div class="sidebar-divider"></div>
+
         <div class="sidebar-label">FINANCE</div>
 
         <a href="{{ route('logistic.wallet') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.wallet') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.wallet') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-wallet2"></i>
           </span>
@@ -126,7 +157,7 @@
         </a>
 
         <a href="{{ route('logistic.cod-remittances.index') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.cod-remittances.*') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.cod-remittances.*') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-cash-stack"></i>
           </span>
@@ -134,7 +165,7 @@
         </a>
 
         <a href="{{ route('logistic.cod-reconciliation.index') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.cod-reconciliation.*') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.cod-reconciliation.*') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-pie-chart"></i>
           </span>
@@ -142,7 +173,7 @@
         </a>
 
         <a href="{{ route('logistic.cod-admin-remittances.index') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.cod-admin-remittances.*') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.cod-admin-remittances.*') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-bank"></i>
           </span>
@@ -151,44 +182,14 @@
 
         <div class="sidebar-divider"></div>
 
-        <!-- ANALYTICS -->
         <div class="sidebar-label">ANALYTICS</div>
 
         <a href="{{ route('logistic.reports') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.reports') ? 'active' : '' }}">
+          class="sidebar-item py-2 d-flex align-items-center {{ request()->routeIs('logistic.reports') ? 'active' : '' }}">
           <span class="sidebar-icon">
             <i class="bi bi-graph-up-arrow"></i>
           </span>
           <span>Reports</span>
-        </a>
-
-        <div class="sidebar-divider"></div>
-
-        <!-- MANAGEMENT -->
-        <div class="sidebar-label">MANAGEMENT</div>
-
-        <a href="{{ route('logistic.hubs') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.hubs*') ? 'active' : '' }}">
-          <span class="sidebar-icon">
-            <i class="bi bi-geo-alt"></i>
-          </span>
-          <span>Hubs</span>
-        </a>
-
-        <a href="{{ route('logistic.applications') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.applications') ? 'active' : '' }}">
-          <span class="sidebar-icon">
-            <i class="bi bi-person-check"></i>
-          </span>
-          <span>Applications</span>
-        </a>
-
-        <a href="{{ route('logistic.notifications') }}"
-          class="sidebar-item d-flex align-items-center {{ request()->routeIs('logistic.notifications') ? 'active' : '' }}">
-          <span class="sidebar-icon">
-            <i class="bi bi-bell"></i>
-          </span>
-          <span>Notifications</span>
         </a>
 
       </nav>

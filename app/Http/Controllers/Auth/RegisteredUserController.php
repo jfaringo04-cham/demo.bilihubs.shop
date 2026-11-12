@@ -215,7 +215,16 @@ class RegisteredUserController extends Controller
 
         $logistics = \App\Models\Logistic::where('status', 'active')->get();
 
-        return view('auth.apply-rider', compact('logistics'));
+        $riderPolicies = $logistics->mapWithKeys(fn (Logistic $company) => [
+            $company->id => [
+                'name' => $company->company_name,
+                'terms' => $company->rider_application_terms,
+                'privacy' => $company->rider_application_privacy,
+                'version' => $company->riderApplicationPolicyVersion(),
+            ],
+        ]);
+
+        return view('auth.apply-rider', compact('logistics', 'riderPolicies'));
     }
 
     public function storeRiderApplication(Request $request)
@@ -297,9 +306,9 @@ class RegisteredUserController extends Controller
 
             ],
 
-            'birthday' => ['required', 'date'],
+            'birthday' => ['required', 'date_format:Y-m-d', 'before_or_equal:' . today()->subYearsNoOverflow(18)->toDateString()],
 
-            'age' => ['required', 'integer', 'min:0', 'max:120'],
+
 
             'region' => ['required', 'string', 'max:255'],
 
@@ -312,6 +321,11 @@ class RegisteredUserController extends Controller
             'house_number' => ['nullable', 'string', 'max:50'],
 
             'street_address' => ['nullable', 'string', 'max:255'],
+
+            'region_name' => ['nullable', 'string', 'max:255'],
+            'province_name' => ['nullable', 'string', 'max:255'],
+            'municipality_name' => ['nullable', 'string', 'max:255'],
+            'barangay_name' => ['nullable', 'string', 'max:255'],
 
             'password' => [
 
@@ -337,15 +351,21 @@ class RegisteredUserController extends Controller
 
             'cr_document' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
 
-            'logistic_id' => ['required', 'exists:logistics,id'],
+            'logistic_id' => [
+                'required', 'integer',
+                \Illuminate\Validation\Rule::exists('logistics', 'id')->where('status', 'active'),
+            ],
+            'accept_rider_policy' => ['accepted'],
+            'rider_policy_version' => ['required', 'string', 'size:64'],
 
+        ], [
+            'birthday.before_or_equal' => 'You must be at least 18 years old to apply as a rider.',
+            'accept_rider_policy.accepted' => 'Please accept the selected logistics company’s rider terms and privacy policy.',
+            'rider_policy_version.required' => 'Select a logistics company with published rider policies.',
         ]);
 
-        $logistic = \App\Models\Logistic::where('id', $validated['logistic_id'])
-
-            ->where('status', 'active')
-
-            ->firstOrFail();
+        $logistic = Logistic::find($validated['logistic_id']);
+        $this->verifyRiderApplicationPolicy($logistic, $validated['rider_policy_version']);
 
         $middleName = $validated['middle_name'] ?? null;
 
@@ -373,7 +393,7 @@ class RegisteredUserController extends Controller
 
             'birthday' => $validated['birthday'],
 
-            'age' => $validated['age'],
+            'age' => (int) \Illuminate\Support\Carbon::parse($validated['birthday'])->diffInYears(today()),
 
             'region' => $validated['region'],
 
@@ -386,6 +406,11 @@ class RegisteredUserController extends Controller
             'house_number' => $houseNumber,
 
             'street_address' => $streetAddress,
+
+            'region_name' => $validated['region_name'] ?? null,
+            'province_name' => $validated['province_name'] ?? null,
+            'municipality_name' => $validated['municipality_name'] ?? null,
+            'barangay_name' => $validated['barangay_name'] ?? null,
 
             'password' => Hash::make($validated['password']),
 
@@ -444,9 +469,20 @@ class RegisteredUserController extends Controller
                 $userData[$field] = $path;
             }
 
-            $user = DB::transaction(function () use ($userData) {
+            $user = DB::transaction(function () use ($userData, $validated) {
+                $company = Logistic::lockForUpdate()->find($userData['logistic_id']);
+                $this->verifyRiderApplicationPolicy($company, $validated['rider_policy_version']);
 
                 $user = User::create($userData);
+
+                DB::table('rider_policy_acceptances')->insert([
+                    'user_id' => $user->id,
+                    'logistic_id' => $company->id,
+                    'company_name' => $company->company_name,
+                    'terms' => $company->rider_application_terms,
+                    'privacy_policy' => $company->rider_application_privacy,
+                    'accepted_at' => now(),
+                ]);
 
                 $riderRole = Role::where('name', 'rider')->firstOrFail();
 
@@ -514,6 +550,17 @@ class RegisteredUserController extends Controller
         $request->session()->put('rider_registration_email', $user->email);
 
         return redirect(route('login'))->with('success', 'Your rider application has been submitted to ' . $logistic->company_name . '. Please wait for approval.');
+    }
+
+    private function verifyRiderApplicationPolicy(?Logistic $company, string $submittedVersion): void
+    {
+        $version = $company?->riderApplicationPolicyVersion();
+
+        if (!$company || $company->status !== 'active' || !$version || !hash_equals($version, $submittedVersion)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'rider_policy_version' => 'The selected company’s rider policies are unavailable or changed. Review the current policies before submitting.',
+            ]);
+        }
     }
 
     private function geocodeAddress($address)

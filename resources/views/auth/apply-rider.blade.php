@@ -12,8 +12,9 @@
             <i class="bi bi-info-circle"></i> Apply to join one of our logistics partners. Your selected logistics company will review your application. Once approved, you can log in and start receiving delivery assignments.
           </div>
 
-          <form method="POST" action="{{ route('apply.rider.store') }}" enctype="multipart/form-data" id="riderApplyForm">
+          <form method="POST" action="{{ route('apply.rider.store', [], false) }}" enctype="multipart/form-data" id="riderApplyForm" novalidate>
             @csrf
+
 
             <h5 class="mb-3">Apply to Logistics Company</h5>
             <div class="row g-3 mb-4">
@@ -30,6 +31,31 @@
                 @error('logistic_id') <div class="text-danger">{{ $message }}</div> @enderror
               </div>
             </div>
+
+            <section class="border rounded p-3 mb-4" aria-labelledby="riderPoliciesTitle">
+              <h5 id="riderPoliciesTitle">Logistics Rider Policies</h5>
+              <p id="riderPolicyMessage" class="text-muted" role="status">Select a logistics company to view its rider policies.</p>
+              <div id="riderPolicyDetails" hidden>
+                <details class="mb-2">
+                  <summary>Rider Terms and Conditions</summary>
+                  <div id="riderTermsText" class="mt-2 text-break" style="white-space: pre-wrap"></div>
+                </details>
+                <details class="mb-2">
+                  <summary>Rider Privacy Policy</summary>
+                  <div id="riderPrivacyText" class="mt-2 text-break" style="white-space: pre-wrap"></div>
+                </details>
+                <div class="form-check">
+                  <input type="checkbox" class="form-check-input" name="accept_rider_policy"
+                         id="accept_rider_policy" value="1" required disabled>
+                  <label class="form-check-label" for="accept_rider_policy">
+                    I agree to this logistics company’s rider terms and acknowledge its privacy policy.
+                  </label>
+                </div>
+              </div>
+              <input type="hidden" name="rider_policy_version" id="rider_policy_version" value="">
+              @error('accept_rider_policy') <div class="text-danger">{{ $message }}</div> @enderror
+              @error('rider_policy_version') <div class="text-danger">{{ $message }}</div> @enderror
+            </section>
 
             <h5 class="mb-3">Personal Information</h5>
             <div class="row g-3 mb-4">
@@ -69,7 +95,7 @@
               </div>
               <div class="col-md-3">
                 <label for="birthday" class="form-label">Birthday <span class="text-danger">*</span></label>
-                <input type="date" name="birthday" id="birthday" class="form-control" value="{{ old('birthday') }}" required>
+                <input type="date" name="birthday" id="birthday" class="form-control" max="{{ today()->subYearsNoOverflow(18)->toDateString() }}" value="{{ old('birthday') }}" required>
                 @error('birthday') <div class="text-danger">{{ $message }}</div> @enderror
               </div>
               <div class="col-md-3">
@@ -80,6 +106,10 @@
             </div>
 
             <h5 class="mb-3">Address</h5>
+            <input type="hidden" name="region_name" id="region_name" value="{{ old('region_name') }}">
+            <input type="hidden" name="province_name" id="province_name" value="{{ old('province_name') }}">
+            <input type="hidden" name="municipality_name" id="municipality_name" value="{{ old('municipality_name') }}">
+            <input type="hidden" name="barangay_name" id="barangay_name" value="{{ old('barangay_name') }}">
             <div class="row g-3 mb-4">
               <div class="col-md-4">
                 <label for="region" class="form-label">Region <span class="text-danger">*</span></label>
@@ -145,12 +175,34 @@
             <div class="row g-3 mb-4">
               <div class="col-md-6">
                 <label for="password" class="form-label">Password <span class="text-danger">*</span></label>
-                <input type="password" name="password" id="password" class="form-control" required>
+                <div class="input-group">
+                  <input type="password" name="password" id="password" class="form-control"
+                         aria-describedby="riderPasswordRules" autocomplete="new-password" required>
+                  <button type="button" class="btn btn-outline-secondary" data-rider-password-toggle="password"
+                          aria-controls="password" aria-label="Show password" hidden>
+                    <i class="bi bi-eye" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <ul id="riderPasswordRules" class="small ps-3 mt-2 mb-0">
+                  <li data-password-rule="length"><span data-password-check aria-hidden="true" hidden>✓ </span>At least 8 characters</li>
+                  <li data-password-rule="case"><span data-password-check aria-hidden="true" hidden>✓ </span>An uppercase and a lowercase letter</li>
+                  <li data-password-rule="number"><span data-password-check aria-hidden="true" hidden>✓ </span>At least one number</li>
+                  <li data-password-rule="symbol"><span data-password-check aria-hidden="true" hidden>✓ </span>At least one symbol, such as ! or @</li>
+                </ul>
+                <p id="riderPasswordProgress" class="visually-hidden" aria-live="polite"></p>
                 @error('password') <div class="text-danger">{{ $message }}</div> @enderror
               </div>
               <div class="col-md-6">
                 <label for="password_confirmation" class="form-label">Confirm Password <span class="text-danger">*</span></label>
-                <input type="password" name="password_confirmation" id="password_confirmation" class="form-control" required>
+                <div class="input-group">
+                  <input type="password" name="password_confirmation" id="password_confirmation" class="form-control"
+                         aria-describedby="riderPasswordMatch" autocomplete="new-password" required>
+                  <button type="button" class="btn btn-outline-secondary" data-rider-password-toggle="confirm password"
+                          aria-controls="password_confirmation" aria-label="Show confirm password" hidden>
+                    <i class="bi bi-eye" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <p id="riderPasswordMatch" class="small mt-2 mb-0" aria-live="polite"></p>
               </div>
             </div>
 
@@ -190,6 +242,7 @@
     'province' => old('province'),
     'municipality' => old('municipality'),
     'barangay' => old('barangay'),
+    'riderPolicies' => $riderPolicies,
   ];
   @endphp @json($authPageData)
 </script>
@@ -197,4 +250,12 @@
 
 @push('scripts')
 @vite('resources/js/auth/apply-rider.js')
+@endpush
+
+@push('styles')
+<style>
+    #riderApplyForm input[type="password"]::-ms-reveal {
+        display: none;
+    }
+</style>
 @endpush

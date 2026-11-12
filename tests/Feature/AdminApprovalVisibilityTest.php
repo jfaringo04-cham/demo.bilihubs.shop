@@ -20,6 +20,7 @@ class AdminApprovalVisibilityTest extends SQLiteTestCase
         parent::setUp();
 
         $this->migrateSchema();
+        (require database_path('migrations/2026_11_12_180000_add_logistics_rider_application_policies.php'))->up();
 
         // PostgreSQL REGEXP_REPLACE compatibility for SQLite tests only.
         if (
@@ -58,6 +59,7 @@ class AdminApprovalVisibilityTest extends SQLiteTestCase
     protected function tearDown(): void
     {
         Schema::disableForeignKeyConstraints();
+        Schema::dropIfExists('rider_policy_acceptances');
 
         foreach (['seller_registration_details', 'email_verification_otps', 'notifications', 'products', 'orders', 'sellers', 'addresses', 'role_user', 'roles', 'logistics', 'users'] as $table) {
             Schema::dropIfExists($table);
@@ -593,7 +595,9 @@ class AdminApprovalVisibilityTest extends SQLiteTestCase
 
         $owner = User::factory()->create(['status' => User::STATUS_ACTIVE]);
         $owner->roles()->syncWithoutDetaching([Role::where('name', 'logistics')->value('id')]);
-        $logistic = Logistic::create([
+        $logistic = Logistic::forceCreate([
+            'rider_application_terms' => 'Test terms',
+            'rider_application_privacy' => 'Test privacy policy',
             'owner_user_id' => $owner->id,
             'company_name' => 'Acme Logistics',
             'status' => 'active',
@@ -618,9 +622,11 @@ class AdminApprovalVisibilityTest extends SQLiteTestCase
 
     private function riderPayload(int $logisticId): array
     {
-        Storage::fake('public');
+        Storage::fake('supabase_private');
 
         return [
+            'accept_rider_policy' => '1',
+            'rider_policy_version' => Logistic::find($logisticId)?->riderApplicationPolicyVersion(),
             'first_name' => 'Juan',
             'last_name' => 'Dela Cruz',
             'sex' => 'Male',

@@ -560,6 +560,12 @@
 
 
 
+            @if ((int) $shipment->pickup_rider_id === (int) auth()->id() && $seller?->user_id && (int) $seller->user_id !== (int) auth()->id())
+              <a href="{{ route('rider.messages.show', $seller->user_id) }}" class="btn btn-sm btn-outline-primary mb-1">
+                <i class="bi bi-chat-dots me-1" aria-hidden="true"></i> Message Seller
+              </a>
+            @endif
+
             @if($isSellerPickup
 
             && $shipment->status === 'assigned'

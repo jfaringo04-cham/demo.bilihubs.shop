@@ -796,6 +796,9 @@ Route::middleware('auth')->group(function () {
 
         Route::get('/riders/{rider}', [LogisticController::class, 'showRider'])->whereNumber('rider')->name('riders.show');
 
+        Route::get('/riders/{rider}/documents/{type}', [\App\Http\Controllers\PrivateDocumentController::class, 'showRiderDocument'])
+            ->whereNumber('rider')->whereIn('type', ['or_document', 'cr_document'])->name('riders.documents.show');
+
         Route::post('/riders/{rider}/approve', [LogisticController::class, 'approveRiderApplication'])->whereNumber('rider')->name('riders.approve');
 
         Route::post('/riders/{rider}/reject', [LogisticController::class, 'rejectRiderApplication'])->whereNumber('rider')->name('riders.reject');
@@ -931,6 +934,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/account', [LogisticController::class, 'account'])->name('account');
 
         Route::put('/account', [LogisticController::class, 'updateAccount'])->name('account.update');
+        Route::put('/account/rider-policies', [\App\Http\Controllers\RiderApplicationPolicyController::class, 'update'])
+            ->name('account.rider-policies');
 
         Route::get('/hubs', [LogisticController::class, 'hubs'])->name('hubs');
 

@@ -42,18 +42,29 @@
               <textarea name="address" id="address" class="form-control rounded-xl" rows="2">{{ $logistic->address ?? '' }}</textarea>
             </div>
             <div class="col-12">
-              <label for="api_address" class="form-label fw-medium">Hub API Address / Location</label>
-              <input type="text" name="api_address" id="api_address" class="form-control rounded-xl" value="{{ $logistic->api_address ?? '' }}" placeholder="Enter hub API address or full location for auto-assignment">
-              <small class="text-muted">This address will be used to auto-match orders near your hub for rider assignment.</small>
+              <label for="api_address" class="form-label fw-medium">Company Hub Address</label>
+              <input type="text" name="api_address" id="api_address" class="form-control rounded-xl @error('api_address') is-invalid @enderror"
+                     value="{{ old('api_address', $logistic->api_address) }}" maxlength="500"
+                     placeholder="e.g. Bubukal, Santa Cruz, Laguna" aria-describedby="hub-address-help @error('api_address') hub-address-error @enderror">
+              <div id="hub-address-help" class="form-text">Enter the full address to locate your company hub on the map. Manage delivery coverage for each hub under Hubs.</div>
+              @error('api_address') <div id="hub-address-error" class="invalid-feedback">{{ $message }}</div> @enderror
             </div>
             <div class="col-12">
               <label for="logo" class="form-label fw-medium">Company Logo</label>
-              <input type="file" name="logo" id="logo" class="form-control rounded-xl" accept="image/*">
-              @if($logistic->logo_url)
-                  <div class="mt-2">
-                      <img src="{{ $logistic->logo_url }}" alt="Company Logo" class="img-thumbnail rounded" style="max-height: 80px;">
-                  </div>
+              <input type="file" name="logo" id="logo" class="form-control rounded-xl @error('logo') is-invalid @enderror"
+                     accept=".jpg,.jpeg,.png,image/jpeg,image/png" aria-describedby="logo-help @error('logo') logo-error @enderror">
+              <div id="logo-help" class="form-text">JPG or PNG, up to 5 MB.</div>
+              @error('logo') <div id="logo-error" class="invalid-feedback">{{ $message }}</div> @enderror
+              @if ($logistic->logo_url)
+                <div class="mt-2">
+                  <div class="small text-muted">Current logo</div>
+                  <img src="{{ $logistic->logo_url }}" alt="Current company logo" class="img-thumbnail rounded" style="max-height: 80px;">
+                </div>
               @endif
+              <div id="new-logo-preview" class="mt-2" hidden>
+                <div class="small text-muted">Selected logo preview</div>
+                <img id="new-logo-image" alt="Selected company logo" class="img-thumbnail rounded" style="max-height: 80px;">
+              </div>
             </div>
           </div>
           <div class="mt-4">
@@ -62,9 +73,60 @@
         </form>
       </div>
     </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-body">
+        <h2 class="h5">Rider Application Policies</h2>
+        <p>Applicants must accept these policies before they can apply to your company.</p>
+        <form method="POST" action="{{ route('logistic.account.rider-policies', [], false) }}">
+          @csrf
+          @method('PUT')
+          <label for="rider_application_terms" class="form-label">Rider Terms and Conditions</label>
+          <textarea id="rider_application_terms" name="rider_application_terms" class="form-control mb-2"
+                    rows="6" maxlength="12000" required>{{ old('rider_application_terms', $logistic->rider_application_terms) }}</textarea>
+          @error('rider_application_terms') <p class="text-danger">{{ $message }}</p> @enderror
+          <label for="rider_application_privacy" class="form-label">Rider Privacy Policy</label>
+          <textarea id="rider_application_privacy" name="rider_application_privacy" class="form-control mb-2"
+                    rows="6" maxlength="12000" required>{{ old('rider_application_privacy', $logistic->rider_application_privacy) }}</textarea>
+          @error('rider_application_privacy') <p class="text-danger">{{ $message }}</p> @enderror
+          <button class="btn btn-primary" type="submit">Save Rider Policies</button>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 </div>
 @endsection
 
+@push('scripts')
+<script>
+  (() => {
+    const input = document.getElementById('logo');
+    const preview = document.getElementById('new-logo-preview');
+    const image = document.getElementById('new-logo-image');
+    let previewUrl;
 
+    input.addEventListener('change', () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        previewUrl = undefined;
+      }
+
+      preview.hidden = true;
+      image.removeAttribute('src');
+
+      const file = input.files[0];
+      if (!file || !['image/jpeg', 'image/png'].includes(file.type) || file.size > 5 * 1024 * 1024) {
+        return;
+      }
+
+      previewUrl = URL.createObjectURL(file);
+      image.src = previewUrl;
+    });
+
+    image.addEventListener('load', () => {
+      preview.hidden = false;
+    });
+  })();
+</script>
+@endpush
