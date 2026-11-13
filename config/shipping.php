@@ -24,4 +24,7 @@ return [
     // Deploy only ON OR AFTER this timestamp to prevent a pricing/payout gap.
     // 2026-11-10 00:00 Asia/Manila = 2026-11-09 16:00 UTC.
     'bonus_effective_at' => '2026-11-10T00:00:00+08:00',
+
+    // Set to the rollout instant (ISO 8601 with timezone) to opt in new orders.
+    'linehaul_bonus_effective_at' => env('LINEHAUL_BONUS_EFFECTIVE_AT'),
 ];

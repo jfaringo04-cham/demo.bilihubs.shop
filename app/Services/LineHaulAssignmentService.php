@@ -307,7 +307,14 @@ class LineHaulAssignmentService
                 );
             }
 
+            $distanceKm = $lockedShipment->estimated_distance_km
+                ?? self::estimateDistanceKm(
+                    $lockedShipment->originHub,
+                    $lockedShipment->destinationHub
+                );
+
             $lockedShipment->update([
+                'estimated_distance_km' => $distanceKm,
                 'linehaul_rider_id' => $lockedDriver->id,
                 'linehaul_status' => self::STATUS_ASSIGNED,
                 'linehaul_assigned_at' => now(),

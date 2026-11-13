@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\SellerOrder;
+use App\Models\Shipment;
 use Carbon\CarbonImmutable;
 
 /**
@@ -39,14 +40,31 @@ final class ShippingBonusService
         return self::extraMinor((int) ($order->shipping_minor ?? 0));
     }
 
-    public static function deliveryExtraForOrderMinor(?SellerOrder $order): int
+    public static function linehaulExtraForOrderMinor(?SellerOrder $order, ?Shipment $shipment): int
     {
-        return intdiv(self::extraForOrderMinor($order), 2);
+        $effectiveAt = config('shipping.linehaul_bonus_effective_at');
+
+        if (!$effectiveAt || !$order?->created_at
+            || CarbonImmutable::parse($order->created_at)->lt(CarbonImmutable::parse($effectiveAt))
+            || !$shipment?->linehaul_rider_id || (float) $shipment->estimated_distance_km <= 0) {
+            return 0;
+        }
+
+        $shipping = app(ShippingFeeService::class);
+        $distanceExtra = $shipping->calculateFeeMinor((float) $shipment->estimated_distance_km)
+            - $shipping->baseFeeMinor();
+
+        return min(self::extraForOrderMinor($order), $distanceExtra);
     }
 
-    public static function logisticsExtraForOrderMinor(?SellerOrder $order): int
+    public static function deliveryExtraForOrderMinor(?SellerOrder $order, ?Shipment $shipment = null): int
     {
-        $extra = self::extraForOrderMinor($order);
+        return intdiv(self::extraForOrderMinor($order) - self::linehaulExtraForOrderMinor($order, $shipment), 2);
+    }
+
+    public static function logisticsExtraForOrderMinor(?SellerOrder $order, ?Shipment $shipment = null): int
+    {
+        $extra = self::extraForOrderMinor($order) - self::linehaulExtraForOrderMinor($order, $shipment);
 
         return $extra - intdiv($extra, 2);
     }
