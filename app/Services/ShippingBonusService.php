@@ -19,7 +19,7 @@ final class ShippingBonusService
 
     /**
      * Only seller orders placed on/after the new shipping-policy activation
-     * may receive the 50/50 distance bonus. Protect legacy orders still
+     * may receive a shipping surcharge bonus. Protect legacy orders still
      * awaiting buyer confirmation and wallet credit.
      */
     public static function extraForOrderMinor(?SellerOrder $order): int
@@ -46,15 +46,13 @@ final class ShippingBonusService
 
         if (!$effectiveAt || !$order?->created_at
             || CarbonImmutable::parse($order->created_at)->lt(CarbonImmutable::parse($effectiveAt))
-            || !$shipment?->linehaul_rider_id || (float) $shipment->estimated_distance_km <= 0) {
+            || !$shipment?->linehaul_rider_id) {
             return 0;
         }
 
-        $shipping = app(ShippingFeeService::class);
-        $distanceExtra = $shipping->calculateFeeMinor((float) $shipment->estimated_distance_km)
-            - $shipping->baseFeeMinor();
-
-        return min(self::extraForOrderMinor($order), $distanceExtra);
+        // Give linehaul one third. Final delivery and logistics split the rest
+        // in whole centavos so the allocated amounts always sum to the surcharge.
+        return intdiv(self::extraForOrderMinor($order), 3);
     }
 
     public static function deliveryExtraForOrderMinor(?SellerOrder $order, ?Shipment $shipment = null): int
