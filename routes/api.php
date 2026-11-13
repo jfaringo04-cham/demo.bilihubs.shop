@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\ShipmentController;
 use App\Http\Controllers\Api\AddressApiController;
 use App\Http\Controllers\Api\Buyer\VoucherController as BuyerVoucherController;
+use App\Http\Controllers\Api\Buyer\WishlistController as BuyerWishlistController;
 
 // ============================================================
 // RIDER MOBILE API CONTROLLERS
@@ -327,6 +328,25 @@ Route::middleware('auth:sanctum')
         Route::post(
             '/buy-now',
             [CartController::class, 'buyNow']
+        );
+
+        // ====================================================
+        // BUYER WISHLIST - MOBILE APP
+        // ====================================================
+
+        Route::get(
+            '/buyer/wishlist',
+            [BuyerWishlistController::class, 'index']
+        );
+
+        Route::post(
+            '/buyer/wishlist/{product}',
+            [BuyerWishlistController::class, 'store']
+        );
+
+        Route::delete(
+            '/buyer/wishlist/{product}',
+            [BuyerWishlistController::class, 'destroy']
         );
 
         // ====================================================
