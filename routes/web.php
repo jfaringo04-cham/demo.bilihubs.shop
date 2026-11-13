@@ -674,6 +674,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/addresses', [RiderDashboardController::class, 'addresses'])->name('addresses');
 
         Route::get('/history', [RiderDashboardController::class, 'history'])->name('history');
+        Route::get('/truck-trip-history', [RiderDashboardController::class, 'truckTripHistory'])
+            ->name('truck-trip-history');
 
         Route::get('/profit', [RiderDashboardController::class, 'profit'])->name('profit');
 

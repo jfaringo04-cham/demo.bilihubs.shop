@@ -1339,6 +1339,20 @@ class DashboardController extends Controller
         abort(403, 'Manual hub pickup is disabled. Scan the parcel QR code to confirm pickup.');
     }
 
+    public function truckTripHistory(Request $request)
+    {
+        $trips = \App\Models\LinehaulTrip::query()
+            ->where('driver_id', $request->user()->id)
+            ->where('status', \App\Models\LinehaulTrip::STATUS_ARRIVED)
+            ->with(['originHub:id,name', 'destinationHub:id,name'])
+            ->withCount('shipments')
+            ->latest('arrived_at')
+            ->orderByDesc('id')
+            ->paginate(20);
+
+        return view('rider.truck-trip-history', compact('trips'));
+    }
+
     public function history(Request $request)
 
     {
