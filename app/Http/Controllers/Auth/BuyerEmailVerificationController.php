@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Mail\BuyerEmailOtp;
 use App\Mail\NewRegistrationAdmin;
+use App\Services\AdminRegistrationNotification;
 use App\Models\EmailVerificationOtp;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -155,6 +156,8 @@ class BuyerEmailVerificationController extends Controller
             ])->save();
 
             $record->delete();
+
+            app(AdminRegistrationNotification::class)->send($lockedUser, 'Buyer');
 
             return null;
         });

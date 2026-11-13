@@ -9,6 +9,7 @@ use App\Http\Controllers\Auth\BuyerEmailVerificationController;
 use App\Http\Controllers\Auth\SellerEmailVerificationController;
 
 use App\Mail\NewRegistrationAdmin;
+use App\Services\AdminRegistrationNotification;
 
 use App\Mail\RegistrationNotification;
 
@@ -1311,6 +1312,8 @@ if ($role === 'logistic_owner') {
                         'bir_form_2303' => $logisticBirForm2303,
 
                     ]);
+
+                    app(AdminRegistrationNotification::class)->send($user, 'Logistics Company');
                 }
 
                 return $user;
