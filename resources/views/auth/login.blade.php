@@ -5,13 +5,13 @@
 @endpush
 
 @section('content')
-<div class="auth-page">
+<div class="auth-page auth-page--login">
     <div class="auth-container">
 
         <!-- Left Visual Panel -->
         <div class="auth-visual">
             <img
-                src="{{ asset('images/hero-marketplace.jpg') }}"
+                src="{{ asset('images/hero-login.webp') }}"
                 alt="BiliHub Marketplace"
                 class="auth-visual-image"
             >
@@ -21,7 +21,7 @@
                     Shop. Sell. Deliver.
                 </h2>
 
-                <p class="text-white-50 small mb-0">
+                <p class="text-white small mb-0">
                     Everything you need in one marketplace.
                 </p>
             </div>
@@ -30,7 +30,7 @@
         <!-- Right Login Form -->
         <div class="auth-form-panel">
 
-            <div class="text-center mb-3 d-none d-lg-block">
+            <div class="text-center mb-2 d-none d-lg-block">
                 <img
                     src="{{ asset('images/bilihublogo.png') }}"
                     alt="BiliHub"
@@ -38,7 +38,7 @@
                 >
             </div>
 
-            <div class="text-center mb-3 d-lg-none">
+            <div class="text-center mb-2 d-lg-none">
                 <img
                     src="{{ asset('images/bilihublogo.png') }}"
                     alt="BiliHub"
@@ -53,7 +53,7 @@
                 Welcome Back
             </h2>
 
-            <p class="text-center text-muted small mb-4">
+            <p class="text-center text-muted small mb-3">
                 Sign in to your BiliHub account.
             </p>
 
@@ -132,7 +132,7 @@
                 </div>
 
                 <!-- Password -->
-                <div class="mb-4">
+                <div class="mb-3">
                     <label
                         for="password"
                         class="form-label fw-medium"
@@ -174,7 +174,7 @@
                 </div>
 
                 <!-- Remember Me + Forgot Password -->
-                <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+                <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
 
                     <div class="d-flex align-items-center">
                         <input
@@ -227,7 +227,7 @@
                 <!-- Sign In -->
                 <button
                     type="submit"
-                    class="btn btn-primary w-100 rounded-xl py-3 fw-semibold mb-4"
+                    class="btn btn-primary w-100 rounded-xl py-2 fw-semibold"
                     id="loginButton"
                 >
                     <span class="btn-text">
@@ -242,7 +242,7 @@
                 </button>
 
                 <!-- Divider -->
-                <div class="d-flex align-items-center my-4">
+                <div class="d-flex align-items-center my-3">
                     <div class="border-top flex-grow-1"></div>
 
                     <span class="mx-3 text-muted small">
@@ -253,7 +253,7 @@
                 </div>
 
                 <!-- Social Login -->
-                <div class="d-grid gap-2 mb-4">
+                <div class="d-grid gap-2 mb-3">
 
                     <a
                         href="{{ route('auth.google') }}"
