@@ -157,8 +157,6 @@ class BuyerEmailVerificationController extends Controller
 
             $record->delete();
 
-            app(AdminRegistrationNotification::class)->send($lockedUser, 'Buyer');
-
             return null;
         });
 
@@ -184,6 +182,14 @@ class BuyerEmailVerificationController extends Controller
                 'error' => $e->getMessage(),
             ]);
         }
+
+        app()->terminating(function () use ($user): void {
+            try {
+                app(AdminRegistrationNotification::class)->send($user, 'Buyer');
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        });
 
         $request->session()->forget('buyer_otp_user_id');
 
