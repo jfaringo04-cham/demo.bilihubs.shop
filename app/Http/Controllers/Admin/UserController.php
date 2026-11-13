@@ -22,7 +22,7 @@ class UserController extends Controller
 
     public function index(Request $request)
     {
-        $query = User::query()->whereDoesntHave('roles', fn ($q) => $q->where('name', 'admin'));
+        $query = User::with('roles')->whereDoesntHave('roles', fn ($q) => $q->where('name', 'admin'));
 
         // User Management lists accounts that already got past approval.
         // Never-approved applicants live in Admin -> Registrations, and
@@ -51,7 +51,7 @@ class UserController extends Controller
             });
         }
 
-        $users = $query->latest()->paginate(15);
+        $users = $query->latest()->orderByDesc('id')->paginate(15)->withQueryString();
         $statuses = [
             User::STATUS_PENDING => 'Pending',
             User::STATUS_ACTIVE => 'Active',

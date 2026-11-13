@@ -117,6 +117,8 @@ class ReportController extends Controller
          * matching seller portion/item instead of counting the full multi-seller
          * buyer checkout total.
          */
+        $salesBreakdown = [];
+
         if ($productId > 0) {
             $totalSalesMinor = OrderItem::query()
                 ->where('product_id', $productId)
@@ -135,18 +137,33 @@ class ReportController extends Controller
                         });
                 })
                 ->sum('subtotal_minor');
-        } elseif ($sellerId > 0) {
-            $totalSalesMinor = SellerOrder::query()
-                ->where('seller_id', $sellerId)
-                ->where('status', 'delivered')
-                ->whereHas('order', function (Builder $order) use ($request, $from, $to) {
-                    $this->applySalesFilters($order, $request, $from, $to);
-                })
-                ->sum('total_minor');
+            $salesBreakdown = ['Delivered item subtotals' => (int) $totalSalesMinor];
         } else {
-            $totalSalesMinor = $deliveredOrders->sum(
-                fn ($order) => (int) $order->total_minor
-            );
+            $salesOrders = $sellerId > 0
+                ? $orders->flatMap(fn (Order $order) => $order->sellerOrders)
+                    ->where('seller_id', $sellerId)
+                    ->where('status', 'delivered')
+                : $deliveredOrders;
+
+            $totalSalesMinor = $salesOrders->sum(fn ($order) => (int) $order->total_minor);
+            $salesBreakdown = [
+                'Product subtotal' => $salesOrders->sum(fn ($order) => (int) $order->subtotal_minor),
+                'Shipping fees' => $salesOrders->sum(fn ($order) => (int) $order->shipping_minor),
+                'Service fees' => $salesOrders->sum(fn ($order) => (int) $order->service_fee_minor),
+                'Discounts' => -$salesOrders->sum(fn ($order) => (int) $order->discount_minor),
+            ];
+
+            if ($sellerId <= 0) {
+                $taxMinor = $salesOrders->sum(fn ($order) => (int) $order->tax_minor);
+                if ($taxMinor !== 0) {
+                    $salesBreakdown['Tax'] = $taxMinor;
+                }
+            }
+
+            $differenceMinor = $totalSalesMinor - array_sum($salesBreakdown);
+            if ($differenceMinor !== 0) {
+                $salesBreakdown['Difference in stored totals'] = $differenceMinor;
+            }
         }
 
         $totalSales = $totalSalesMinor / 100;
@@ -268,6 +285,7 @@ class ReportController extends Controller
         return view('admin.reports-sales', compact(
             'orders',
             'totalSales',
+            'salesBreakdown',
             'orderCount',
             'deliveredCount',
             'byStatus',

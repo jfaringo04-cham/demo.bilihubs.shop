@@ -12,7 +12,7 @@ class ShipmentController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Shipment::with(['logistic', 'rider', 'order']);
+        $query = Shipment::with(['logistic', 'rider']);
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -30,7 +30,7 @@ class ShipmentController extends Controller
 
     public function show(Shipment $shipment)
     {
-        $shipment->load(['logistic', 'rider', 'order']);
+        $shipment->load(['logistic', 'rider']);
         $riders = User::whereHas('roles', fn ($q) => $q->where('name', 'rider'))->get();
 
         return view('admin.shipments.show', compact('shipment', 'riders'));

@@ -3,8 +3,8 @@
 @section('content')
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-4">
   <div>
-    <h1 class="fw-bold text-slate-900 mb-0">Riders Management</h1>
-    <p class="text-muted mb-0">Monitor courier performance and availability</p>
+    <h1 class="fw-bold text-slate-900 mb-0">Riders</h1>
+    <p class="text-muted mb-0">Monitor rider assignments, availability, and completed work.</p>
   </div>
 </div>
 
@@ -14,47 +14,52 @@
       <thead class="table-light">
         <tr>
           <th class="border-0">Rider Name</th>
-          <th class="border-0">Email</th>
-          <th class="border-0">Phone</th>
-          <th class="border-0">Location</th>
-          <th class="border-0">Active Deliveries</th>
-          <th class="border-0">Total Delivered</th>
-          <th class="border-0">Status</th>
+          <th class="border-0">Contact</th>
+          <th class="border-0">Last Known Location</th>
+          <th class="border-0">Active Final Deliveries</th>
+          <th class="border-0">Final Deliveries</th>
+          <th class="border-0">Completed Truck Trips</th>
+          <th class="border-0">Availability</th>
         </tr>
       </thead>
       <tbody>
         @forelse($riders as $rider)
           <tr>
             <td>
-              <div class="d-flex align-items-center gap-3">
-                <div class="bg-sky-100 text-sky-600 rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 40px; height: 40px; font-size: 0.875rem;">
-                  {{ substr($rider->name, 0, 1) }}
-                </div>
-                <span class="fw-semibold">{{ $rider->name }}</span>
+              <div class="fw-semibold">{{ $rider->name }}</div>
+              <div class="small text-muted">{{ $rider->logistic?->company_name ?? 'No logistics company' }}</div>
+              <div class="small text-muted">
+                {{ $rider->relationLoaded('hub') ? ($rider->hub?->name ?? 'No assigned hub') : '—' }}
+                · {{ $rider->vehicle_type ? ucfirst($rider->vehicle_type) : 'No vehicle' }}
               </div>
             </td>
-            <td class="text-muted">{{ $rider->email }}</td>
-            <td class="text-muted">{{ $rider->phone ?? 'N/A' }}</td>
-            <td>
-              @if($rider->latitude && $rider->longitude)
-                <span class="badge bg-success">Online</span>
-                <small class="text-muted d-block">{{ number_format($rider->latitude, 4) }}, {{ number_format($rider->longitude, 4) }}</small>
+            <td class="text-muted">
+              <div>{{ $rider->email }}</div>
+              <div class="small">{{ $rider->mobile_number ?: ($rider->phone ?: 'No phone') }}</div>
+            </td>
+            <td class="text-muted">
+              @if ($rider->latitude !== null && $rider->longitude !== null)
+                <div class="text-nowrap">{{ number_format((float) $rider->latitude, 4) }}, {{ number_format((float) $rider->longitude, 4) }}</div>
+                @if ($rider->location_updated_at)
+                  <small>{{ \Illuminate\Support\Carbon::parse($rider->location_updated_at)->diffForHumans() }}</small>
+                @endif
               @else
-                <span class="badge bg-secondary">Offline</span>
+                No location
               @endif
             </td>
+            <td>{{ $rider->active_deliveries_count ?? '—' }}</td>
+            <td>{{ $rider->final_deliveries_count ?? '—' }}</td>
+            <td>{{ $rider->completed_truck_trips_count ?? '—' }}</td>
             <td>
-              <span class="badge bg-{{ $rider->active_deliveries_count > 0 ? 'warning' : 'success' }}">
-                {{ $rider->active_deliveries_count }}
-              </span>
-            </td>
-            <td class="text-muted">{{ $rider->orders()->where('delivery_status', 'delivered')->count() }}</td>
-            <td>
-              @if($rider->latitude && $rider->longitude)
-                <span class="badge bg-success">Available</span>
-              @else
-                <span class="badge bg-secondary">No Location</span>
-              @endif
+              @php
+                [$label, $badge] = match ($rider->availability_status) {
+                    'available' => ['Available', 'text-bg-success'],
+                    'busy' => ['Busy', 'text-bg-warning'],
+                    'offline' => ['Offline', 'text-bg-secondary'],
+                    default => ['Unknown', 'text-bg-secondary'],
+                };
+              @endphp
+              <span class="badge {{ $badge }}">{{ $label }}</span>
             </td>
           </tr>
         @empty
@@ -63,5 +68,8 @@
       </tbody>
     </table>
   </div>
+  @if ($riders->hasPages())
+    <div class="p-3">{{ $riders->links('pagination::bootstrap-5') }}</div>
+  @endif
 </div>
 @endsection

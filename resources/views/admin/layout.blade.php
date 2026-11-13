@@ -80,21 +80,9 @@
 
   <div class="container-fluid">
     <div class="row">
-      <nav id="adminSidebar" class="col-md-3 col-lg-2 d-md-block admin-sidebar collapse show">
-        <div class="position-sticky pt-3">
-          <div class="px-3 mb-3">
-            <small class="text-muted text-uppercase fw-semibold" style="font-size: 0.75rem; letter-spacing: 0.05em;">Main Menu</small>
-          </div>
-          <nav class="nav flex-column px-3 admin-nav">
-            <a class="nav-link {{ request()->routeIs('admin.dashboard') ? 'active' : '' }}" href="{{ route('admin.dashboard') }}">
-              <i class="bi bi-speedometer2"></i> Dashboard
-            </a>
-            <a href="{{ route('admin.seller-settlements.index') }}"
-              class="nav-link {{ request()->routeIs('admin.seller-settlements.*') ? 'active' : '' }}">
-              <i class="bi bi-wallet2 me-2"></i>
-              Seller Settlements
-            </a>
-            @php
+      <nav id="adminSidebar" class="col-md-3 col-lg-2 d-md-block admin-sidebar collapse show" aria-label="Admin navigation">
+        <div class="admin-sidebar-inner">
+          @php
                 $sellerWithdrawalPendingCount = 0;
 
                 if (\Illuminate\Support\Facades\Schema::hasTable('seller_withdrawals')) {
@@ -103,19 +91,7 @@
                         ->count();
                 }
             @endphp
-            <a href="{{ route('admin.seller-withdrawals.index') }}"
-              class="nav-link {{ request()->routeIs('admin.seller-withdrawals.*') ? 'active' : '' }}">
-              <i class="bi bi-cash-stack me-2"></i>
-              Seller Withdrawals
-              @if($sellerWithdrawalPendingCount > 0)
-                <span
-                  id="seller-withdrawal-pending-count"
-                  class="badge bg-danger ms-auto">
-                  {{ $sellerWithdrawalPendingCount }}
-                </span>
-              @endif
-            </a>
-            @php
+          @php
                 $logisticWithdrawalPendingCount = 0;
 
                 if (\Illuminate\Support\Facades\Schema::hasTable('logistic_withdrawals')) {
@@ -124,92 +100,87 @@
                         ->count();
                 }
             @endphp
+          <div class="admin-nav-heading">Overview</div>
+          <div class="nav flex-column admin-nav">
+            <a class="nav-link {{ request()->routeIs('admin.dashboard') ? 'active' : '' }}" href="{{ route('admin.dashboard') }}">
+              <i class="bi bi-speedometer2"></i> <span>Dashboard</span></a>
+          </div>
+          <div class="admin-nav-heading">Accounts</div>
+          <div class="nav flex-column admin-nav">
+            <a class="nav-link {{ request()->routeIs('admin.registrations.*') ? 'active' : '' }}" href="{{ route('admin.registrations.index') }}">
+              <i class="bi bi-clipboard-check"></i> <span>Registrations</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.users.*') ? 'active' : '' }}" href="{{ route('admin.users.index') }}">
+              <i class="bi bi-people"></i> <span>Users</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.buyers') ? 'active' : '' }}" href="{{ route('admin.buyers') }}">
+              <i class="bi bi-person-check"></i> <span>Buyers</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.sellers') ? 'active' : '' }}" href="{{ route('admin.sellers') }}">
+              <i class="bi bi-shop"></i> <span>Sellers</span></a>
+          </div>
+          <div class="admin-nav-heading">Marketplace</div>
+          <div class="nav flex-column admin-nav">
+            <a class="nav-link {{ request()->routeIs('admin.products') ? 'active' : '' }}" href="{{ route('admin.products') }}">
+              <i class="bi bi-box"></i> <span>Products</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.orders*') ? 'active' : '' }}" href="{{ route('admin.orders') }}">
+              <i class="bi bi-receipt"></i> <span>Orders</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.refund-disputes.*') ? 'active' : '' }}" href="{{ route('admin.refund-disputes.index', [], false) }}">
+              <i class="bi bi-arrow-return-left" aria-hidden="true"></i> <span>Refund Disputes</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.compliance.*') ? 'active' : '' }}" href="{{ route('admin.compliance.index') }}">
+              <i class="bi bi-shield-check"></i> <span>Compliance</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.complaints.*') ? 'active' : '' }}" href="{{ route('admin.complaints.index') }}">
+              <i class="bi bi-exclamation-triangle"></i> <span>Complaints</span></a>
+          </div>
+          <div class="admin-nav-heading">Delivery</div>
+          <div class="nav flex-column admin-nav">
+            <a class="nav-link {{ request()->routeIs('admin.logistics.*') ? 'active' : '' }}" href="{{ route('admin.logistics.index') }}">
+              <i class="bi bi-truck"></i> <span>Logistics</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.riders') ? 'active' : '' }}" href="{{ route('admin.riders') }}">
+              <i class="bi bi-bicycle"></i> <span>Riders</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.shipments.*') ? 'active' : '' }}" href="{{ route('admin.shipments.index') }}">
+              <i class="bi bi-box"></i> <span>Shipments</span></a>
+          </div>
+          <div class="admin-nav-heading">Finance</div>
+          <div class="nav flex-column admin-nav">
+            <a href="{{ route('admin.seller-settlements.index') }}"
+              class="nav-link {{ request()->routeIs('admin.seller-settlements.*') ? 'active' : '' }}">
+              <i class="bi bi-wallet2"></i> <span>Seller Settlements</span></a>
+            <a href="{{ route('admin.seller-withdrawals.index') }}"
+              class="nav-link {{ request()->routeIs('admin.seller-withdrawals.*') ? 'active' : '' }}">
+              <i class="bi bi-cash-stack"></i> <span>Seller Withdrawals</span>@if($sellerWithdrawalPendingCount > 0)
+                <span
+                  id="seller-withdrawal-pending-count"
+                  class="badge bg-danger ms-auto">
+                  {{ $sellerWithdrawalPendingCount }}
+                </span>
+              @endif
+            </a>
             <a href="{{ route('admin.logistic-withdrawals.index') }}"
               class="nav-link {{ request()->routeIs('admin.logistic-withdrawals.*') ? 'active' : '' }}">
-              <i class="bi bi-truck me-2"></i>
-              Logistics Withdrawals
-              @if($logisticWithdrawalPendingCount > 0)
+              <i class="bi bi-truck"></i> <span>Logistics Withdrawals</span>@if($logisticWithdrawalPendingCount > 0)
                 <span class="badge bg-danger ms-auto">{{ $logisticWithdrawalPendingCount }}</span>
               @endif
             </a>
             <a href="{{ route('admin.cod-wallet.index') }}"
               class="nav-link {{ request()->routeIs('admin.cod-wallet.*') ? 'active' : '' }}">
-              <i class="bi bi-wallet-fill me-2"></i>
-              Admin COD Wallet
-            </a>
-            <a class="nav-link {{ request()->routeIs('admin.registrations.*') ? 'active' : '' }}" href="{{ route('admin.registrations.index') }}">
-              <i class="bi bi-clipboard-check"></i> Registrations
-            </a>
-            <a class="nav-link {{ request()->routeIs('admin.users.*') ? 'active' : '' }}" href="{{ route('admin.users.index') }}">
-              <i class="bi bi-people"></i> Users
-            </a>
-
-            <a class="nav-link {{ request()->routeIs('admin.buyers') ? 'active' : '' }}" href="{{ route('admin.buyers') }}">
-              <i class="bi bi-person-check"></i> Buyers
-            </a>
-            <a class="nav-link {{ request()->routeIs('admin.sellers') ? 'active' : '' }}" href="{{ route('admin.sellers') }}">
-              <i class="bi bi-shop"></i> Sellers
-            </a>
-            <a class="nav-link {{ request()->routeIs('admin.products') ? 'active' : '' }}" href="{{ route('admin.products') }}">
-              <i class="bi bi-box"></i> Products
-            </a>
-            <a class="nav-link {{ request()->routeIs('admin.orders*') ? 'active' : '' }}" href="{{ route('admin.orders') }}">
-              <i class="bi bi-receipt"></i> Orders
-            </a>
-            <a class="nav-link {{ request()->routeIs('admin.refund-disputes.*') ? 'active' : '' }}" href="{{ route('admin.refund-disputes.index', [], false) }}">
-              <i class="bi bi-arrow-return-left" aria-hidden="true"></i> Refund Disputes
-            </a>
-            <a class="nav-link {{ request()->routeIs('admin.riders') ? 'active' : '' }}" href="{{ route('admin.riders') }}">
-              <i class="bi bi-bicycle"></i> Riders
-            </a>
-            <a class="nav-link {{ request()->routeIs('admin.logistics.*') ? 'active' : '' }}" href="{{ route('admin.logistics.index') }}">
-              <i class="bi bi-truck"></i> Logistics
-            </a>
-            <a class="nav-link {{ request()->routeIs('admin.shipments.*') ? 'active' : '' }}" href="{{ route('admin.shipments.index') }}">
-              <i class="bi bi-box"></i> Shipments
-            </a>
-          </nav>
-
-          <div class="px-3 mb-3 mt-4">
-            <small class="text-muted text-uppercase fw-semibold" style="font-size: 0.75rem; letter-spacing: 0.05em;">Monitoring</small>
-          </div>
-          <nav class="nav flex-column px-3 admin-nav">
-            <a class="nav-link {{ request()->routeIs('admin.compliance.*') ? 'active' : '' }}" href="{{ route('admin.compliance.index') }}">
-              <i class="bi bi-shield-check"></i> Compliance
-            </a>
-            <a class="nav-link {{ request()->routeIs('admin.complaints.*') ? 'active' : '' }}" href="{{ route('admin.complaints.index') }}">
-              <i class="bi bi-exclamation-triangle"></i> Complaints
-            </a>
-
+              <i class="bi bi-wallet-fill"></i> <span>Admin COD Wallet</span></a>
             <a class="nav-link {{ request()->routeIs('admin.commissions.*') ? 'active' : '' }}"
               href="{{ route('admin.commissions.index') }}">
-              <i class="bi bi-percent"></i> Commissions
-            </a>
-
-            {{-- Financial Reconciliation --}}
-            <a class="nav-link d-flex align-items-center gap-2 {{ request()->routeIs('admin.financial-reconciliation.*') ? 'active' : '' }}"
+              <i class="bi bi-percent"></i> <span>Commissions</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.financial-reconciliation.*') ? 'active' : '' }}"
               href="{{ route('admin.financial-reconciliation.index') }}"
               title="Financial Reconciliation">
               <i class="bi bi-wallet2 flex-shrink-0"></i>
-              <span class="small text-nowrap">Financial Reconciliation</span>
+              <span class="">Financial Reconciliation</span>
             </a>
-          </nav>
-
-
-          <div class="px-3 mb-3 mt-4">
-            <small class="text-muted text-uppercase fw-semibold" style="font-size: 0.75rem; letter-spacing: 0.05em;">System</small>
           </div>
-          <nav class="nav flex-column px-3 admin-nav">
+          <div class="admin-nav-heading">System</div>
+          <div class="nav flex-column admin-nav">
             <a class="nav-link {{ request()->routeIs('admin.reports.*') ? 'active' : '' }}" href="{{ route('admin.reports.sales') }}">
-              <i class="bi bi-bar-chart"></i> Reports
-            </a>
+              <i class="bi bi-bar-chart"></i> <span>Reports</span></a>
             <a class="nav-link {{ request()->routeIs('admin.messages.*') ? 'active' : '' }}" href="{{ route('admin.messages.index') }}">
-              <i class="bi bi-chat-dots"></i> Messages
-            </a>
+              <i class="bi bi-chat-dots"></i> <span>Messages</span></a>
             <a class="nav-link {{ request()->routeIs('admin.settings.*') ? 'active' : '' }}" href="{{ route('admin.settings.index') }}">
-              <i class="bi bi-gear"></i> Settings
-            </a>
-          </nav>
+              <i class="bi bi-gear"></i> <span>Settings</span></a>
+          </div>
         </div>
       </nav>
 

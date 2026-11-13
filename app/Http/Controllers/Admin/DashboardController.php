@@ -211,7 +211,7 @@ class DashboardController extends Controller
 
     public function riders()
     {
-        $riders = User::whereHas('roles', function ($query) {
+        $query = User::whereHas('roles', function ($query) {
             $query->where('name', 'rider');
         })
             ->where('logistic_status', 'approved')
@@ -219,17 +219,30 @@ class DashboardController extends Controller
                 User::STATUS_PENDING,
                 User::STATUS_REJECTED,
                 User::STATUS_DEACTIVATED,
-            ])
-            ->with('logistic')
-            ->withCount([
-                'orders as active_deliveries_count' => function ($query) {
-                    $query->whereIn('delivery_status', [
-                        'assigned_to_rider',
-                        'out_for_delivery',
-                    ]);
-                },
-            ])
-            ->get();
+            ]);
+        $query->with('logistic');
+
+        if (\Illuminate\Support\Facades\Schema::hasTable('hubs')) {
+            $query->with('hub');
+        }
+
+        if (\Illuminate\Support\Facades\Schema::hasTable('shipments')) {
+            $query->withCount([
+                'shipments as active_deliveries_count' => fn ($shipments) =>
+                    $shipments->whereIn('status', ['assigned', 'staged', 'at_sorting_center', 'picked_up', 'in_transit', 'out_for_delivery']),
+                'shipments as final_deliveries_count' => fn ($shipments) =>
+                    $shipments->where('status', 'delivered'),
+            ]);
+        }
+
+        if (\Illuminate\Support\Facades\Schema::hasTable('linehaul_trips')) {
+            $query->addSelect(['completed_truck_trips_count' => \App\Models\LinehaulTrip::query()
+                ->selectRaw('count(*)')
+                ->whereColumn('driver_id', 'users.id')
+                ->where('status', \App\Models\LinehaulTrip::STATUS_ARRIVED)]);
+        }
+
+        $riders = $query->orderBy('name')->orderBy('id')->paginate(20);
 
         return view('admin.riders', compact('riders'));
     }

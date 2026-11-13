@@ -113,7 +113,7 @@
 {{-- REVENUE & ACTIVITY --}}
 <div class="dashboard-section">
 
-    <h2>Revenue & Activity</h2>
+    <h2>Revenue &amp; Activity</h2>
 
     <div class="dashboard-stats">
 
@@ -139,15 +139,6 @@
         </div>
 
 
-        <div class="dashboard-mini-card">
-            <div class="dashboard-mini-label">
-                Total Orders
-            </div>
-
-            <div class="dashboard-mini-value">
-                {{ $totalOrders ?? 0 }}
-            </div>
-        </div>
 
     </div>
 
@@ -183,15 +174,6 @@
         </div>
 
 
-        <div class="dashboard-mini-card">
-            <div class="dashboard-mini-label">
-                Total Products
-            </div>
-
-            <div class="dashboard-mini-value">
-                {{ $totalProducts ?? 0 }}
-            </div>
-        </div>
 
     </div>
 
@@ -251,9 +233,6 @@
                 {{ $product->name }}
             </div>
 
-            <div class="dashboard-list-subtitle">
-                Recent marketplace product
-            </div>
         </div>
 
 

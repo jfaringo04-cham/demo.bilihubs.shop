@@ -209,13 +209,34 @@
                     <i class="bi bi-bar-chart"></i>
                 </div>
                 <div>
-                    <h6 class="text-muted mb-1">Statuses</h6>
-                    <h3 class="mb-0">{{ $byStatus->count() }}</h3>
+                    <h6 class="text-muted mb-1">Cancelled Orders</h6>
+                    <h3 class="mb-0">{{ $byStatus->get('cancelled', 0) }}</h3>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+<section class="card mb-4" aria-labelledby="delivered-value-heading">
+    <div class="card-body">
+        <h2 id="delivered-value-heading" class="h5 mb-3">Delivered Value Breakdown</h2>
+        @if(request()->filled('product_id'))
+            <p class="small text-muted">Product filters show item subtotals. Shipping, service fees, and order-level discounts are outside this total.</p>
+        @endif
+        <dl class="mb-0">
+            @foreach($salesBreakdown as $label => $amountMinor)
+                <div class="d-flex justify-content-between gap-3 py-2">
+                    <dt class="fw-normal">{{ $label }}</dt>
+                    <dd class="mb-0 text-nowrap">{{ $amountMinor < 0 ? '−' : '' }}&#8369;{{ number_format(abs($amountMinor) / 100, 2) }}</dd>
+                </div>
+            @endforeach
+            <div class="d-flex justify-content-between gap-3 border-top pt-2 fw-semibold">
+                <dt>Total</dt>
+                <dd class="mb-0 text-nowrap">&#8369;{{ number_format($totalSales, 2) }}</dd>
+            </div>
+        </dl>
+    </div>
+</section>
 
 {{-- STATUS + TOP PRODUCTS --}}
 <div class="row g-4">

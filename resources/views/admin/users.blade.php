@@ -17,7 +17,8 @@
           <option value="">All Roles</option>
           <option value="customer" {{ request('role') == 'customer' ? 'selected' : '' }}>Buyer</option>
           <option value="seller" {{ request('role') == 'seller' ? 'selected' : '' }}>Seller</option>
-          <option value="rider" {{ request('role') == 'rider' ? 'selected' : '' }}>Courier</option>
+          <option value="rider" {{ request('role') == 'rider' ? 'selected' : '' }}>Rider</option>
+          <option value="logistics" @selected(in_array(request('role'), ['logistics', 'logistic', 'logistic_owner'], true))>Logistics</option>
         </select>
       </div>
       <div class="col-md-3">
@@ -65,7 +66,15 @@
               </div>
             </td>
             <td class="text-muted">{{ $u->email }}</td>
-            <td><span class="badge bg-info text-capitalize">{{ $u->role }}</span></td>
+            <td>
+              <div class="d-flex flex-wrap gap-1">
+                @forelse ($u->roles->pluck('name')->sort()->unique() as $role)
+                  <span class="badge text-bg-light border">{{ ucfirst($role) }}</span>
+                @empty
+                  <span class="small text-muted">No role assigned</span>
+                @endforelse
+              </div>
+            </td>
             <td><span class="badge bg-{{ $u->statusBadgeClass() }} text-capitalize">{{ $u->status }}</span></td>
             <td class="text-muted">{{ $u->created_at->format('M d, Y') }}</td>
             <td>
@@ -80,6 +89,22 @@
       </tbody>
     </table>
   </div>
-  <div class="p-3 border-top">{{ $users->links('pagination::bootstrap-5') }}</div>
+  @if ($users->hasPages())
+    <nav class="border-top pt-3 d-flex flex-wrap justify-content-between align-items-center gap-2" aria-label="User account pages">
+      <span class="small text-muted">Page {{ $users->currentPage() }} of {{ $users->lastPage() }}</span>
+      <div class="d-flex gap-2">
+        @if ($users->onFirstPage())
+          <span class="btn btn-sm btn-outline-secondary disabled" aria-disabled="true">Previous</span>
+        @else
+          <a class="btn btn-sm btn-outline-secondary" href="{{ $users->previousPageUrl() }}" rel="prev">Previous</a>
+        @endif
+        @if ($users->hasMorePages())
+          <a class="btn btn-sm btn-outline-secondary" href="{{ $users->nextPageUrl() }}" rel="next">Next</a>
+        @else
+          <span class="btn btn-sm btn-outline-secondary disabled" aria-disabled="true">Next</span>
+        @endif
+      </div>
+    </nav>
+  @endif
 </div>
 @endsection
