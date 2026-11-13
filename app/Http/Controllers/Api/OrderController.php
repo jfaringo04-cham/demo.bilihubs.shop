@@ -636,7 +636,29 @@ class OrderController extends Controller
                 |
                 */
                 foreach ($shipments as $shipment) {
+                    // A status may lag behind a confirmed physical handoff.
+                    // Do not cancel parcels that have entered rider or hub custody.
+                    $hasPhysicalCustody =
+                        $shipment->picked_up_at !== null ||
+                        $shipment->seller_scan_confirmed_at !== null ||
+                        $shipment->scanned_at_seller !== null ||
+                        $shipment->hub_picked_up_at !== null ||
+                        (bool) $shipment->received_by_sorting_center ||
+                        $shipment->received_at !== null ||
+                        $shipment->at_sorting_center_at !== null ||
+                        $shipment->origin_hub_received_at !== null ||
+                        $shipment->destination_hub_received_at !== null ||
+                        $shipment->transfer_dispatched_at !== null ||
+                        $shipment->linehaul_started_at !== null ||
+                        $shipment->linehaul_completed_at !== null ||
+                        $shipment->scanned_at !== null ||
+                        $shipment->sorted_at !== null ||
+                        $shipment->staged_at !== null ||
+                        $shipment->failed_returned_to_sorting_center_at !== null ||
+                        $shipment->failed_return_received_at !== null;
+
                     if (
+                        $hasPhysicalCustody ||
                         in_array(
                             $shipment->status,
                             [
@@ -650,6 +672,10 @@ class OrderController extends Controller
                                 'delivery_failed',
                                 'failed_return_at_sorting_center',
                                 'delivered',
+                                'completed',
+                                'failed',
+                                'cancelled',
+                                'canceled',
                             ],
                             true
                         )
