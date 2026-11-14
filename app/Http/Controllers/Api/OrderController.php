@@ -298,7 +298,7 @@ class OrderController extends Controller
                 'user_id' => Auth::id(),
                 'order_number' => 'ORD-' . Str::upper(Str::random(10)),
                 'reference' => 'REF-' . Str::upper(Str::random(12)),
-                'status' => 'pending',
+                'status' => 'placed',
                 'payment_method' => $request->payment_method,
                 'payment_status' => $request->payment_method === 'cod'
                     ? 'unpaid'
@@ -570,8 +570,10 @@ class OrderController extends Controller
         } catch (\Throwable $e) {
             DB::rollBack();
 
+            report($e);
+
             return response()->json([
-                'message' => 'Failed to create order: ' . $e->getMessage(),
+                'message' => 'Unable to place your order. Please try again.',
             ], 500);
         }
     }
