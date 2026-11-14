@@ -68,7 +68,7 @@ class HomeController extends Controller
                 ->get();
         }
 
-        $testimonials = Review::with(['user', 'product', 'order'])
+        $testimonials = Review::with(['user:id,name,first_name,last_name', 'product', 'order'])
             ->where('rating', '>=', 4)
             ->whereNotNull('comment')
             ->where('comment', '!=', '')

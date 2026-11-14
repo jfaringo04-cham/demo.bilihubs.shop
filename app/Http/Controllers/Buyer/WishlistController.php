@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\Wishlist;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 
 class WishlistController extends Controller
@@ -33,7 +34,7 @@ class WishlistController extends Controller
     /**
      * Add/remove a product from the authenticated buyer's wishlist.
      */
-    public function toggle(Request $request, Product $product): JsonResponse
+    public function toggle(Request $request, Product $product): JsonResponse|RedirectResponse
     {
         $user = $request->user();
 
@@ -43,23 +44,26 @@ class WishlistController extends Controller
 
         if ($wishlist) {
             $wishlist->delete();
-
-            return response()->json([
-                'success' => true,
-                'wishlisted' => false,
-                'message' => 'Product removed from wishlist.',
+        } else {
+            Wishlist::create([
+                'user_id' => $user->id,
+                'product_id' => $product->id,
             ]);
         }
 
-        Wishlist::create([
-            'user_id' => $user->id,
-            'product_id' => $product->id,
-        ]);
+        $wishlisted = $wishlist === null;
+        $message = $wishlisted
+            ? 'Product added to wishlist.'
+            : 'Product removed from wishlist.';
+
+        if ($request->input('return_to') === 'product' && !$request->expectsJson()) {
+            return redirect()->route('products.show', $product)->with('success', $message);
+        }
 
         return response()->json([
             'success' => true,
-            'wishlisted' => true,
-            'message' => 'Product added to wishlist.',
+            'wishlisted' => $wishlisted,
+            'message' => $message,
         ]);
     }
 }

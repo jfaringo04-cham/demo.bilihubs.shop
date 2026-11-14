@@ -338,6 +338,29 @@
         <p class="text-danger mt-2">This product is currently out of stock.</p>
       @endif
 
+      @guest
+        <div class="mt-3">
+          <a href="{{ route('login') }}" class="btn btn-outline-primary rounded-xl">
+            <i class="bi bi-heart me-1" aria-hidden="true"></i> Save to Wishlist
+          </a>
+        </div>
+      @else
+        @if(auth()->user()->isCustomer())
+          @php
+            $isWishlisted = auth()->user()->wishlists()->where('product_id', $product->id)->exists();
+          @endphp
+          <form action="{{ route('buyer.wishlist.toggle', $product) }}" method="POST" class="mt-3">
+            @csrf
+            <input type="hidden" name="return_to" value="product">
+            <button type="submit" class="btn btn-outline-primary rounded-xl"
+                    aria-label="{{ $isWishlisted ? 'Remove from wishlist' : 'Save to Wishlist' }}">
+              <i class="bi {{ $isWishlisted ? 'bi-heart-fill' : 'bi-heart' }} me-1" aria-hidden="true"></i>
+              {{ $isWishlisted ? 'Saved to Wishlist' : 'Save to Wishlist' }}
+            </button>
+          </form>
+        @endif
+      @endguest
+
       <hr class="my-4">
 
       <p class="text-slate-600">{{ $product->description ?? 'No description available.' }}</p>
@@ -402,35 +425,26 @@
                     <div class="fw-semibold text-slate-900">
                       <i class="bi bi-person-circle me-1 text-muted"></i>
                       @php
-    $reviewerName = $review->user->name ?? null;
+                        $reviewer = $review->user;
+                        $firstName = trim((string) $reviewer?->first_name);
+                        $lastName = trim((string) $reviewer?->last_name);
 
-    if ($reviewerName) {
-        $parts = array_values(
-            array_filter(
-                array_map('trim', explode(',', $reviewerName))
-            )
-        );
+                        if ($firstName === '' || $lastName === '') {
+                          $nameParts = explode(',', (string) $reviewer?->name, 2);
+                          if (count($nameParts) === 2) {
+                            $lastName = $lastName !== '' ? $lastName : trim($nameParts[0]);
+                            $firstName = $firstName !== '' ? $firstName : trim($nameParts[1]);
+                          }
+                        }
 
-        if (count($parts) >= 2) {
-            $lastName = $parts[0];
-            $firstNames = preg_split('/\s+/', $parts[1]);
-            $firstInitial = strtoupper(
-                substr($firstNames[0] ?? '', 0, 1)
-            );
-
-            $displayReviewerName = $lastName . ', ' . $firstInitial . '***';
-        } else {
-            $words = preg_split('/\s+/', trim($reviewerName));
-            $first = $words[0] ?? 'Buyer';
-            $displayReviewerName = $first . ' ' .
-                strtoupper(substr($words[1] ?? '', 0, 1)) . '***';
-        }
-    } else {
-        $displayReviewerName = 'BiliHub Buyer';
-    }
-@endphp
-
-{{ $displayReviewerName }}
+                        $displayReviewerName = 'BiliHub Shopper';
+                        if ($firstName !== '' && $lastName !== '') {
+                          $lastInitial = \Illuminate\Support\Str::upper(\Illuminate\Support\Str::substr($lastName, 0, 1));
+                          $firstInitial = \Illuminate\Support\Str::upper(\Illuminate\Support\Str::substr($firstName, 0, 1));
+                          $displayReviewerName = $lastInitial . '***, ' . $firstInitial . '***';
+                        }
+                      @endphp
+                      {{ $displayReviewerName }}
                     </div>
 
                     <div class="text-warning mt-1">

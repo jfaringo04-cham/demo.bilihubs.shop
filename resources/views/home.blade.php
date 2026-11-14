@@ -541,13 +541,22 @@
           <div class="testimonials-track">
             @foreach($testimonials as $review)
               @php
-                $user = $review->user;
-                $displayName = $user->first_name
-                  ? trim($user->first_name . ' ' . ($user->last_name ? substr($user->last_name, 0, 1) . '.' : ''))
-                  : $user->name;
-                $initial = strtoupper(substr($user->first_name ?? $user->name, 0, 1));
-                $secondInitial = strtoupper(substr($user->last_name ?? '', 0, 1));
-                $avatarText = $initial . ($secondInitial ?: $initial);
+                $reviewer = $review->user;
+                $firstName = trim((string) $reviewer?->first_name);
+                $lastName = trim((string) $reviewer?->last_name);
+
+                if ($firstName === '' || $lastName === '') {
+                  $nameParts = explode(',', (string) $reviewer?->name, 2);
+                  if (count($nameParts) === 2) {
+                    $lastName = $lastName ?: trim($nameParts[0]);
+                    $firstName = $firstName ?: trim($nameParts[1]);
+                  }
+                }
+
+                $reviewerLabel = $firstName !== '' && $lastName !== ''
+                  ? \Illuminate\Support\Str::upper(\Illuminate\Support\Str::substr($lastName, 0, 1)) . '***, ' . \Illuminate\Support\Str::upper(\Illuminate\Support\Str::substr($firstName, 0, 1)) . '***'
+                  : 'BiliHub Shopper';
+
                 $isVerified = $review->order_id && $review->order && in_array($review->order->status, ['completed', 'delivered']);
               @endphp
               <div class="testimonial-card">
@@ -565,10 +574,10 @@
 
                   <div class="testimonial-author d-flex align-items-center mt-4">
                     <div class="author-avatar d-flex align-items-center justify-content-center flex-shrink-0" style="width: 40px; height: 40px; border-radius: 10px; background-color: var(--color-soft-lavender); color: var(--color-deep-purple); font-size: 0.9rem; font-weight: 600;">
-                      {{ $avatarText }}
+                      <i class="bi bi-person-fill" aria-hidden="true"></i>
                     </div>
                     <div class="author-info ms-3">
-                      <h6 class="fw-semibold mb-0">{{ $displayName }}</h6>
+                      <h6 class="fw-semibold mb-0">{{ $reviewerLabel }}</h6>
                       <div class="d-flex align-items-center gap-2 flex-wrap">
                         @if($isVerified)
                           <span class="text-muted small">✓ Verified Purchase</span>
