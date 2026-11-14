@@ -36,6 +36,13 @@
       </select>
     </div>
 
+    <div class="col-md-3">
+      <select name="listing" class="form-select" aria-label="Listing filter">
+        <option value="current">Current listings</option>
+        <option value="archived" @selected(request('listing') === 'archived')>Archived</option>
+      </select>
+    </div>
+
     <div class="col-md-2">
       <button type="submit" class="btn btn-outline-secondary w-100">
         Filter
@@ -64,6 +71,7 @@
 
         @php
         $isDraft = $product->status === 'draft';
+        $isArchived = $product->status === \App\Models\Product::STATUS_ARCHIVED;
         $isPublished = $product->status === 'published';
         $compliance = $product->compliance_status;
 
@@ -154,7 +162,9 @@
 
           {{-- Listing Status --}}
           <td>
-            @if($isDraft)
+            @if($isArchived)
+            <span class="badge bg-secondary">Archived</span>
+            @elseif($isDraft)
             <span class="badge bg-secondary">
               <i class="bi bi-file-earmark"></i>
               Draft
@@ -290,33 +300,36 @@
 
           {{-- Actions --}}
           <td>
-            <div class="d-flex gap-2">
-
-              <a
-                href="{{ route('seller.products.edit', $product) }}"
-                class="btn btn-sm btn-outline-primary"
-                title="Edit Product"
-                aria-label="Edit {{ $product->name }}">
-                <i class="bi bi-pencil"></i>
-              </a>
-
-              <form
-                action="{{ route('seller.products.destroy', $product) }}"
-                method="POST"
-                class="d-inline"
-                onsubmit="return confirm('Are you sure you want to delete this product?')">
-                @csrf
-                @method('DELETE')
-
-                <button
-                  type="submit"
-                  class="btn btn-sm btn-outline-danger"
-                  title="Delete Product"
-                  aria-label="Delete {{ $product->name }}">
-                  <i class="bi bi-trash"></i>
-                </button>
-              </form>
-
+            <div class="d-flex flex-wrap gap-2">
+              @if($isArchived)
+                @if(in_array($compliance, ['approved', 'pending'], true))
+                  <form action="{{ route('seller.products.update', $product) }}" method="POST">
+                    @csrf
+                    @method('PUT')
+                    <input type="hidden" name="listing_action" value="restore">
+                    <button type="submit" class="btn btn-sm btn-outline-primary">Restore as Draft</button>
+                  </form>
+                @else
+                  <span class="text-muted small">Contact support to restore</span>
+                @endif
+              @else
+                <a href="{{ route('seller.products.edit', $product) }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                <form action="{{ route('seller.products.destroy', $product) }}" method="POST"
+                      onsubmit="return confirm('Archive this product and hide it from buyers?')">
+                  @csrf
+                  @method('DELETE')
+                  <button type="submit" class="btn btn-sm btn-outline-secondary">Archive</button>
+                </form>
+                @if($isDraft && $compliance === 'pending')
+                  <form action="{{ route('seller.products.destroy', $product) }}" method="POST"
+                        onsubmit="return confirm('Permanently delete this draft?')">
+                    @csrf
+                    @method('DELETE')
+                    <input type="hidden" name="delete_draft" value="1">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete Draft</button>
+                  </form>
+                @endif
+              @endif
             </div>
           </td>
 

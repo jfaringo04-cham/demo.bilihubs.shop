@@ -169,6 +169,7 @@
               @if(Auth::user()->isCustomer() && Auth::id() !== $product->sellerUser->id)
                 <a
                   href="{{ route('buyer.messages.show', $product->sellerUser) }}"
+                  data-help-seller-link
                   class="btn btn-outline-primary rounded-xl"
                 >
                   <i class="bi bi-chat-dots-fill me-1"></i>
@@ -186,6 +187,7 @@
             @else
               <a
                 href="{{ route('login') }}"
+                data-help-seller-link
                 class="btn btn-outline-primary rounded-xl"
               >
                 <i class="bi bi-chat-dots-fill me-1"></i>

@@ -21,6 +21,47 @@ class ProductController extends Controller
             ->where('status', 'published')
             ->where('compliance_status', 'approved');
 
+        if ($request->query('format') === 'help-chat' && $request->expectsJson()) {
+            $validated = $request->validate([
+                'search' => 'required_without:product_id|string|min:2|max:100',
+                'product_id' => 'required_without:search|integer|min:1',
+            ]);
+            $query->with(['primaryImage', 'variations:id,product_id'])
+                ->without(['category']);
+
+            if (isset($validated['product_id'])) {
+                $query->whereKey($validated['product_id']);
+            } else {
+                $term = mb_strtolower(trim($validated['search']));
+                $pattern = '%' . str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $term) . '%';
+                $query->whereRaw("LOWER(name) LIKE ? ESCAPE '!'", [$pattern]);
+            }
+
+            $buyer = $request->user();
+            $products = $query->with('sellerUser:id')
+                ->orderBy('name')->orderBy('id')->limit(5)->get()
+                ->map(fn (Product $product) => [
+                    'id' => $product->id,
+                    'name' => $product->name,
+                    'url' => route('products.show', $product, false),
+                    'image' => $product->image_url,
+                    'price_minor' => $product->effective_price_minor,
+                    'stock' => (int) $product->stock,
+                    'on_vacation' => $product->seller?->isOnVacation() ?? false,
+                    'has_variants' => $product->variations->isNotEmpty(),
+                    'sizes' => $product->sizes->map(fn ($size) => [
+                        'name' => $size->name,
+                        'stock' => (int) $size->pivot->stock,
+                    ])->values(),
+                    'seller_url' => $product->sellerUser && $buyer?->isCustomer()
+                        && (int) $buyer->id !== (int) $product->sellerUser->id
+                        ? route('buyer.messages.show', $product->sellerUser, false)
+                        : null,
+                ]);
+
+            return response()->json(['products' => $products])->header('Cache-Control', 'private, no-store');
+        }
+
         if ($request->filled('search')) {
             $query->where('name', 'like', '%' . $request->search . '%');
         }

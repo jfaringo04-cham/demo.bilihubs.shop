@@ -51,6 +51,7 @@ class Product extends Model
 
     public const STATUS_DRAFT = 'draft';
     public const STATUS_PUBLISHED = 'published';
+    public const STATUS_ARCHIVED = 'archived';
     public const RESUBMIT_DEADLINE_DAYS = 7;
 
     public function isDraft(): bool

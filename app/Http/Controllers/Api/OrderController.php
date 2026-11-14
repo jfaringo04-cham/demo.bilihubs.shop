@@ -429,6 +429,12 @@ class OrderController extends Controller
                         ->lockForUpdate()
                         ->findOrFail($item['product_id']);
 
+                    if (!$lockedProduct->isPublished()) {
+                        throw ValidationException::withMessages([
+                            'items' => 'A product in this order is no longer available.',
+                        ]);
+                    }
+
                     if (!empty($item['variant_id'])) {
                         $lockedVariation = $lockedProduct->variations()
                             ->lockForUpdate()

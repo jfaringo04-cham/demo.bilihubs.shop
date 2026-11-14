@@ -194,6 +194,7 @@
   @vite('resources/js/rider/location.js')
   @stack('scripts')
 
+  @include('shared.help-chat', ['helpChatContext' => 'rider'])
 </body>
 
 </html>

@@ -145,6 +145,12 @@ class DashboardController extends Controller
             $query->where('category_id', $request->category);
         }
 
+        if ($request->query('listing') === 'archived') {
+            $query->where('status', Product::STATUS_ARCHIVED);
+        } else {
+            $query->where('status', '!=', Product::STATUS_ARCHIVED);
+        }
+
         $products = $query->latest()->paginate(20);
         $categories = Category::all();
 
@@ -377,6 +383,11 @@ class DashboardController extends Controller
         if ($product->user_id !== Auth::id()) {
             abort(403);
         }
+        if ($product->status === Product::STATUS_ARCHIVED) {
+            return redirect()->route('seller.products', ['listing' => 'archived'])
+                ->with('error', 'Restore the product before editing.');
+        }
+
         $allowedCategoryIds = Auth::user()->allowedCategoryIds();
         $categories = Category::whereIn('id', $allowedCategoryIds)
             ->orWhere('id', $product->category_id)
@@ -405,6 +416,25 @@ class DashboardController extends Controller
     {
         if ($product->user_id !== Auth::id()) {
             abort(403);
+        }
+
+        if ($request->input('listing_action') === 'restore') {
+            $restored = Product::query()->whereKey($product->id)
+                ->where('status', Product::STATUS_ARCHIVED)
+                ->whereIn('compliance_status', ['approved', 'pending'])
+                ->update(['status' => Product::STATUS_DRAFT, 'compliance_status' => 'pending']);
+
+            return redirect()->route('seller.products')->with(
+                $restored ? 'success' : 'error',
+                $restored
+                    ? 'Product restored as a draft. Submit it for review when ready.'
+                    : 'This listing cannot be restored. Check its status or contact support.'
+            );
+        }
+
+        if ($product->status === Product::STATUS_ARCHIVED) {
+            return redirect()->route('seller.products', ['listing' => 'archived'])
+                ->with('error', 'Restore the product before editing.');
         }
 
         $allowedCategoryIds = Auth::user()->allowedCategoryIds();
@@ -485,6 +515,29 @@ class DashboardController extends Controller
             $data['packed_weight_kg'] = $request->input('packed_weight_kg');
         }
 
+        $wasFlagged = in_array($product->compliance_status, ['flagged', 'auto_flagged'], true);
+        if ($wasFlagged && $product->isResubmitDeadlinePassed()) {
+            return back()->withInput()->with('error', 'The 7-day resubmission deadline has passed. Please contact admin support to restore this product.');
+        }
+
+        $imagesToRemove = $product->images()->whereIn('id', $request->input('remove_images') ?? [])->get();
+        if ($imagesToRemove->isNotEmpty() && !$request->hasFile('new_images')
+            && $imagesToRemove->count() === $product->images()->count()) {
+            return back()->withInput()->with('error', 'You cannot remove all images. Please upload a new image before saving.');
+        }
+
+        $hasVariantUpload = collect($request->file('variations', []))
+            ->contains(fn ($variant, $key) => $request->hasFile("variations.{$key}.image"));
+        $hasPhotoUpload = $request->hasFile('new_images')
+            || $request->hasFile('secondary_image')
+            || $hasVariantUpload;
+
+        // Hide approved listings before changing any publicly visible photos.
+        $needsPhotoReview = $hasPhotoUpload && Product::query()
+            ->whereKey($product->id)
+            ->where('compliance_status', 'approved')
+            ->update(['compliance_status' => 'pending']) > 0;
+
         $newImagePaths = [];
         if ($request->hasFile('new_images')) {
             foreach ($request->file('new_images') as $img) {
@@ -548,9 +601,8 @@ class DashboardController extends Controller
             $data['secondary_image_path'] = null;
         }
 
-        if (!empty($request->remove_images)) {
-            $toRemove = $product->images()->whereIn('id', $request->remove_images)->get();
-            foreach ($toRemove as $img) {
+        if ($imagesToRemove->isNotEmpty()) {
+            foreach ($imagesToRemove as $img) {
                 try {
                     if (\Storage::disk('s3')->exists($img->path)) {
                         \Storage::disk('s3')->delete($img->path);
@@ -569,7 +621,7 @@ class DashboardController extends Controller
                 $product->variations()->where('image_id', $img->id)->delete();
                 $img->delete();
             }
-            $removedPaths = $toRemove->pluck('path')->toArray();
+            $removedPaths = $imagesToRemove->pluck('path')->toArray();
             if ($product->image && in_array($product->image, $removedPaths, true)) {
                 $nextImg = $product->fresh()->images()->orderBy('sort_order')->orderBy('id')->first();
                 if ($nextImg) {
@@ -579,9 +631,7 @@ class DashboardController extends Controller
                 }
             }
 
-            if ($product->fresh()->images()->count() === 0 && empty($newImagePaths)) {
-                return back()->withInput()->with('error', 'You cannot remove all images. A product must have at least one image. Please upload a new image before saving.');
-            }
+
         }
 
         $existingCount = $product->fresh()->images()->count();
@@ -703,18 +753,11 @@ class DashboardController extends Controller
             $product->variations()->whereNotIn('id', $submittedVariationIds)->delete();
         }
 
-        $wasFlagged = in_array($product->compliance_status, ['flagged', 'auto_flagged'], true);
-        $deadlinePassed = $wasFlagged && $product->isResubmitDeadlinePassed();
-
-        if ($deadlinePassed) {
-            return back()->withInput()->with('error', 'The 7-day resubmission deadline has passed. Please contact admin support to restore this product.');
-        }
-
         $data['status'] = $requestedStatus;
 
-        $data['compliance_status'] = ($isSubmittingDraft || (!$isDraft && $wasFlagged))
-            ? 'pending'
-            : $product->compliance_status;
+        if ($isSubmittingDraft || (!$isDraft && $wasFlagged)) {
+            $data['compliance_status'] = 'pending';
+        }
         if ($wasFlagged) {
             $data['flagged_reason'] = null;
             $data['admin_notes'] = null;
@@ -773,13 +816,13 @@ class DashboardController extends Controller
             \App\Jobs\RunProductComplianceScan::dispatch($product->id);
         }
 
-        if ($wasFlagged && !$isDraft) {
+        if (($wasFlagged || $needsPhotoReview) && !$isDraft) {
             $product = $product->fresh();
             $admins = \App\Models\User::whereHas('roles', fn($q) => $q->where('name', 'admin'))->get();
             foreach ($admins as $admin) {
                 \App\Models\Notification::create([
                     'user_id' => $admin->id,
-                    'title' => 'Product Resubmitted for Review',
+                    'title' => $needsPhotoReview ? 'Product Photos Pending Review' : 'Product Resubmitted for Review',
                     'message' => 'Seller has updated and resubmitted "' . $product->name . '" for compliance review. Please verify the changes.',
                     'type' => 'product',
                     'link' => route('admin.compliance.show', $product),
@@ -789,7 +832,9 @@ class DashboardController extends Controller
 
         $msg = $isDraft
             ? 'Product saved as draft.'
-            : ($wasFlagged ? 'Product updated and resubmitted for admin review.' : 'Product updated successfully.');
+            : (($wasFlagged || $needsPhotoReview)
+                ? 'Product updated and submitted for admin review.'
+                : 'Product updated successfully.');
 
         // Clean up the old video only after the product update workflow succeeds.
         if ($oldVideoPath !== null) {
@@ -877,15 +922,27 @@ class DashboardController extends Controller
         return back()->with('success', 'All notifications marked as read.');
     }
 
-    public function destroy(Product $product)
+    public function destroy(Request $request, Product $product)
     {
         if ($product->user_id !== Auth::id()) {
             abort(403);
         }
 
-        $hasOrders = $product->orderItems()->exists();
-        if ($hasOrders) {
-            return back()->with('error', 'Cannot remove this product because it has existing orders. Contact admin support to archive it instead.');
+        if (!$request->boolean('delete_draft')) {
+            Product::query()->whereKey($product->id)
+                ->where('status', '!=', Product::STATUS_ARCHIVED)
+                ->update(['status' => Product::STATUS_ARCHIVED]);
+
+            return redirect()->route('seller.products', ['listing' => 'archived'])
+                ->with('success', 'Product archived. Existing orders and reviews are preserved.');
+        }
+
+        if (!$product->isDraft() || $product->compliance_status !== 'pending'
+            || $product->orderItems()->exists() || $product->reviews()->exists()
+            || $product->cartItems()->exists() || $product->wishlists()->exists()
+            || $product->vouchers()->exists() || $product->promotionCampaigns()->exists()
+            || \App\Models\SupportTicket::where('product_id', $product->id)->exists()) {
+            return back()->with('error', 'Only pending drafts without linked records can be deleted.');
         }
 
         foreach ($product->images as $img) {
