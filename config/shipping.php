@@ -27,4 +27,7 @@ return [
 
     // Set to the rollout instant (ISO 8601 with timezone) to opt in new orders.
     'linehaul_bonus_effective_at' => env('LINEHAUL_BONUS_EFFECTIVE_AT'),
+
+    // New orders on inter-hub routes of 20 km or more allocate 60% of the surcharge to linehaul.
+    'long_linehaul_bonus_effective_at' => env('LONG_LINEHAUL_BONUS_EFFECTIVE_AT'),
 ];

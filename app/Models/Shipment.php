@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Shipment extends Model
 {
     protected $fillable = [
+        'estimated_weight_kg',
+        'verified_weight_kg',
         'logistic_id',
         'hub_id',
         'origin_hub_id',

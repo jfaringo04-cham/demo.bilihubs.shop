@@ -30,6 +30,7 @@ class LinehaulTripController extends Controller
                 'driver',
             ])
             ->withCount('shipments')
+            ->withSum('shipments as loaded_weight_kg', 'verified_weight_kg')
             ->latest()
             ->paginate(15);
 
@@ -144,6 +145,8 @@ class LinehaulTripController extends Controller
                 'exists:users,id',
             ],
 
+            'payload_limit_kg' => 'required|numeric|min:0.001|max:99999.999|decimal:0,3',
+
             'minimum_load' => [
                 'required',
                 'integer',
@@ -163,7 +166,8 @@ class LinehaulTripController extends Controller
                 (int) $validated['destination_hub_id'],
                 (int) $validated['driver_id'],
                 (int) $validated['minimum_load'],
-                $validated['scheduled_departure_at']
+                $validated['scheduled_departure_at'],
+                (float) $validated['payload_limit_kg']
             );
         } catch (\RuntimeException $e) {
             return back()

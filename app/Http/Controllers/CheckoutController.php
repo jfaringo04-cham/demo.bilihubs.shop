@@ -1219,6 +1219,8 @@ class CheckoutController extends Controller
 
                         'product_name' => $productName,
 
+                        'packed_weight_kg' => $item->product->packed_weight_kg,
+
                         'price_minor' => $unitPriceMinor,
 
                         'quantity' => $item->quantity,

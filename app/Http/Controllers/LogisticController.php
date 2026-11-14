@@ -852,9 +852,33 @@ class LogisticController extends Controller
     }
 
 
-    public function receiveShipment(Shipment $shipment)
+    public function receiveShipment(Request $request, Shipment $shipment)
     {
         $logistic = Auth::user()->ownedLogistic;
+
+        abort_unless($logistic && (int) $shipment->logistic_id === (int) $logistic->id, 403);
+
+        $weight = $request->validate([
+            'verified_weight_kg' => 'nullable|numeric|min:0.001|max:99999.999|decimal:0,3',
+        ])['verified_weight_kg'] ?? null;
+
+        if ($request->boolean('record_weight')) {
+            if ($weight === null) {
+                return back()->with('error', 'Enter the measured parcel weight.');
+            }
+
+            $updated = Shipment::query()
+                ->whereKey($shipment->id)
+                ->where('logistic_id', $logistic->id)
+                ->where('routing_status', 'at_origin_hub')
+                ->whereNotNull('origin_hub_received_at')
+                ->whereNull('linehaul_rider_id')
+                ->update(['verified_weight_kg' => $weight]);
+
+            return $updated
+                ? back()->with('success', 'Measured weight saved.')
+                : back()->with('error', 'Only unassigned parcels at the origin hub can be weighed here.');
+        }
 
         $isFailedReturn = $shipment->status === 'failed_return_at_sorting_center';
 
@@ -870,13 +894,9 @@ class LogisticController extends Controller
             }
         }
 
-        if (!$logistic || (int) $shipment->logistic_id !== (int) $logistic->id) {
-            abort(403, 'Shipment does not belong to your logistics company.');
-        }
-
         try {
             $result = \Illuminate\Support\Facades\DB::transaction(
-                function () use ($shipment, $logistic) {
+                function () use ($shipment, $logistic, $weight) {
                     $shipment = Shipment::query()
                         ->whereKey($shipment->id)
                         ->lockForUpdate()
@@ -954,6 +974,9 @@ class LogisticController extends Controller
 
                     $sameHub = $originHubId === $destinationHubId;
                     $now = now();
+                    if ($weight !== null) {
+                        $shipment->verified_weight_kg = $weight;
+                    }
 
                     if ($sameHub) {
                         $shipment->update([

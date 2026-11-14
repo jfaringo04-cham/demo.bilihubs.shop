@@ -222,6 +222,12 @@ $availableDeliveryRiders = $eligibleDeliveryRiders
 
                       @csrf
 
+                      @if($shipment->status !== 'failed_return_at_sorting_center')
+                        <label for="receipt-weight-{{ $shipment->id }}" class="form-label small mb-1">Measured weight (kg)</label>
+                        <input id="receipt-weight-{{ $shipment->id }}" name="verified_weight_kg" type="number"
+                               class="form-control form-control-sm mb-2" min="0.001" max="99999.999" step="0.001">
+                      @endif
+
                       <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Confirm receipt of this package?')">
 
                         <i class="bi bi-box-arrow-in-down"></i> Receive Parcel

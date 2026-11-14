@@ -14,6 +14,7 @@ class LinehaulTrip extends Model
     public const STATUS_CANCELLED = 'cancelled';
 
     protected $fillable = [
+        'payload_limit_kg',
         'logistic_id',
         'origin_hub_id',
         'destination_hub_id',

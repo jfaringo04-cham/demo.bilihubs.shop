@@ -1341,16 +1341,30 @@ class DashboardController extends Controller
 
     public function truckTripHistory(Request $request)
     {
-        $trips = \App\Models\LinehaulTrip::query()
+        $driverTrips = \App\Models\LinehaulTrip::query()
             ->where('driver_id', $request->user()->id)
-            ->where('status', \App\Models\LinehaulTrip::STATUS_ARRIVED)
             ->with(['originHub:id,name', 'destinationHub:id,name'])
-            ->withCount('shipments')
+            ->withCount('shipments');
+
+        $selectedTrip = $request->filled('trip')
+            ? (clone $driverTrips)->findOrFail($request->integer('trip'))
+            : null;
+
+        $activeTrips = (clone $driverTrips)
+            ->whereIn('status', [
+                \App\Models\LinehaulTrip::STATUS_LOADING,
+                \App\Models\LinehaulTrip::STATUS_DISPATCHED,
+            ])
+            ->orderBy('scheduled_departure_at')
+            ->get();
+
+        $trips = $driverTrips
+            ->where('status', \App\Models\LinehaulTrip::STATUS_ARRIVED)
             ->latest('arrived_at')
             ->orderByDesc('id')
             ->paginate(20);
 
-        return view('rider.truck-trip-history', compact('trips'));
+        return view('rider.truck-trip-history', compact('selectedTrip', 'activeTrips', 'trips'));
     }
 
     public function history(Request $request)

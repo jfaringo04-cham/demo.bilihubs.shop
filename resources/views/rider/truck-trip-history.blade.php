@@ -3,10 +3,48 @@
 @section('content')
 <div class="container py-4">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-    <h1 class="h2 mb-0">Truck Trip History</h1>
+    <h1 class="h2 mb-0">Truck Trips</h1>
     <a href="{{ route('rider.history') }}" class="btn btn-outline-secondary">Delivery History</a>
   </div>
 
+  @if ($selectedTrip)
+    <section class="card mb-4" aria-labelledby="trip-details-heading">
+      <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
+          <h2 id="trip-details-heading" class="h5 mb-0">{{ $selectedTrip->trip_number }}</h2>
+          <span class="badge text-bg-primary align-self-start">{{ ucfirst($selectedTrip->status) }}</span>
+        </div>
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Origin hub</dt>
+          <dd class="col-sm-8">{{ $selectedTrip->originHub?->name ?? '—' }}</dd>
+          <dt class="col-sm-4">Destination hub</dt>
+          <dd class="col-sm-8">{{ $selectedTrip->destinationHub?->name ?? '—' }}</dd>
+          <dt class="col-sm-4">Scheduled departure</dt>
+          <dd class="col-sm-8">{{ $selectedTrip->scheduled_departure_at?->format('M d, Y g:i A') ?? '—' }}</dd>
+          <dt class="col-sm-4">Parcels loaded</dt>
+          <dd class="col-sm-8">{{ $selectedTrip->parcelCount() }}</dd>
+        </dl>
+      </div>
+    </section>
+  @endif
+
+  <h2 class="h5 mb-2">Active trips</h2>
+  <div class="list-group mb-4">
+    @forelse ($activeTrips as $trip)
+      <a href="{{ route('rider.truck-trip-history', ['trip' => $trip->id]) }}"
+         class="list-group-item list-group-item-action d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+          <div class="fw-semibold">{{ $trip->trip_number }}</div>
+          <div class="small text-muted">{{ $trip->originHub?->name ?? '—' }} → {{ $trip->destinationHub?->name ?? '—' }}</div>
+        </div>
+        <span class="badge text-bg-primary">{{ ucfirst($trip->status) }}</span>
+      </a>
+    @empty
+      <div class="list-group-item text-muted">No active truck trips.</div>
+    @endforelse
+  </div>
+
+  <h2 class="h5 mb-2">Completed trips</h2>
   <div class="table-container">
     <div class="table-responsive">
       <table class="table table-hover align-middle mb-0">

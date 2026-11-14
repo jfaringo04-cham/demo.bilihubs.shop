@@ -189,6 +189,7 @@ class DashboardController extends Controller
                 Rule::exists('categories', 'id')
                     ->where('parent_id', $request->input('category_id')),
             ],
+            'packed_weight_kg' => 'nullable|numeric|min:0.001|max:9999.999|decimal:0,3',
             'price' => 'required|numeric|min:0|max:999999.99',
             'stock' => 'required|integer|min:0',
             'sku' => 'nullable|string|max:255',
@@ -254,6 +255,7 @@ class DashboardController extends Controller
             'name' => $request->name,
             'description' => $request->description,
             'price_minor' => $priceMinor,
+            'packed_weight_kg' => $request->input('packed_weight_kg'),
             'stock' => $request->stock,
             'category_id' => $request->category_id,
             'subcategory_id' => $request->subcategory_id,
@@ -417,6 +419,7 @@ class DashboardController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'packed_weight_kg' => 'nullable|numeric|min:0.001|max:9999.999|decimal:0,3',
             'price' => 'required|numeric|min:0|max:999999.99',
             'stock' => 'required|integer|min:0',
             'category_id' => ['required', 'exists:categories,id', Rule::in($allowedCategoryIds)],
@@ -478,6 +481,9 @@ class DashboardController extends Controller
         ]);
         $priceMinor = (int) round((float) $request->price * 100);
         $data['price_minor'] = $priceMinor;
+        if ($request->has('packed_weight_kg')) {
+            $data['packed_weight_kg'] = $request->input('packed_weight_kg');
+        }
 
         $newImagePaths = [];
         if ($request->hasFile('new_images')) {

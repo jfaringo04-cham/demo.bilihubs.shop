@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\LinehaulTrip;
+use App\Models\Notification;
 use App\Models\Shipment;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -16,7 +17,8 @@ class LinehaulTripService
         int $destinationHubId,
         int $driverId,
         int $minimumLoad,
-        string $scheduledDepartureAt
+        string $scheduledDepartureAt,
+        ?float $payloadLimitKg = null
     ): LinehaulTrip {
         return DB::transaction(function () use (
             $logisticId,
@@ -24,7 +26,8 @@ class LinehaulTripService
             $destinationHubId,
             $driverId,
             $minimumLoad,
-            $scheduledDepartureAt
+            $scheduledDepartureAt,
+            $payloadLimitKg
         ) {
             if ($originHubId === $destinationHubId) {
                 throw new RuntimeException(
@@ -55,6 +58,13 @@ class LinehaulTripService
                 $logisticId,
                 $originHubId
             );
+
+            if ($payloadLimitKg !== null && LinehaulTrip::query()
+                ->where('driver_id', $driver->id)
+                ->whereIn('status', [LinehaulTrip::STATUS_LOADING, LinehaulTrip::STATUS_DISPATCHED])
+                ->exists()) {
+                throw new RuntimeException('Finish the current truck trip before creating another one.');
+            }
 
             $remainingCapacity =
                 (int) $driver->max_capacity
@@ -87,6 +97,7 @@ class LinehaulTripService
                 'status' => LinehaulTrip::STATUS_LOADING,
                 'minimum_load' => $minimumLoad,
                 'capacity_limit' => $remainingCapacity,
+                'payload_limit_kg' => $payloadLimitKg,
                 'scheduled_departure_at' =>
                     $scheduledDepartureAt,
             ]);
@@ -96,6 +107,7 @@ class LinehaulTripService
              * for this route, up to truck capacity.
              */
             self::loadAvailableParcels($trip);
+            self::notifyDriver($trip, 'Truck trip assigned');
 
             return $trip->fresh([
                 'originHub',
@@ -133,6 +145,10 @@ class LinehaulTripService
                 false
             );
 
+            $remainingGrams = self::remainingPayloadGrams($trip, $driver);
+            if ($remainingGrams !== null && $remainingGrams < 0) {
+                throw new RuntimeException('The current truck load exceeds its payload limit.');
+            }
             $tripParcelCount = $trip->shipments()->count();
 
             $tripRemaining =
@@ -171,6 +187,8 @@ class LinehaulTripService
                 ->whereNotNull('origin_hub_received_at')
                 ->whereNull('rider_id')
                 ->whereNull('linehaul_rider_id')
+                ->where('linehaul_status', LineHaulAssignmentService::STATUS_AWAITING_ASSIGNMENT)
+                ->when($remainingGrams !== null, fn ($query) => $query->where('verified_weight_kg', '>', 0))
                 ->whereNotIn(
                     'status',
                     [
@@ -190,13 +208,26 @@ class LinehaulTripService
                 )
                 ->orderBy('origin_hub_received_at')
                 ->orderBy('id')
-                ->limit($availableSlots)
+                ->when($remainingGrams === null, fn ($query) => $query->limit($availableSlots))
                 ->lockForUpdate()
                 ->get();
 
             $loaded = 0;
 
             foreach ($shipments as $shipment) {
+                if ($loaded >= $availableSlots) {
+                    break;
+                }
+
+                $grams = (int) round((float) $shipment->verified_weight_kg * 1000);
+                if ($remainingGrams !== null && $grams > $remainingGrams) {
+                    continue;
+                }
+
+                if ($remainingGrams !== null) {
+                    $remainingGrams -= $grams;
+                }
+
                 /*
                  * Existing service remains responsible for:
                  * - truck validation
@@ -219,6 +250,27 @@ class LinehaulTripService
 
             return $loaded;
         }, 3);
+    }
+
+    private static function remainingPayloadGrams(LinehaulTrip $trip, User $driver): ?int
+    {
+        if ($trip->payload_limit_kg === null) {
+            return null;
+        }
+
+        $activeParcels = Shipment::query()
+            ->where('linehaul_rider_id', $driver->id)
+            ->whereIn('linehaul_status', [
+                LineHaulAssignmentService::STATUS_ASSIGNED,
+                LineHaulAssignmentService::STATUS_IN_TRANSIT,
+            ]);
+
+        if ((clone $activeParcels)->whereNull('verified_weight_kg')->exists()) {
+            throw new RuntimeException('An active parcel on this truck still needs a measured weight.');
+        }
+
+        return (int) round((float) $trip->payload_limit_kg * 1000)
+            - (int) round((float) $activeParcels->sum('verified_weight_kg') * 1000);
     }
 
     public static function dispatch(
@@ -300,7 +352,26 @@ class LinehaulTripService
                 'status' => LinehaulTrip::STATUS_DISPATCHED,
                 'dispatched_at' => now(),
             ]);
+
+            self::notifyDriver($trip, 'Truck trip dispatched');
         }, 3);
+    }
+
+    private static function notifyDriver(LinehaulTrip $trip, string $title): void
+    {
+        $trip->loadMissing(['originHub', 'destinationHub']);
+
+        $origin = $trip->originHub?->name ?? 'Origin hub';
+        $destination = $trip->destinationHub?->name ?? 'Destination hub';
+        $departure = $trip->scheduled_departure_at?->format('M j, Y g:i A') ?? 'Not scheduled';
+
+        Notification::create([
+            'user_id' => $trip->driver_id,
+            'title' => $title,
+            'message' => "{$trip->trip_number}: {$origin} → {$destination}. Scheduled departure: {$departure}.",
+            'type' => 'shipment',
+            'link' => route('rider.truck-trip-history', ['trip' => $trip->id], false),
+        ]);
     }
 
     public static function receive(

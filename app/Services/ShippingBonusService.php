@@ -42,17 +42,28 @@ final class ShippingBonusService
 
     public static function linehaulExtraForOrderMinor(?SellerOrder $order, ?Shipment $shipment): int
     {
+        if (!$order?->created_at || !$shipment?->linehaul_rider_id) {
+            return 0;
+        }
+
+        $surcharge = self::extraForOrderMinor($order);
+        $longHaulEffectiveAt = config('shipping.long_linehaul_bonus_effective_at');
+        if ($longHaulEffectiveAt
+            && CarbonImmutable::parse($order->created_at)->gte(CarbonImmutable::parse($longHaulEffectiveAt))
+            && (float) $shipment->estimated_distance_km >= 20) {
+            return intdiv($surcharge * 3, 5);
+        }
+
         $effectiveAt = config('shipping.linehaul_bonus_effective_at');
 
-        if (!$effectiveAt || !$order?->created_at
-            || CarbonImmutable::parse($order->created_at)->lt(CarbonImmutable::parse($effectiveAt))
-            || !$shipment?->linehaul_rider_id) {
+        if (!$effectiveAt
+            || CarbonImmutable::parse($order->created_at)->lt(CarbonImmutable::parse($effectiveAt))) {
             return 0;
         }
 
         // Give linehaul one third. Final delivery and logistics split the rest
         // in whole centavos so the allocated amounts always sum to the surcharge.
-        return intdiv(self::extraForOrderMinor($order), 3);
+        return intdiv($surcharge, 3);
     }
 
     public static function deliveryExtraForOrderMinor(?SellerOrder $order, ?Shipment $shipment = null): int

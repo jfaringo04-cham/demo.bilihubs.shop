@@ -304,6 +304,14 @@
 
             <div class="form-row">
 
+              <div class="mb-3">
+                <label for="packed_weight_kg" class="form-label">Packed weight per unit (kg)</label>
+                <input type="number" name="packed_weight_kg" id="packed_weight_kg" class="form-control"
+                       min="0.001" max="9999.999" step="0.001" value="{{ old('packed_weight_kg') }}">
+                <small class="form-text">Include packaging. Blank means the hub needs to verify the weight.</small>
+                @error('packed_weight_kg') <div class="text-danger">{{ $message }}</div> @enderror
+              </div>
+
               <div class="form-group">
 
                 <label for="sku" class="form-label">SKU <span class="text-muted small">(Optional)</span></label>

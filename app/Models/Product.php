@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Storage;
 class Product extends Model
 {
     protected $fillable = [
+        'packed_weight_kg',
         'name',
         'price_minor',
         'image',

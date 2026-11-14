@@ -159,6 +159,7 @@ class OrderController extends Controller
             $cartItems[] = [
                 'cart_index' => $cartIndex,
                 'product_id' => $product->id,
+                'packed_weight_kg' => $product->packed_weight_kg,
                 'seller_id' => $product->seller_id,
                 'variant_id' => $variation?->id,
                 'size_id' => $item['size_id'] ?? null,
@@ -505,6 +506,7 @@ class OrderController extends Controller
                         'variant_id' => $item['variant_id'],
                         'size_id' => $item['size_id'],
                         'product_name' => $productName,
+                        'packed_weight_kg' => $item['packed_weight_kg'],
                         'quantity' => $item['quantity'],
                         'price_minor' => $item['price_minor'],
                         'subtotal_minor' => $item['subtotal_minor'],

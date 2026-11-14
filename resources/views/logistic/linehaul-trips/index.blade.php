@@ -102,6 +102,7 @@
                                 <th>Tracking</th>
                                 <th>Order</th>
                                 <th>Buyer</th>
+                                <th>Parcel weight</th>
                             </tr>
                         </thead>
 
@@ -118,6 +119,21 @@
 
                                 <td>
                                     {{ $shipment->sellerOrder?->order?->user?->name ?? 'N/A' }}
+                                </td>
+                                <td>
+                                    @if($shipment->estimated_weight_kg !== null)
+                                        <div class="small text-muted">Estimate: {{ $shipment->estimated_weight_kg }} kg</div>
+                                    @elseif($shipment->verified_weight_kg === null)
+                                        <div class="small text-muted">Weight needed</div>
+                                    @endif
+                                    <form method="POST" action="{{ route('logistic.shipments.receive', $shipment) }}" class="d-flex gap-2">
+                                        @csrf
+                                        <input type="hidden" name="record_weight" value="1">
+                                        <input name="verified_weight_kg" type="number" min="0.001" max="99999.999" step="0.001"
+                                               class="form-control form-control-sm" aria-label="Measured weight in kg"
+                                               value="{{ $shipment->verified_weight_kg }}" placeholder="Weight needed (kg)" required>
+                                        <button class="btn btn-sm btn-outline-primary">Save</button>
+                                    </form>
                                 </td>
                             </tr>
                             @endforeach
@@ -197,7 +213,12 @@
 
                         <div class="col-md-3">
 
-                            <label class="form-label">
+                            <label for="trip-payload-{{ $loop->index }}" class="form-label">Truck payload limit (kg)</label>
+                            <input id="trip-payload-{{ $loop->index }}" type="number" name="payload_limit_kg"
+                                   class="form-control" min="0.001" max="99999.999" step="0.001" required>
+                            <div class="form-text">Enter the verified cargo capacity for the selected truck.</div>
+
+                            <label class="form-label mt-3">
                                 Departure Cutoff
                             </label>
 
@@ -313,6 +334,10 @@
 
                                 /
                                 {{ $trip->capacity_limit }}
+
+                                @if($trip->payload_limit_kg !== null)
+                                    <div class="small text-muted">{{ $trip->loaded_weight_kg ?? 0 }} / {{ $trip->payload_limit_kg }} kg</div>
+                                @endif
 
                                 <div class="small text-muted">
                                     Min:

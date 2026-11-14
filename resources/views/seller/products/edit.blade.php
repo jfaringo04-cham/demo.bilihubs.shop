@@ -100,6 +100,14 @@ $deadlinePassed = $product->isResubmitDeadlinePassed();
     </div>
     <hr>
     <h5 class="mb-3">Discount / Promo <span class="text-muted small">(Optional)</span></h5>
+    <div class="mb-3">
+      <label for="packed_weight_kg" class="form-label">Packed weight per unit (kg)</label>
+      <input type="number" name="packed_weight_kg" id="packed_weight_kg" class="form-control"
+             min="0.001" max="9999.999" step="0.001" value="{{ old('packed_weight_kg', $product->packed_weight_kg) }}">
+      <small class="form-text">Include packaging. Blank means the hub needs to verify the weight.</small>
+      @error('packed_weight_kg') <div class="text-danger">{{ $message }}</div> @enderror
+    </div>
+
     <p class="text-muted small">Set a discount to attract buyers. Leave blank to sell at the regular price.</p>
     <div class="row g-3 mb-3">
       <div class="col-md-4">

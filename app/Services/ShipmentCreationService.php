@@ -56,17 +56,17 @@ class ShipmentCreationService
         $originMatch = $route['origin_match'] ?? 'unresolved';
         $destinationMatch = $route['destination_match'] ?? 'unresolved';
 
-        /*
-         * Determine whether this shipment needs an inter-hub
-         * line-haul vehicle such as a car, van, or truck.
-         *
-         * Parcel weight is currently nullable because the existing
-         * order/product flow does not yet provide a reliable shipment
-         * weight value.
-         */
+        $items = $lockedSellerOrder->items()->get(['packed_weight_kg', 'quantity']);
+        $estimatedWeight = $items->isEmpty() || $items->contains(
+            fn ($item) => $item->packed_weight_kg === null
+        ) ? null : $items->sum(
+            fn ($item) => (float) $item->packed_weight_kg * (int) $item->quantity
+        );
+
         $linehaulFields = LineHaulAssignmentService::routingFields(
             $originHub,
-            $destinationHub
+            $destinationHub,
+            $estimatedWeight
         );
 
         $pickup = $pickupAddress
@@ -128,8 +128,7 @@ class ShipmentCreationService
             'required_vehicle_type' =>
             $linehaulFields['required_vehicle_type'],
 
-            'parcel_weight_kg' =>
-            $linehaulFields['parcel_weight_kg'],
+            'estimated_weight_kg' => $estimatedWeight,
 
             'estimated_distance_km' =>
             $linehaulFields['estimated_distance_km'],
