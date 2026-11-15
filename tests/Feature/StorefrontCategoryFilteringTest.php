@@ -118,6 +118,11 @@ class StorefrontCategoryFilteringTest extends SQLiteTestCase
             $table->timestamps();
         });
 
+        Schema::create('product_variants', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('product_id');
+        });
+
         Schema::create('sizes', function (Blueprint $table) {
             $table->id();
             $table->string('name');
@@ -207,6 +212,35 @@ class StorefrontCategoryFilteringTest extends SQLiteTestCase
             'compliance_status' => $complianceStatus,
             'status' => $status,
         ]);
+    }
+
+    public function test_help_chat_filters_public_products_by_effective_price_before_limiting_results(): void
+    {
+        $category = $this->createCategory('Shoes', 'shoes');
+        $seller = $this->createSeller([$category->id]);
+
+        foreach (range(1, 6) as $number) {
+            $this->createProduct($seller, "Cream Sneakers A{$number}", $category->id)
+                ->update(['price_minor' => 150000]);
+        }
+
+        $discounted = $this->createProduct($seller, 'Sneakers in Cream', $category->id);
+        $discounted->forceFill([
+            'price_minor' => 120000,
+            'discount_percent' => 20,
+            'discounted_price_minor' => 96000,
+        ])->save();
+        $this->createProduct($seller, 'Cream Sneakers Flagged', $category->id, null, 'flagged');
+        $this->createProduct($seller, 'Cream Sneakers Archived', $category->id, null, 'approved', 'archived');
+
+        $this->getJson(route('products.index', [
+            'format' => 'help-chat',
+            'search' => 'cream sneakers',
+            'max_price_minor' => 100000,
+        ]))->assertOk()
+            ->assertJsonCount(1, 'products')
+            ->assertJsonPath('products.0.id', $discounted->id)
+            ->assertJsonPath('products.0.price_minor', 96000);
     }
 
     public function test_subcategory_filter_includes_new_and_legacy_product_records(): void

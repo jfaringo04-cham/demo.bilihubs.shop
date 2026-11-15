@@ -143,7 +143,9 @@
 
             const reply = (topic) => {
                 if (!topic) {
-                    addReply('Hindi ko pa masasagot iyan. Pumili ng topic sa ibaba.');
+                    addReply(shoppingHelp
+                        ? 'Pumili ng help topic sa ibaba o sabihin ang pangalan ng produktong hinahanap mo.'
+                        : 'Pumili ng help topic sa ibaba.');
                     return;
                 }
                 addReply(topic.dataset.answer, topic.dataset.link
@@ -155,12 +157,48 @@
             let followUp = null;
             let results = [];
             let selected = null;
+            let lastSearch = null;
+            let pendingBudget = null;
+            let pendingDetail = null;
             const peso = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' });
             const price = product => peso.format(product.price_minor / 100);
             const remember = product => {
                 selected = product;
                 followUp = null;
             };
+            const budgetAmount = '(\\d+(?:,\\d{3})*(?:\\.\\d{1,2})?)\\s*([kK])?';
+            const currency = '(?:₱|php\\b|p(?=\\s*\\d))';
+            const markedBudget = new RegExp(
+                `(?:^|[ ,])(?:hanggang|hangang|max(?:imum)?|under|up to|below|within|budget(?: ko)?(?: ay| is| na)?)\\s*${currency}?\\s*${budgetAmount}(?![\\d,.a-z])(?:\\s*(?:pesos?|php))?`,
+                'iu',
+            );
+            const trailingBudget = new RegExp(
+                `(?:^|[ ,])${currency}\\s*${budgetAmount}(?:\\s+na)?(?:\\s+(?:lang|lamang|only))?(?:\\s+pala)?(?:\\s+(?:ang )?budget(?: ko)?)?(?=\\s*(?:(?:ba|po|kayo)\\s*)*$)`,
+                'iu',
+            );
+            const budgetOnly = new RegExp(
+                `^${budgetAmount}\\s*(?:pesos?\\s*)?(?:na\\s+)?(?:(?:lang|lamang|only)\\s+)?(?:pala\\s+)?(?:ang\\s+)?budget(?:\\s+ko)?$`,
+                'iu',
+            );
+            const parseBudget = text => {
+                const match = text.match(markedBudget) || text.match(trailingBudget) || text.match(budgetOnly);
+                if (!match) return { maxPrice: null, productText: text };
+
+                const pesos = Number(match[1].replace(/,/g, '')) * (match[2] ? 1000 : 1);
+                const productText = (text.slice(0, match.index) + ' ' + text.slice(match.index + match[0].length))
+                    .replace(/\s+/g, ' ')
+                    .replace(/(?:^|\s)(?:ang budget ko|budget ko|lang|only)(?=\s*$|\s+ba\b)/i, ' ')
+                    .trim();
+
+                return { maxPrice: Math.round(pesos * 100), productText };
+            };
+
+            const catalogName = text => text
+                .replace(/^(?:(?:mayroon|meron|may|mayroong|merong)(?:\s+(?:ba|bang|po|kayong|kayo)\b)*|do you (?:have|sell)|(?:hanap(?:in)?|naghahanap|search(?: for)?|looking for|gusto)(?:\s+ako)?(?:\s+ng)?)(?:\s+|$)/i, '')
+                .replace(/^(?:ba|bang|po|kayo|ng)\s+/i, '')
+                .replace(/(?:\s+(?:na|ba|po|kayo|lang|please))+$/i, '')
+                .replace(/^(?:na|ba|po|kayo|lang|only)$/i, '')
+                .trim();
             const cards = (products) => {
                 const list = document.createElement('div');
                 list.className = 'bili-help__cards';
@@ -179,20 +217,25 @@
                     pick.type = 'button';
                     pick.textContent = 'Select';
                     pick.addEventListener('click', () => {
-                        remember(product);
-                        addReply(`Napili mo ang ${product.name}. Puwede kang magtanong tungkol sa presyo, stock, o seller.`);
+                        if (!input.readOnly) chooseProduct(product, pendingDetail);
                     });
                     const view = document.createElement('a');
                     view.href = product.url;
                     view.textContent = 'View Product';
                     info.append(title, cost, pick, view);
+                    if (product.seller_url) {
+                        const seller = document.createElement('a');
+                        seller.href = product.seller_url;
+                        seller.textContent = 'Message Seller';
+                        info.appendChild(seller);
+                    }
                     card.append(image, info);
                     list.appendChild(card);
                 });
                 messages.appendChild(list);
                 messages.scrollTop = messages.scrollHeight;
             };
-            const searchCatalog = async (term, forSeller, detail = null) => {
+            const searchCatalog = async (term, forSeller, detail = null, maxPrice = null) => {
                 const submit = form.querySelector('button');
                 submit.disabled = true;
                 input.readOnly = true;
@@ -200,6 +243,7 @@
                     const url = new URL(chat.dataset.catalogUrl, window.location.href);
                     url.searchParams.set('format', 'help-chat');
                     url.searchParams.set(detail ? 'product_id' : 'search', term);
+                    if (maxPrice !== null) url.searchParams.set('max_price_minor', maxPrice);
                     const response = await fetch(url, { headers: { Accept: 'application/json' } });
                     if (!response.ok) throw new Error('Catalog search failed');
                     const { products } = await response.json();
@@ -207,7 +251,6 @@
                         const product = products[0];
                         if (!product) {
                             selected = null;
-                            results = [];
                             addReply('Hindi na lumalabas ang item na ito sa catalog.');
                             return;
                         }
@@ -221,9 +264,13 @@
                         } else if (product.on_vacation || product.stock <= 0) {
                             addReply(`${product.name}: ${product.on_vacation ? 'Temporarily unavailable ang shop.' : 'Sold out.'}`, links);
                         } else if (product.has_variants) {
-                            addReply('Piliin ang variant sa product page para makita ang stock at sizes nito.', links);
+                            if (product.seller_url) links.push({ url: product.seller_url, label: 'Message Seller' });
+                            addReply('Piliin ang variant sa product page para ma-check ang available na sizes at stock.', links);
                         } else if (detail.size) {
-                            const size = product.sizes.find(option => option.name.trim().toLowerCase() === detail.size.toLowerCase());
+                            const sizeLabel = value => value.trim().toLowerCase().replace(/^size\s+/i, '');
+                            const aliases = { small: 's', medium: 'm', large: 'l' };
+                            const normalizeSize = value => aliases[sizeLabel(value)] ?? sizeLabel(value);
+                            const size = product.sizes.find(option => normalizeSize(option.name) === normalizeSize(detail.size));
                             addReply(size
                                 ? `Size ${size.name}: ${size.stock > 0 ? `${size.stock} in stock` : 'sold out'}.`
                                 : 'Walang matching size na nakalista. Tingnan ang options sa product page.', links);
@@ -233,15 +280,20 @@
                         return;
                     }
 
+                    lastSearch = term;
                     results = products;
                     selected = products.length === 1 ? products[0] : null;
                     if (products.length) {
                         addReply(forSeller
                             ? 'Piliin ang item, tapos sabihin na gusto mong kausapin ang seller.'
-                            : 'Piliin ang item sa ibaba o sabihin kung alin, gaya ng “yung una”.');
+                            : maxPrice === null
+                                ? 'Piliin ang item sa ibaba o sabihin kung alin, gaya ng “yung una”.'
+                                : `Ito ang mga may listed price na pasok sa ${peso.format(maxPrice / 100)}. Piliin ang item o sabihin ang “yung una”.`);
                         cards(products);
                     } else {
-                        addReply('Wala akong nahanap na match. Subukan ang ibang spelling o product name.');
+                        addReply(maxPrice === null
+                            ? 'Wala akong nahanap na match. Subukan ang ibang spelling o product name.'
+                            : `Walang “${term}” na pasok sa ${peso.format(maxPrice / 100)}. Puwede mong baguhin ang budget o product name.`);
                     }
                 } catch {
                     addReply('May problema sa product search ngayon. Subukan ulit o buksan ang Products.',
@@ -252,8 +304,38 @@
                 }
             };
 
-            topics.forEach(topic => topic.addEventListener('click', () => {
+            const runSearch = async (term, maxPrice, forSeller = false) => {
+                if (term.length < 2 || term.length > 100) {
+                    addReply('Maglagay ng product name na 2 hanggang 100 characters.');
+                    return;
+                }
+
                 followUp = null;
+                pendingBudget = null;
+                pendingDetail = null;
+                results = [];
+                selected = null;
+                await searchCatalog(term, forSeller, null, maxPrice);
+            };
+
+            const chooseProduct = async (product, detail = null) => {
+                remember(product);
+                pendingDetail = null;
+                if (detail?.askSize) {
+                    followUp = 'size';
+                    addReply(`Anong size ng ${product.name} ang gusto mong i-check?`);
+                } else if (detail) {
+                    await searchCatalog(product.id, false, detail);
+                } else {
+                    addReply(`Napili mo ang ${product.name}. Puwede kang magtanong tungkol sa presyo, stock, o seller.`);
+                }
+            };
+
+            topics.forEach(topic => topic.addEventListener('click', () => {
+                if (input.readOnly) return;
+                followUp = null;
+                pendingBudget = null;
+                pendingDetail = null;
                 addMessage(topic.textContent.trim(), 'bili-help__message');
                 reply(topic);
             }));
@@ -266,70 +348,117 @@
                 input.focus();
                 addMessage(question, 'bili-help__message');
 
-                const normalized = question.toLowerCase()
-                    .replace(/[-–]/g, ' ')
-                    .replace(/\b(accout|acount|acccount|accounnt|accountt)\b/g, 'account')
-                    .replace(/\s+/g, ' ');
-                const term = question.replace(/[?!.]+$/, '').trim();
-                const matches = topics.filter(topic => keywords[topic.textContent.trim()]?.test(normalized));
-                const sellerQuestion = /\b(?:message|contact|ask|tanong|kausapin|chat)\b.*\bseller\b/.test(normalized);
-                const productQuery = term.match(/^(?:(?:meron|mayroon|may)(?:\s+ba)?(?:\s+kayo)?(?:\s+bang)?|do you (?:have|sell)|(?:hanap(?:in)?|search(?: for)?|looking for)(?:\s+(?:ako ng|ng))?)\s+(.+)$/i);
-                const catalogTerm = productQuery?.[1]?.replace(/\s+(?:ba(?: kayo)?|kayo)$/i, '').trim();
+                const term = question.replace(/[?!.,]+$/, '').trim();
+                const normalized = term.toLowerCase().replace(/[-–]/g, ' ')
+                    .replace(/\b(accout|acount|acccount|accounnt|accountt)\b/g, 'account').replace(/\s+/g, ' ');
+                const greeting = /^(?:(?:hi|hello|hey)(?:\s+po)?|good (?:morning|afternoon|evening)|kumusta(?:\s+po)?)$/i;
+                const thanks = /^(?:salamat(?:\s+(?:po|nang marami))?|maraming salamat|thanks|thank you(?:\s+po)?)$/i;
+                if (greeting.test(normalized) || thanks.test(normalized)) {
+                    addReply(thanks.test(normalized) ? 'Walang anuman!' : 'Hi! Anong maitutulong ko sa iyo?');
+                    return;
+                }
 
-                const choice = normalized.match(/^(?:yung|iyong|the|option|number)?\s*(una|pangalawa|pangatlo|pang apat|panglima|first|second|third|fourth|fifth|[1-5])\b/);
-                const position = choice && ['una', 'pangalawa', 'pangatlo', 'pang apat', 'panglima'].indexOf(choice[1]) + 1;
-                const englishPosition = choice && ['first', 'second', 'third', 'fourth', 'fifth'].indexOf(choice[1]) + 1;
-                const picked = choice && results[(position || englishPosition || Number(choice[1])) - 1];
-                const size = term.match(/\bsize\s+(\d+(?:\.\d+)?|[a-z]+)\b/i)?.[1];
+                const matches = topics.filter(topic => keywords[topic.textContent.trim()]?.test(normalized));
+                if (!shoppingHelp) {
+                    reply(matches.length === 1 ? matches[0] : null);
+                    return;
+                }
+
+                const sellerQuestion = /\b(?:message|contact|ask|tanong|kausapin|chat|makakausap)\b.*\bseller\b/i.test(term);
                 const priceQuestion = /\b(magkano|price|presyo|how much)\b/.test(normalized);
                 const shipping = /\b(shipping|delivery fee|padala)\b/.test(normalized);
-                const stockQuestion = size || /\b(stock|available|sold out)\b/.test(normalized);
+                const sizeQuestion = /\b(?:size|sizes|sukat)\b/.test(normalized);
+                const sizes = '(?:\\d{1,3}(?:\\.\\d{1,2})?|xxxs|xxs|xs|s|m|l|xl|xxl|xxxl|[2-5]xl|small|medium|large)';
+                const requestedSize = term.match(new RegExp(`\\b(?:size|sukat)\\s+(${sizes})\\b`, 'i'))?.[1]
+                    ?? (followUp === 'size' ? term.match(new RegExp(`^(${sizes})(?:\\s+po)?$`, 'i'))?.[1] : null);
+                const stockQuestion = sizeQuestion || requestedSize || /\b(stock|available|sold out|may natira|mayroon pa|meron pa|may stock)\b/.test(normalized);
+                const ordinals = ['una', 'pangalawa', 'pangatlo', 'pang apat', 'panglima'];
+                const englishOrdinals = ['first', 'second', 'third', 'fourth', 'fifth'];
+                const ordinal = normalized.match(/^(?:(?:yung|iyong|yong|the|option|number)\s+)?(una|pangalawa|pangatlo|pang apat|panglima|first|second|third|fourth|fifth|[1-5])\b/)?.[1];
+                const position = ordinal ? ordinals.indexOf(ordinal) + 1 || englishOrdinals.indexOf(ordinal) + 1 || Number(ordinal) : 0;
+                const { maxPrice, productText } = parseBudget(term);
+                const productWithSize = requestedSize && sizeQuestion
+                    ? productText.replace(new RegExp(`\\b(?:size|sukat)\\s+${sizes}\\b`, 'i'), '').trim()
+                    : productText;
+                const search = catalogName(productWithSize);
+                const productRequest = search !== productWithSize.trim();
+                const detail = sellerQuestion ? { kind: 'seller' }
+                    : priceQuestion ? { kind: 'price' }
+                    : stockQuestion ? { kind: 'stock', size: requestedSize, askSize: sizeQuestion && !requestedSize }
+                    : null;
 
-                if (shoppingHelp && picked) remember(picked);
+                if (position) {
+                    const item = results[position - 1];
+                    if (!item) {
+                        addReply('Walang item sa numerong iyon. Pumili sa mga product card o maghanap ulit.');
+                        return;
+                    }
 
-                if (shoppingHelp && shipping && priceQuestion) {
+                    const next = detail ?? pendingDetail;
+                    await chooseProduct(item, next);
+                    return;
+                }
+
+                if (shipping && priceQuestion) {
                     addReply('Makikita ang shipping fee sa checkout kapag napili na ang delivery address.',
                         selected ? [{ url: selected.url, label: 'View Product' }] : []);
-                } else if (shoppingHelp && selected && (sellerQuestion || priceQuestion || stockQuestion)) {
-                    await searchCatalog(selected.id, false, {
-                        kind: sellerQuestion ? 'seller' : priceQuestion ? 'price' : 'stock',
-                        size,
-                    });
-                } else if (shoppingHelp && picked) {
-                    addReply(`Napili mo ang ${picked.name}. Ano ang gusto mong malaman tungkol dito?`);
-                } else if (shoppingHelp && !selected && results.length && (priceQuestion || stockQuestion)) {
-                    addReply('Alin sa mga resulta ang tinutukoy mo? Pindutin ang Select o sabihin kung pang-ilan.');
-                } else if (shoppingHelp && sellerQuestion) {
+                    return;
+                }
+
+                if (maxPrice !== null) {
+                    if (!Number.isSafeInteger(maxPrice) || maxPrice > 1000000000) {
+                        addReply('Maglagay ng budget na nasa ₱0 hanggang ₱10,000,000.');
+                    } else if (search) {
+                        await runSearch(search, maxPrice);
+                    } else if (lastSearch) {
+                        await runSearch(lastSearch, maxPrice);
+                    } else {
+                        pendingBudget = maxPrice;
+                        followUp = 'catalog';
+                        addReply(`Anong produkto ang hinahanap mo sa budget na ${peso.format(maxPrice / 100)}?`);
+                    }
+                    return;
+                }
+
+                const refersToResults = !productRequest || !search
+                    || /^(?:ito|iyan|nito|niyan|pa|stock|stock pa|available|available pa|sizes?|sukat)$/i.test(search);
+                if (detail && selected && refersToResults) {
+                    await chooseProduct(selected, detail);
+                } else if (detail && results.length && refersToResults) {
+                    pendingDetail = detail;
+                    addReply('Alin sa mga item ang tinutukoy mo? Pindutin ang Select o sabihin ang “yung una”.');
+                } else if (sellerQuestion) {
                     const link = document.querySelector('[data-help-seller-link]');
-                    followUp = null;
                     if (link) {
-                        addReply('Buksan ang seller chat para ma-type at ma-send mo ang tanong mo.',
+                        addReply('Buksan ang seller chat para ma-send mo ang tanong.',
                             [{ url: link.href, label: link.textContent.trim() }]);
                     } else {
                         followUp = 'seller';
-                        addReply('Anong produkto ang gusto mong itanong sa seller? I-type ang product name.');
+                        addReply('Anong produkto ang gusto mong itanong sa seller? I-type ang pangalan.');
                     }
                 } else if (matches.length === 1) {
                     followUp = null;
+                    pendingBudget = null;
+                    pendingDetail = null;
                     reply(matches[0]);
-                } else if (shoppingHelp && (catalogTerm || followUp)) {
-                    const forSeller = followUp === 'seller';
-                    followUp = null;
-                    const search = catalogTerm || term;
-                    if (search.length >= 2 && search.length <= 100) {
-                        await searchCatalog(search, forSeller);
-                    } else {
-                        addReply('Maglagay ng product name na 2 hanggang 100 characters.');
+                } else if (detail && refersToResults) {
+                    followUp = 'catalog';
+                    addReply('Anong produkto ang tinutukoy mo? I-type ang pangalan.');
+                } else if (search && (productRequest || ['catalog', 'seller'].includes(followUp) || (
+                    /^[\p{L}\p{N}][\p{L}\p{N} &'+./-]*$/u.test(search)
+                    && search.split(/\s+/).length <= 6
+                    && !/^(?:paano|bakit|saan|sino|kailan|ano|pwede|puwede|how|why|where|who|when|what|can)\b/i.test(search)
+                ))) {
+                    await runSearch(search, pendingBudget, followUp === 'seller');
+                    if (productRequest && requestedSize && results.length === 1) {
+                        await chooseProduct(results[0], detail);
+                    } else if (productRequest && requestedSize && results.length > 1) {
+                        pendingDetail = detail;
+                        addReply('Pumili ng item para ma-check ko ang size na hinahanap mo.');
                     }
-                } else if (shoppingHelp && /\b(product|produkto|hanap|search|mayroon|meron)\b/.test(normalized)) {
+                } else if (productRequest || /\b(product|produkto|hanap|search)\b/.test(normalized)) {
                     followUp = 'catalog';
                     addReply('Anong produkto ang hinahanap mo? I-type ang pangalan.');
-                } else if (shoppingHelp && /^[\p{L}\p{N}][\p{L}\p{N} &'+./-]*$/u.test(term)
-                    && term.length >= 2 && term.length <= 100
-                    && term.split(/\s+/).length <= 6
-                    && !/^(?:hi|hello|hey|salamat|thanks|thank you)[!.]?$/i.test(term)
-                    && !/^(?:paano|bakit|saan|sino|kailan|ano|pwede|puwede|how|why|where|who|when|what|can)\b/i.test(term)) {
-                    await searchCatalog(term, false);
                 } else {
                     reply(null);
                 }

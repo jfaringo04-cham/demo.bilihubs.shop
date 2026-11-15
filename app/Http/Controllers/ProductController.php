@@ -25,6 +25,7 @@ class ProductController extends Controller
             $validated = $request->validate([
                 'search' => 'required_without:product_id|string|min:2|max:100',
                 'product_id' => 'required_without:search|integer|min:1',
+                'max_price_minor' => 'sometimes|integer|min:0|max:1000000000',
             ]);
             $query->with(['primaryImage', 'variations:id,product_id'])
                 ->without(['category']);
@@ -33,14 +34,22 @@ class ProductController extends Controller
                 $query->whereKey($validated['product_id']);
             } else {
                 $term = mb_strtolower(trim($validated['search']));
-                $pattern = '%' . str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $term) . '%';
-                $query->whereRaw("LOWER(name) LIKE ? ESCAPE '!'", [$pattern]);
+                foreach (preg_split('/\s+/u', $term, -1, PREG_SPLIT_NO_EMPTY) as $word) {
+                    $pattern = '%' . str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $word) . '%';
+                    $query->whereRaw("LOWER(name) LIKE ? ESCAPE '!'", [$pattern]);
+                }
             }
 
             $buyer = $request->user();
-            $products = $query->with('sellerUser:id')
-                ->orderBy('name')->orderBy('id')->limit(5)->get()
-                ->map(fn (Product $product) => [
+            $query->with('sellerUser:id')->orderBy('name')->orderBy('id');
+            $budget = $validated['max_price_minor'] ?? null;
+            $matches = isset($validated['product_id']) || $budget === null
+                ? $query->limit(5)->get()
+                : $query->lazy(50)
+                    ->filter(fn (Product $product) => $product->effective_price_minor <= $budget)
+                    ->take(5)->collect();
+
+            $products = $matches->values()->map(fn (Product $product) => [
                     'id' => $product->id,
                     'name' => $product->name,
                     'url' => route('products.show', $product, false),
