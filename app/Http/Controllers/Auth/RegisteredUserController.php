@@ -246,6 +246,10 @@ class RegisteredUserController extends Controller
 
         if ($this->isRepeatSubmissionFromThisSession($request, $email, 'rider_registration_email')) {
 
+            if ($request->session()->has(RiderEmailVerificationController::SESSION_KEY)) {
+                return redirect()->route('rider.email.verify');
+            }
+
             return redirect(route('login'))->with('success', 'Your rider application has already been submitted and is pending approval.');
         }
 
@@ -474,7 +478,8 @@ class RegisteredUserController extends Controller
                 $company = Logistic::lockForUpdate()->find($userData['logistic_id']);
                 $this->verifyRiderApplicationPolicy($company, $validated['rider_policy_version']);
 
-                $user = User::create($userData);
+                $user = new User($userData);
+                $user->forceFill(['rider_email_verification_required' => true])->save();
 
                 DB::table('rider_policy_acceptances')->insert([
                     'user_id' => $user->id,
@@ -524,33 +529,9 @@ class RegisteredUserController extends Controller
             throw $e;
         }
 
-        $logistic = \App\Models\Logistic::find($validated['logistic_id']);
-
-        if ($logistic) {
-
-            $logisticOwner = \App\Models\User::find($logistic->owner_user_id);
-
-            if ($logisticOwner) {
-
-                \App\Models\Notification::create([
-
-                    'user_id' => $logisticOwner->id,
-
-                    'title' => 'New Rider Application',
-
-                    'message' => $user->name . ' has applied to join ' . $logistic->company_name . ' as a rider. Please review and approve.',
-
-                    'type' => 'logistic',
-
-                    'link' => route('logistic.applications'),
-
-                ]);
-            }
-        }
-
         $request->session()->put('rider_registration_email', $user->email);
 
-        return redirect(route('login'))->with('success', 'Your rider application has been submitted to ' . $logistic->company_name . '. Please wait for approval.');
+        return app(RiderEmailVerificationController::class)->begin($request, $user);
     }
 
     private function verifyRiderApplicationPolicy(?Logistic $company, string $submittedVersion): void

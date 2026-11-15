@@ -33,6 +33,15 @@ class AuthenticatedSessionController extends Controller
 
         $user = Auth::user();
 
+        if ($user->needsRiderEmailVerification() && $user->isRider()
+            && $user->isPending() && $user->logistic_status === 'pending') {
+            Auth::guard('web')->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return app(RiderEmailVerificationController::class)->begin($request, $user);
+        }
+
         /*
         |--------------------------------------------------------------------------
         | Buyer Email Verification

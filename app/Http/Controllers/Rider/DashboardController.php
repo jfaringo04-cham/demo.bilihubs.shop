@@ -1646,8 +1646,7 @@ class DashboardController extends Controller
                     ->ignore($user->id),
             ],
 
-            'birthday' => ['required', 'date'],
-            'age' => ['nullable', 'integer', 'min:0', 'max:120'],
+            'birthday' => ['required', 'date_format:Y-m-d', 'before_or_equal:today', 'after_or_equal:' . today()->subYears(120)->toDateString()],
 
             'region' => ['required', 'string', 'max:255'],
             'province' => ['required', 'string', 'max:255'],
@@ -1663,6 +1662,8 @@ class DashboardController extends Controller
             ],
 
             'license_number' => ['required', 'string', 'max:255'],
+            'vehicle_plate_number' => ['nullable', 'string', 'max:20', 'regex:/^[a-z0-9 -]+$/i'],
+            'license_expires_on' => ['nullable', 'date_format:Y-m-d'],
 
             'profile_photo' => [
                 'nullable',
@@ -1746,7 +1747,7 @@ class DashboardController extends Controller
         $user->email = $validated['email'];
         $user->mobile_number = $validated['mobile_number'];
         $user->birthday = $validated['birthday'];
-        $user->age = $validated['age'] ?? null;
+        $user->age = \Illuminate\Support\Carbon::parse($validated['birthday'])->age;
 
         $user->region = $validated['region'];
         $user->province = $validated['province'];
@@ -1757,6 +1758,13 @@ class DashboardController extends Controller
 
         $user->vehicle_type = $validated['vehicle_type'];
         $user->license_number = $validated['license_number'];
+        if (array_key_exists('vehicle_plate_number', $validated)) {
+            $user->vehicle_plate_number = $validated['vehicle_plate_number']
+                ? strtoupper(trim($validated['vehicle_plate_number'])) : null;
+        }
+        if (array_key_exists('license_expires_on', $validated)) {
+            $user->license_expires_on = $validated['license_expires_on'];
+        }
 
         $user->save();
 

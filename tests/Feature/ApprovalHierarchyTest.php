@@ -21,6 +21,7 @@ class ApprovalHierarchyTest extends SQLiteTestCase
 
         $this->migrateApprovalSchema();
         (require database_path('migrations/2026_11_12_180000_add_logistics_rider_application_policies.php'))->up();
+        (require database_path('migrations/2026_11_15_010000_require_email_verification_for_new_rider_applications.php'))->up();
 
         foreach (['buyer', 'seller', 'logistics', 'rider', 'admin'] as $role) {
             Role::firstOrCreate(['name' => $role]);
@@ -484,14 +485,79 @@ class ApprovalHierarchyTest extends SQLiteTestCase
             ->assertNotFound();
     }
 
+    public function test_document_review_is_scoped_to_the_rider_company_and_current_upload(): void
+    {
+        (require database_path('migrations/2026_11_15_000000_add_rider_document_review_to_users.php'))->up();
+
+        [$owner, $logistic] = $this->makeLogistics('active');
+        [$otherOwner] = $this->makeLogistics('active');
+        $rider = $this->makeRider('approved', $logistic, User::STATUS_ACTIVE);
+        $disk = Storage::fake('supabase_private');
+        $png = base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDioAAAAASUVORK5CYII='
+        );
+
+        $type = 'or_document';
+        $reviewUrl = route('logistic.riders.documents.review', [$rider, $type]);
+        $uploadUrl = route('rider.account.documents.upload', $type);
+        $viewUrl = route('rider.account.documents.show', $type);
+        $previous = 'rider-documents/legacy-or.png';
+
+        $disk->put($previous, $png);
+        $rider->forceFill([$type => $previous])->save();
+        $this->assertNull($rider->fresh()->rider_document_reviews);
+
+        $decision = ['document_version' => hash('sha256', $previous), 'decision' => 'verified'];
+
+        $this->actingAs($otherOwner)->patch($reviewUrl, $decision)->assertForbidden();
+        $this->actingAs($rider)->patch($reviewUrl, $decision)->assertForbidden();
+        $this->get($viewUrl)->assertOk()->assertHeader('Content-Type', 'image/png');
+
+        $this->actingAs($owner)->patch($reviewUrl, [
+            ...$decision,
+            'decision' => 'needs_replacement',
+        ])->assertSessionHasErrors('reason');
+
+        $this->patch($reviewUrl, [
+            ...$decision,
+            'decision' => 'needs_replacement',
+            'reason' => 'Please upload a clearer copy.',
+        ])->assertRedirect(route('logistic.riders.show', $rider));
+        $this->assertSame(
+            'Please upload a clearer copy.',
+            $rider->fresh()->rider_document_reviews[$type]['reason'],
+        );
+
+        $this->actingAs($rider)->post($uploadUrl, [
+            'document' => UploadedFile::fake()->createWithContent('replacement.png', $png),
+        ])->assertRedirect(route('rider.account') . '#rider-documents');
+        $rider->refresh();
+        $disk->assertExists($rider->{$type});
+        $this->assertNotSame($previous, $rider->{$type});
+        $this->assertSame(['status' => 'pending_review'], $rider->rider_document_reviews[$type]);
+
+        $this->actingAs($owner)->patch($reviewUrl, $decision)
+            ->assertSessionHasErrors('document_version');
+        $this->patch($reviewUrl, [
+            ...$decision,
+            'document_version' => hash('sha256', $rider->{$type}),
+        ])->assertRedirect(route('logistic.riders.show', $rider));
+
+        $rider->refresh();
+        $this->assertSame('verified', $rider->rider_document_reviews[$type]['status']);
+        $this->assertSame($owner->id, $rider->rider_document_reviews[$type]['reviewed_by']);
+        $this->assertSame('approved', $rider->logistic_status);
+    }
+
     public function test_rider_application_is_pending_until_the_company_approves(): void
     {
+        Mail::fake();
         [$owner, $logistic] = $this->makeLogistics('active');
 
         $this->post(route('apply.rider.store'), $this->riderApplicationPayload([
             'email' => 'applicant@example.com',
             'logistic_id' => $logistic->id,
-        ]))->assertRedirect(route('login'));
+        ]))->assertRedirect(route('rider.email.verify'));
 
         $applicant = User::where('email', 'applicant@example.com')->firstOrFail();
 
@@ -506,6 +572,37 @@ class ApprovalHierarchyTest extends SQLiteTestCase
         $this->assertSame(User::STATUS_PENDING, $applicant->status);
         $this->assertSame('pending', $applicant->logistic_status);
         $this->assertSame((int) $logistic->id, (int) $applicant->logistic_id);
+        $this->assertDatabaseMissing('notifications', [
+            'user_id' => $owner->id,
+            'title' => 'New Rider Application',
+        ]);
+
+        $code = Mail::sent(\App\Mail\BuyerEmailOtp::class)->sole()->otp;
+
+        $this->actingAs($owner)
+            ->post(route('logistic.riders.approve', $applicant))
+            ->assertStatus(422);
+        auth()->guard('web')->logout();
+        $this->flushSession();
+
+        $this->post(route('rider.email.verify.submit'), ['otp' => $code])->assertForbidden();
+        $this->post(route('login'), [
+            'email' => 'applicant@example.com',
+            'password' => 'Password123!',
+        ])->assertRedirect(route('rider.email.verify'));
+
+        $this->post(route('rider.email.otp.resend'))->assertSessionHasErrors('otp');
+        $this->post(route('rider.email.verify.submit'), [
+            'otp' => $code === '111111' ? '222222' : '111111',
+        ])->assertSessionHasErrors('otp');
+        $this->post(route('rider.email.verify.submit'), ['otp' => $code])
+            ->assertRedirect(route('login'));
+
+        $this->assertNotNull($applicant->fresh()->email_verified_at);
+        $this->assertSame(User::STATUS_PENDING, $applicant->fresh()->status);
+        $this->assertDatabaseMissing('email_verification_otps', ['user_id' => $applicant->id]);
+        $this->post(route('rider.email.verify.submit'), ['otp' => $code])->assertForbidden();
+
         $this->assertDatabaseHas('notifications', [
             'user_id' => $owner->id,
             'title' => 'New Rider Application',

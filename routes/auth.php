@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\BuyerEmailVerificationController;
 use App\Http\Controllers\Auth\RegisteredUserController;
+use App\Http\Controllers\Auth\RiderEmailVerificationController;
 use App\Http\Controllers\Auth\SellerEmailVerificationController;
 use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Auth\NewPasswordController;
@@ -47,6 +48,13 @@ Route::middleware('guest')->group(function () {
         'resend'
     ])->middleware('throttle:3,5')->name('seller.email.otp.resend');
 
+
+    Route::get('rider/verify-email', [RiderEmailVerificationController::class, 'show'])
+        ->name('rider.email.verify');
+    Route::post('rider/verify-email', [RiderEmailVerificationController::class, 'verify'])
+        ->middleware('throttle:10,1')->name('rider.email.verify.submit');
+    Route::post('rider/resend-otp', [RiderEmailVerificationController::class, 'resend'])
+        ->middleware('throttle:3,5')->name('rider.email.otp.resend');
 
     // Login
     Route::get('login', [AuthenticatedSessionController::class, 'create'])

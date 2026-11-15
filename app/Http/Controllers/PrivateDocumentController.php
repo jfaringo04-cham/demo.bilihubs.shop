@@ -101,7 +101,17 @@ class PrivateDocumentController extends Controller
 
         abort_unless($logistic && $rider->isRider()
             && (int) $rider->logistic_id === (int) $logistic->id, 403);
-        abort_unless(in_array($type, ['or_document', 'cr_document'], true), 404);
+        abort_unless(array_key_exists($type, User::RIDER_DOCUMENTS), 404);
+
+        return $this->streamRegistrationDocument($rider, $type);
+    }
+
+    public function showOwnRiderDocument(string $type)
+    {
+        $rider = Auth::user();
+
+        abort_unless($rider && $rider->isRider(), 403);
+        abort_unless(array_key_exists($type, User::RIDER_DOCUMENTS), 404);
 
         return $this->streamRegistrationDocument($rider, $type);
     }
@@ -116,6 +126,7 @@ class PrivateDocumentController extends Controller
             'bir_form_2303',
             'or_document',
             'cr_document',
+            'license_document',
         ];
 
         abort_unless(in_array($type, $allowedTypes, true), 404);
@@ -141,7 +152,7 @@ class PrivateDocumentController extends Controller
             $allowedFolders = match ($type) {
                 'id_verification' => ['customer-documents/'],
                 'business_permit' => ['seller-documents/'],
-                'or_document', 'cr_document' => ['rider-documents/'],
+                'or_document', 'cr_document', 'license_document' => ['rider-documents/'],
             };
         }
 

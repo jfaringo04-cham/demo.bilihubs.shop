@@ -13,7 +13,8 @@ class BuyerEmailOtp extends Mailable
     use Queueable, SerializesModels;
 
     public function __construct(
-        public string $otp
+        public string $otp,
+        public ?string $approvalMessage = null,
     ) {}
 
     public function envelope(): Envelope

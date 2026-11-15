@@ -40,9 +40,7 @@
             </p>
 
             <p style="font-size:14px;color:#666;line-height:1.6;">
-                After verifying your email, your account
-                will remain pending until an administrator
-                approves your registration.
+                {{ $approvalMessage ?? 'After verifying your email, your account will remain pending until an administrator approves your registration.' }}
             </p>
 
             <p style="font-size:13px;color:#888;">

@@ -691,6 +691,11 @@ Route::middleware('auth')->group(function () {
 
         Route::put('/account', [RiderDashboardController::class, 'updateAccount'])->name('account.update');
 
+        Route::get('/account/documents/{type}', [\App\Http\Controllers\PrivateDocumentController::class, 'showOwnRiderDocument'])
+            ->whereIn('type', array_keys(\App\Models\User::RIDER_DOCUMENTS))->name('account.documents.show');
+        Route::post('/account/documents/{type}', [\App\Http\Controllers\RiderDocumentController::class, 'upload'])
+            ->whereIn('type', array_keys(\App\Models\User::RIDER_DOCUMENTS))->name('account.documents.upload');
+
         Route::get('/notifications', [RiderDashboardController::class, 'notifications'])->name('notifications');
 
         Route::post(
@@ -799,7 +804,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/riders/{rider}', [LogisticController::class, 'showRider'])->whereNumber('rider')->name('riders.show');
 
         Route::get('/riders/{rider}/documents/{type}', [\App\Http\Controllers\PrivateDocumentController::class, 'showRiderDocument'])
-            ->whereNumber('rider')->whereIn('type', ['or_document', 'cr_document'])->name('riders.documents.show');
+            ->whereNumber('rider')->whereIn('type', array_keys(\App\Models\User::RIDER_DOCUMENTS))->name('riders.documents.show');
+        Route::patch('/riders/{rider}/documents/{type}', [\App\Http\Controllers\RiderDocumentController::class, 'review'])
+            ->whereNumber('rider')->whereIn('type', array_keys(\App\Models\User::RIDER_DOCUMENTS))->name('riders.documents.review');
 
         Route::post('/riders/{rider}/approve', [LogisticController::class, 'approveRiderApplication'])->whereNumber('rider')->name('riders.approve');
 

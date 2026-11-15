@@ -277,10 +277,11 @@
           </div>
 
           <div class="col-md-4">
-            <label class="form-label">Birthday</label>
+            <label class="form-label" for="rider-birthday">Birthday</label>
 
             <input
               type="date"
+              id="rider-birthday"
               name="birthday"
               class="form-control"
               value="{{ old('birthday', $user->birthday) }}"
@@ -292,13 +293,13 @@
           </div>
 
           <div class="col-md-4">
-            <label class="form-label">Age</label>
+            <label class="form-label" for="rider-age">Age</label>
 
             <input
               type="number"
-              name="age"
+              id="rider-age"
               class="form-control"
-              value="{{ old('age', $user->age) }}"
+              value="{{ $user->birthday ? \Illuminate\Support\Carbon::parse($user->birthday)->age : $user->age }}"
               readonly>
           </div>
 
@@ -451,6 +452,24 @@
             @enderror
           </div>
 
+          <div class="col-md-6">
+            <label class="form-label" for="vehicle-plate-number">Plate Number <span class="text-muted">(optional)</span></label>
+            <input type="text" id="vehicle-plate-number" name="vehicle_plate_number" class="form-control"
+                   value="{{ old('vehicle_plate_number', $user->vehicle_plate_number) }}" maxlength="20">
+            @error('vehicle_plate_number')
+              <div class="text-danger small">{{ $message }}</div>
+            @enderror
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label" for="license-expires-on">License Expiry Date <span class="text-muted">(optional)</span></label>
+            <input type="date" id="license-expires-on" name="license_expires_on" class="form-control"
+                   value="{{ old('license_expires_on', $user->license_expires_on?->toDateString()) }}">
+            @error('license_expires_on')
+              <div class="text-danger small">{{ $message }}</div>
+            @enderror
+          </div>
+
         </div>
 
         {{-- Read-only operational info --}}
@@ -476,82 +495,56 @@
     </div>
   </div>
 
-  {{-- Documents --}}
-  <div class="card border-0 shadow-sm mb-4">
+  <section class="card border-0 shadow-sm mb-4" id="rider-documents" aria-labelledby="rider-documents-heading">
     <div class="card-body p-4">
+      <h5 class="mb-3" id="rider-documents-heading">Rider Documents</h5>
 
-      <h5 class="mb-3">Rider Documents</h5>
+      @if($user->license_expires_on && $user->license_expires_on->lt(today()))
+        <p class="alert alert-warning">Your driver's license expired on {{ $user->license_expires_on->format('M j, Y') }}. Upload your renewed license and update the expiry date.</p>
+      @elseif($user->license_expires_on && $user->license_expires_on->lte(today()->addDays(30)))
+        <p class="alert alert-warning">Your driver's license expires on {{ $user->license_expires_on->format('M j, Y') }}. Update your documents after renewal.</p>
+      @endif
 
+      <p class="small text-muted">Accepted files are PDF, JPG, and PNG up to 5 MB each.</p>
       <div class="row g-3">
+        @foreach(\App\Models\User::RIDER_DOCUMENTS as $type => $label)
+          @php
+            $hasFile = (bool) $user->{$type};
+            $review = $user->rider_document_reviews[$type] ?? [];
+            $status = $hasFile ? ($review['status'] ?? 'uploaded')
+                : ($type === 'license_document' && $user->license_number ? 'number_provided' : 'missing');
+          @endphp
+          <div class="col-lg-4">
+            <div class="border rounded p-3 h-100">
+              <h6>{{ $label }}</h6>
+              @include('shared.rider-document-status', ['status' => $status, 'reason' => $review['reason'] ?? null])
 
-        <div class="col-md-4">
-          <div class="border rounded p-3 h-100">
+              @if($hasFile)
+                <a class="d-block small mt-2" href="{{ route('rider.account.documents.show', $type) }}"
+                   target="_blank" rel="noopener">View {{ $label }}</a>
+              @endif
 
-            <div class="text-muted small mb-1">
-              Driver's License
+              <form class="mt-3" method="POST" action="{{ route('rider.account.documents.upload', $type) }}"
+                    enctype="multipart/form-data">
+                @csrf
+                <label class="form-label small" for="upload-{{ $type }}">{{ $hasFile ? 'Choose replacement file' : 'Choose file' }}</label>
+                <input class="form-control form-control-sm" type="file" name="document" id="upload-{{ $type }}"
+                       accept=".pdf,.jpg,.jpeg,.png" required>
+                @if(old('document_type') === $type)
+                  @error('document')
+                    <div class="text-danger small">{{ $message }}</div>
+                  @enderror
+                @endif
+                <button class="btn btn-outline-primary btn-sm mt-2" type="submit">
+                  {{ $hasFile ? 'Replace Document' : 'Upload Document' }}
+                </button>
+              </form>
             </div>
-
-            @if($user->license_number)
-            <span class="badge bg-success">
-              Information Provided
-            </span>
-
-            <div class="small mt-2">
-              {{ $user->license_number }}
-            </div>
-            @else
-            <span class="badge bg-warning text-dark">
-              Missing
-            </span>
-            @endif
-
           </div>
-        </div>
-
-        <div class="col-md-4">
-          <div class="border rounded p-3 h-100">
-
-            <div class="text-muted small mb-1">
-              OR Document
-            </div>
-
-            @if($user->or_document)
-            <span class="badge bg-success">
-              Uploaded
-            </span>
-            @else
-            <span class="badge bg-warning text-dark">
-              Missing
-            </span>
-            @endif
-
-          </div>
-        </div>
-
-        <div class="col-md-4">
-          <div class="border rounded p-3 h-100">
-
-            <div class="text-muted small mb-1">
-              CR Document
-            </div>
-
-            @if($user->cr_document)
-            <span class="badge bg-success">
-              Uploaded
-            </span>
-            @else
-            <span class="badge bg-warning text-dark">
-              Missing
-            </span>
-            @endif
-
-          </div>
-        </div>
-
+        @endforeach
       </div>
-
     </div>
-  </div>
+  </section>
 
   {{-- Security --}}
   <div class="card border-0 shadow-sm">
@@ -640,6 +633,29 @@
 @endsection
 
 @push('scripts')
+<script>
+(() => {
+    const birthday = document.getElementById('rider-birthday');
+    const age = document.getElementById('rider-age');
+
+    const updateAge = () => {
+        if (!birthday.value) {
+            age.value = '';
+            return;
+        }
+
+        const [year, month, day] = birthday.value.split('-').map(Number);
+        const today = new Date();
+        const birthdayPassed = today.getMonth() + 1 > month
+            || (today.getMonth() + 1 === month && today.getDate() >= day);
+        const years = today.getFullYear() - year - (birthdayPassed ? 0 : 1);
+        age.value = years >= 0 ? years : '';
+    };
+
+    birthday.addEventListener('input', updateAge);
+    updateAge();
+})();
+</script>
 @vite('resources/js/rider/account.js')
 @endpush
 

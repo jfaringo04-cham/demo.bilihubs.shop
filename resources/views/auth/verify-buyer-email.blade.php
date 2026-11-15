@@ -160,8 +160,7 @@
 
         <p class="hint">
             Your code expires in 5 minutes.
-            After verification, your account will still
-            require administrator approval.
+            {{ $approvalMessage ?? 'After verification, your account will still require administrator approval.' }}
         </p>
     </main>
 </body>

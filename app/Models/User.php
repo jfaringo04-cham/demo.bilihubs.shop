@@ -73,11 +73,17 @@ use Illuminate\Support\Facades\Storage;
     'longitude',
     'location_updated_at',
 ])]
-#[Hidden(['password', 'remember_token'])]
+#[Hidden(['password', 'remember_token', 'license_document', 'rider_document_reviews'])]
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
+
+    public const RIDER_DOCUMENTS = [
+        'license_document' => "Driver's License",
+        'or_document' => 'Official Receipt (OR)',
+        'cr_document' => 'Certificate of Registration (CR)',
+    ];
 
     public const STATUS_PENDING = 'pending';
     public const STATUS_ACTIVE = 'active';
@@ -91,10 +97,13 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'selling_categories' => 'array',
+            'license_expires_on' => 'date',
+            'rider_document_reviews' => 'array',
             'approved_at' => 'datetime',
             'logistic_approved_at' => 'datetime',
             'suspended_at' => 'datetime',
             'appeal_submitted_at' => 'datetime',
+            'rider_email_verification_required' => 'boolean',
         ];
     }
 
@@ -197,6 +206,19 @@ class User extends Authenticatable
     public function isRejected(): bool
     {
         return $this->status === self::STATUS_REJECTED;
+    }
+
+    public function needsRiderEmailVerification(): bool
+    {
+        return (bool) $this->rider_email_verification_required && $this->email_verified_at === null;
+    }
+
+    public function scopeReadyForRiderReview(\Illuminate\Database\Eloquent\Builder $query): void
+    {
+        $query->where(function ($query) {
+            $query->where('rider_email_verification_required', false)
+                ->orWhereNotNull('email_verified_at');
+        });
     }
 
     public function canLogin(): bool

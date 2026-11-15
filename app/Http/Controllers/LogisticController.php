@@ -51,6 +51,7 @@ class LogisticController extends Controller
                 $query->where('name', 'rider');
             })
             ->where('logistic_status', 'pending')
+            ->readyForRiderReview()
             ->count();
 
         $activeRiders = $logistic->riders()
@@ -130,6 +131,7 @@ class LogisticController extends Controller
                 $query->where('name', 'rider');
             })
             ->where('logistic_status', 'pending')
+            ->readyForRiderReview()
             ->count();
 
         $activeRiders = $logistic->riders()
@@ -314,6 +316,7 @@ class LogisticController extends Controller
             ->whereHas('roles', function ($query) {
                 $query->where('name', 'rider');
             })
+            ->readyForRiderReview()
             ->latest()
             ->paginate(15);
 
@@ -329,6 +332,8 @@ class LogisticController extends Controller
             403,
             'This rider does not belong to your logistics company.'
         );
+
+        abort_if($rider->needsRiderEmailVerification(), 404);
 
         return view('logistic.riders-show', compact('logistic', 'rider'));
     }
@@ -346,7 +351,7 @@ class LogisticController extends Controller
         );
 
         abort_unless(
-            $rider->logistic_status === 'pending',
+            $rider->logistic_status === 'pending' && !$rider->needsRiderEmailVerification(),
             422,
             'Invalid rider application.'
         );
@@ -403,7 +408,11 @@ class LogisticController extends Controller
             'This rider does not belong to your logistics company.'
         );
 
-        abort_unless($rider->logistic_status === 'pending', 422, 'Invalid rider application.');
+        abort_unless(
+            $rider->logistic_status === 'pending' && !$rider->needsRiderEmailVerification(),
+            422,
+            'Invalid rider application.'
+        );
 
         $request->validate([
             'rejection_reason' => ['required', 'string', 'max:500'],
@@ -439,6 +448,7 @@ class LogisticController extends Controller
                 $query->where('name', 'rider');
             })
             ->where('logistic_status', 'pending')
+            ->readyForRiderReview()
             ->latest()
             ->paginate(15);
 

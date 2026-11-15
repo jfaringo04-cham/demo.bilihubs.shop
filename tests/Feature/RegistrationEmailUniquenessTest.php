@@ -54,6 +54,7 @@ class RegistrationEmailUniquenessTest extends SQLiteTestCase
 
         $this->migrateRegistrationSchema();
         (require database_path('migrations/2026_11_12_180000_add_logistics_rider_application_policies.php'))->up();
+        (require database_path('migrations/2026_11_15_010000_require_email_verification_for_new_rider_applications.php'))->up();
 
         foreach (['buyer', 'seller', 'logistics', 'rider', 'admin'] as $role) {
             Role::firstOrCreate(['name' => $role]);
@@ -596,7 +597,7 @@ class RegistrationEmailUniquenessTest extends SQLiteTestCase
         $logistic = $this->activeLogistic();
 
         $this->post(route('apply.rider.store'), $this->riderPayload(['logistic_id' => $logistic->id]))
-            ->assertRedirect(route('login'))
+            ->assertRedirect(route('rider.email.verify'))
             ->assertSessionHasNoErrors();
 
         $this->assertSame(1, User::where('email', 'rider@example.com')->count());
@@ -791,7 +792,7 @@ class RegistrationEmailUniquenessTest extends SQLiteTestCase
             ->assertSessionHasNoErrors();
 
         $this->post(route('apply.rider.store'), $this->riderPayload(['logistic_id' => $logistic->id]))
-            ->assertRedirect(route('login'))
+            ->assertRedirect(route('rider.email.verify'))
             ->assertSessionHasNoErrors();
 
         $this->assertSame(1, User::where('email', 'rider@example.com')->count());

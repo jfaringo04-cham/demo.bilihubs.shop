@@ -77,6 +77,14 @@
         <label class="form-label text-muted">License Number</label>
         <p class="fw-bold">{{ $rider->license_number ?? 'N/A' }}</p>
       </div>
+      <div class="col-md-6">
+        <label class="form-label text-muted">Plate Number</label>
+        <p class="fw-bold">{{ $rider->vehicle_plate_number ?? 'N/A' }}</p>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label text-muted">License Expiry Date</label>
+        <p class="fw-bold">{{ $rider->license_expires_on?->format('M j, Y') ?? 'N/A' }}</p>
+      </div>
       <div class="col-12">
         <label class="form-label text-muted">Status</label>
         <p>
@@ -108,17 +116,42 @@
 <section class="card border-0 shadow-sm mt-3" aria-labelledby="riderDocumentsHeading">
   <div class="card-body">
     <h2 id="riderDocumentsHeading" class="h5 mb-3">Submitted Documents</h2>
+    @if($errors->hasAny(['document_version', 'decision', 'reason']))
+      <div class="alert alert-danger" role="alert">
+        {{ $errors->first('document_version') ?: ($errors->first('decision') ?: $errors->first('reason')) }}
+      </div>
+    @endif
     <div class="row g-3">
-      @foreach(['or_document' => 'Official Receipt (OR)', 'cr_document' => 'Certificate of Registration (CR)'] as $field => $label)
-        <div class="col-md-6">
-          <p class="fw-semibold mb-2">{{ $label }}</p>
-          @if($rider->{$field})
-            <a class="btn btn-outline-primary btn-sm"
-               href="{{ route('logistic.riders.documents.show', [$rider, $field], false) }}"
-               target="_blank" rel="noopener">View {{ $field === 'or_document' ? 'OR' : 'CR' }}</a>
-          @else
-            <p class="text-muted mb-0">No file uploaded.</p>
-          @endif
+      @foreach(\App\Models\User::RIDER_DOCUMENTS as $type => $label)
+        @php
+          $hasFile = (bool) $rider->{$type};
+          $review = $rider->rider_document_reviews[$type] ?? [];
+          $status = $hasFile ? ($review['status'] ?? 'uploaded')
+              : ($type === 'license_document' && $rider->license_number ? 'number_provided' : 'missing');
+        @endphp
+        <div class="col-lg-4">
+          <div class="border rounded p-3 h-100">
+            <h6>{{ $label }}</h6>
+            @include('shared.rider-document-status', ['status' => $status, 'reason' => $review['reason'] ?? null])
+
+            @if($hasFile)
+              <a class="d-block small mt-2" href="{{ route('logistic.riders.documents.show', [$rider, $type], false) }}"
+                 target="_blank" rel="noopener">View {{ $label }}</a>
+
+              <form class="mt-3" method="POST" action="{{ route('logistic.riders.documents.review', [$rider, $type]) }}">
+                @csrf
+                @method('PATCH')
+                <input type="hidden" name="document_version" value="{{ hash('sha256', $rider->{$type}) }}">
+                <label for="reason-{{ $type }}" class="form-label small">Replacement reason</label>
+                <textarea id="reason-{{ $type }}" name="reason" class="form-control form-control-sm" rows="2"
+                          maxlength="500">{{ old('document_version') === hash('sha256', $rider->{$type}) ? old('reason') : '' }}</textarea>
+                <div class="d-flex flex-wrap gap-2 mt-2">
+                  <button class="btn btn-outline-success btn-sm" type="submit" name="decision" value="verified">Verify</button>
+                  <button class="btn btn-outline-danger btn-sm" type="submit" name="decision" value="needs_replacement">Request Replacement</button>
+                </div>
+              </form>
+            @endif
+          </div>
         </div>
       @endforeach
     </div>
