@@ -6,6 +6,7 @@ use App\Models\Notification;
 use App\Models\Order;
 use App\Models\Review;
 use App\Services\ComplianceMonitor;
+use App\Services\OrderReceiptFinalizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -14,8 +15,13 @@ use Illuminate\Validation\ValidationException;
 
 class OrderController extends Controller
 {
-    private function createNotification($userId, $title, $message, $type = 'order', $link = null)
-    {
+    private function createNotification(
+        $userId,
+        $title,
+        $message,
+        $type = 'order',
+        $link = null
+    ) {
         Notification::create([
             'user_id' => $userId,
             'title' => $title,
@@ -27,7 +33,10 @@ class OrderController extends Controller
 
     public function index()
     {
-        $orders = Order::where('user_id', Auth::id())->latest()->paginate(10);
+        $orders = Order::where('user_id', Auth::id())
+            ->latest()
+            ->paginate(10);
+
         return view('orders.index', compact('orders'));
     }
 
@@ -35,7 +44,11 @@ class OrderController extends Controller
     {
         $user = Auth::user();
 
-        if ($order->user_id !== $user->id && !$user->isAdmin() && !$user->isSeller()) {
+        if (
+            $order->user_id !== $user->id &&
+            !$user->isAdmin() &&
+            !$user->isSeller()
+        ) {
             abort(403);
         }
 
@@ -43,17 +56,31 @@ class OrderController extends Controller
             $hasSellerProduct = $order->items()
                 ->whereHas('product', function ($query) use ($user) {
                     $query->where('user_id', $user->id);
-                })->exists();
+                })
+                ->exists();
 
             if (!$hasSellerProduct) {
                 abort(403);
             }
         }
 
-        $order->load('items.product', 'items.size', 'items.variation', 'rider', 'sellerOrders.shipment', 'sellerOrders.returnShipment', 'sellerOrders.items.size', 'sellerOrders.items.variation');
+        $order->load(
+            'items.product',
+            'items.size',
+            'items.variation',
+            'rider',
+            'sellerOrders.shipment',
+            'sellerOrders.returnShipment',
+            'sellerOrders.items.size',
+            'sellerOrders.items.variation'
+        );
 
         return view('orders.show', compact('order'));
     }
+
+    // ============================================================
+    // BUYER RETURN REQUEST
+    // ============================================================
 
     public function requestReturn(Request $request, Order $order)
     {
@@ -74,25 +101,38 @@ class OrderController extends Controller
             ->whereKey($validated['seller_order_id'])
             ->firstOrFail();
 
-        if ($sellerOrder->status !== 'delivered' || $sellerOrder->return_status !== 'none') {
+        if (
+            $sellerOrder->status !== 'delivered' ||
+            $sellerOrder->return_status !== 'none'
+        ) {
             return back()->with(
                 'error',
                 'This seller order is not eligible for return.'
             );
         }
 
-        $item = $sellerOrder->items()->find($validated['return_item_id']);
-        if (!$item || $validated['return_quantity'] > $item->quantity) {
+        $item = $sellerOrder->items()
+            ->find($validated['return_item_id']);
+
+        if (
+            !$item ||
+            $validated['return_quantity'] > $item->quantity
+        ) {
             throw ValidationException::withMessages([
-                'return_quantity' => 'Choose an item from this seller and enter a quantity within the amount purchased.',
+                'return_quantity' =>
+                    'Choose an item from this seller and enter a quantity within the amount purchased.',
             ]);
         }
 
         $disk = Storage::disk('local');
-        $photoPath = $request->file('return_photo')->store('order-return-proofs', 'local');
+
+        $photoPath = $request->file('return_photo')
+            ->store('order-return-proofs', 'local');
+
         if (!$photoPath) {
             throw ValidationException::withMessages([
-                'return_photo' => 'The photo could not be saved. Please try uploading it again.',
+                'return_photo' =>
+                    'The photo could not be saved. Please try uploading it again.',
             ]);
         }
 
@@ -117,7 +157,10 @@ class OrderController extends Controller
         if ($updated !== 1) {
             $disk->delete($photoPath);
 
-            return back()->with('error', 'This seller order is no longer eligible for a new return request.');
+            return back()->with(
+                'error',
+                'This seller order is no longer eligible for a new return request.'
+            );
         }
 
         $this->createNotification(
@@ -149,10 +192,18 @@ class OrderController extends Controller
         );
     }
 
+    // ============================================================
+    // RETURN PHOTO
+    // ============================================================
 
-    public function returnPhoto(Request $request, Order $order, int $sellerOrderId)
-    {
-        $sellerOrder = $order->sellerOrders()->findOrFail($sellerOrderId);
+    public function returnPhoto(
+        Request $request,
+        Order $order,
+        int $sellerOrderId
+    ) {
+        $sellerOrder = $order->sellerOrders()
+            ->findOrFail($sellerOrderId);
+
         $user = $request->user();
 
         abort_unless(
@@ -162,13 +213,26 @@ class OrderController extends Controller
         );
 
         $disk = Storage::disk('local');
-        abort_unless($sellerOrder->return_photo_path && $disk->exists($sellerOrder->return_photo_path), 404);
 
-        return $disk->response($sellerOrder->return_photo_path, null, [
-            'Cache-Control' => 'private, no-store',
-            'X-Content-Type-Options' => 'nosniff',
-        ]);
+        abort_unless(
+            $sellerOrder->return_photo_path &&
+                $disk->exists($sellerOrder->return_photo_path),
+            404
+        );
+
+        return $disk->response(
+            $sellerOrder->return_photo_path,
+            null,
+            [
+                'Cache-Control' => 'private, no-store',
+                'X-Content-Type-Options' => 'nosniff',
+            ]
+        );
     }
+
+    // ============================================================
+    // RESCHEDULE REQUEST
+    // ============================================================
 
     public function requestReschedule(Request $request, Order $order)
     {
@@ -199,7 +263,8 @@ class OrderController extends Controller
             ->where('reschedule_status', 'none')
             ->update([
                 'reschedule_status' => 'requested',
-                'reschedule_reason' => $validated['reschedule_reason'] ?? null,
+                'reschedule_reason' =>
+                    $validated['reschedule_reason'] ?? null,
                 'reschedule_requested_at' => now(),
                 'rescheduled_at' => null,
             ]);
@@ -245,6 +310,10 @@ class OrderController extends Controller
         );
     }
 
+    // ============================================================
+    // BUYER ORDER CANCELLATION
+    // ============================================================
+
     public function requestCancellation(Request $request, Order $order)
     {
         if ((int) $order->user_id !== (int) Auth::id()) {
@@ -286,15 +355,15 @@ class OrderController extends Controller
                         ->get();
 
                     /*
-                |--------------------------------------------------------------------------
-                | PHYSICAL CUSTODY GUARD
-                |--------------------------------------------------------------------------
-                |
-                | Once a parcel is already physically with a rider or has
-                | entered logistics processing, normal buyer cancellation
-                | is no longer allowed.
-                |
-                */
+                    |--------------------------------------------------------------------------
+                    | PHYSICAL CUSTODY GUARD
+                    |--------------------------------------------------------------------------
+                    |
+                    | Once a parcel is already physically with a rider or has
+                    | entered logistics processing, normal buyer cancellation
+                    | is no longer allowed.
+                    |
+                    */
                     foreach ($shipments as $shipment) {
                         if (
                             in_array(
@@ -324,15 +393,16 @@ class OrderController extends Controller
 
                     // Reverse active voucher usage exactly once as part of
                     // the order-cancellation transaction.
-                    app(\App\Services\VoucherRedemptionService::class)->reverseForOrder(
-                        (int) $lockedOrder->id
-                    );
+                    app(\App\Services\VoucherRedemptionService::class)
+                        ->reverseForOrder(
+                            (int) $lockedOrder->id
+                        );
 
                     /*
-                |--------------------------------------------------------------------------
-                | RELEASE RESERVED RIDER CAPACITY
-                |--------------------------------------------------------------------------
-                */
+                    |--------------------------------------------------------------------------
+                    | RELEASE RESERVED RIDER CAPACITY
+                    |--------------------------------------------------------------------------
+                    */
                     foreach ($shipments as $shipment) {
                         $riderIds = collect([
                             $shipment->pickup_rider_id,
@@ -387,10 +457,10 @@ class OrderController extends Controller
                     }
 
                     /*
-                |--------------------------------------------------------------------------
-                | RESTORE INVENTORY
-                |--------------------------------------------------------------------------
-                */
+                    |--------------------------------------------------------------------------
+                    | RESTORE INVENTORY
+                    |--------------------------------------------------------------------------
+                    */
                     $items = $lockedOrder
                         ->items()
                         ->get();
@@ -465,10 +535,10 @@ class OrderController extends Controller
                     }
 
                     /*
-                |--------------------------------------------------------------------------
-                | KEEP ORDER / SELLER ORDER / SHIPMENT IN SYNC
-                |--------------------------------------------------------------------------
-                */
+                    |--------------------------------------------------------------------------
+                    | KEEP ORDER / SELLER ORDER / SHIPMENT IN SYNC
+                    |--------------------------------------------------------------------------
+                    */
                     $lockedOrder->sellerOrders()->update([
                         'status' => 'cancelled',
                     ]);
@@ -477,8 +547,8 @@ class OrderController extends Controller
                         'status' => 'cancelled',
                         'notes' => (
                             $lockedOrder->notes
-                            ? $lockedOrder->notes . "\n"
-                            : ''
+                                ? $lockedOrder->notes . "\n"
+                                : ''
                         )
                             . 'Cancellation reason: '
                             . $validated['reason'],
@@ -518,61 +588,128 @@ class OrderController extends Controller
         );
     }
 
-    public function confirmReceived(Request $request, Order $order)
-    {
-        if ($order->user_id !== Auth::id()) abort(403);
+    // ============================================================
+    // BUYER CONFIRM RECEIVED - WEB
+    // Shared finalization with Mobile API and Auto-confirm.
+    // ============================================================
 
-        if ($order->status !== 'delivered') {
-            return back()->with('error', 'Cannot confirm receipt for this order.');
+    public function confirmReceived(
+        Request $request,
+        Order $order,
+        OrderReceiptFinalizationService $service
+    ) {
+        if ((int) $order->user_id !== (int) Auth::id()) {
+            abort(403);
         }
 
-        \DB::transaction(function () use ($order) {
-            $order->update([
-                'status' => 'completed',
-                'confirmed_received_at' => now(),
-            ]);
+        // Already confirmed orders should not generate another
+        // set of notifications or repeat the financial workflow.
+        $alreadyConfirmed =
+            $order->confirmed_received_at !== null ||
+            (string) $order->status === 'completed';
 
-            app(\App\Services\CommissionService::class)
-                ->generateForOrder($order);
-        });
-
-        $order->refresh();
-        $order->load('sellerOrders');
-
-        foreach ($order->sellerOrders as $sellerOrder) {
-            try {
-                app(\App\Services\SellerSettlementService::class)
-                    ->createIfEligible((int) $sellerOrder->id);
-            } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::warning(
-                    'Seller settlement retry after buyer confirmation failed.',
-                    [
-                        'order_id' => $order->id,
-                        'seller_order_id' => $sellerOrder->id,
-                        'error' => $e->getMessage(),
-                    ]
+        if ($alreadyConfirmed) {
+            if (
+                $order->confirmed_received_at !== null &&
+                (string) $order->status === 'completed'
+            ) {
+                return back()->with(
+                    'success',
+                    'This order has already been confirmed.'
                 );
             }
+
+            return back()->with(
+                'error',
+                'The order confirmation status needs verification.'
+            );
         }
+
+        // The shared service performs the authoritative check
+        // again while holding the order row lock.
+        if ((string) $order->status !== 'delivered') {
+            return back()->with(
+                'error',
+                'Cannot confirm receipt for this order.'
+            );
+        }
+
+        try {
+            $finalizedOrder = $service->finalize(
+                $order,
+                'buyer_web'
+            );
+        } catch (ValidationException $e) {
+            return back()->with(
+                'error',
+                collect($e->errors())
+                    ->flatten()
+                    ->first()
+                    ?? 'Cannot confirm receipt for this order.'
+            );
+        } catch (\Throwable $e) {
+            report($e);
+
+            return back()->with(
+                'error',
+                'Unable to verify order confirmation. '
+                    . 'Please refresh your order before trying again.'
+            );
+        }
+
+        // The request may have been completed concurrently by
+        // Mobile, Web or the auto-confirm cron.
+        $order = $finalizedOrder->fresh();
+
+        if (
+            !$order ||
+            $order->confirmed_received_at === null ||
+            (string) $order->status !== 'completed'
+        ) {
+            return back()->with(
+                'error',
+                'Unable to verify order confirmation.'
+            );
+        }
+
+        // Avoid duplicate notifications when confirmation was
+        // already performed by another request.
+        if ($alreadyConfirmed) {
+            return back()->with(
+                'success',
+                'This order has already been confirmed.'
+            );
+        }
+
+        $order->load('sellerOrders', 'items.product');
+
         $this->createNotification(
             $order->user_id,
             'Order Confirmed',
-            'You have confirmed receipt of order ' . $order->order_number . '. Transaction completed.',
+            'You have confirmed receipt of order '
+                . $order->order_number
+                . '. Transaction completed.',
             'order',
             route('orders.show', $order)
         );
 
-        $seller = $order->items->first()->product->user ?? null;
+        $seller = $order->items->first()?->product?->user;
+
         if ($seller) {
             $this->createNotification(
                 $seller->id,
                 'Order Completed',
-                'Order ' . $order->order_number . ' has been completed by the buyer.',
+                'Order '
+                    . $order->order_number
+                    . ' has been completed by the buyer.',
                 'order',
                 route('seller.orders.show', $order)
             );
         }
 
-        return back()->with('success', 'Order confirmed. Transaction completed successfully!');
+        return back()->with(
+            'success',
+            'Order confirmed. Transaction completed successfully!'
+        );
     }
 }

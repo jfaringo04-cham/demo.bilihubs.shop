@@ -11,6 +11,7 @@ use App\Models\Address;
 use App\Models\CartItem;
 use App\Models\Voucher;
 use App\Models\Shipment;
+use App\Services\OrderReceiptFinalizationService;
 use App\Services\ShippingFeeService;
 use App\Services\VoucherCalculationService;
 use App\Services\VoucherRedemptionService;
@@ -855,6 +856,72 @@ class OrderController extends Controller
         }
     }
 
+    /**
+     * Confirm receipt of a fully delivered buyer order.
+     * The shared finalization service validates every seller order and
+     * shipment under a database row lock and handles settlement actions.
+     */
+    public function confirmReceived(
+        Order $order,
+        OrderReceiptFinalizationService $service
+    ) {
+        if ((int) $order->user_id !== (int) Auth::id()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized.',
+            ], 403);
+        }
+
+        try {
+            $finalizedOrder = $service->finalize(
+                $order,
+                'buyer_mobile'
+            );
+
+            if (
+                $finalizedOrder->confirmed_received_at === null ||
+                (string) $finalizedOrder->status !== 'completed'
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unable to verify order confirmation.',
+                ], 409);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Order received and confirmed successfully.',
+                'data' => [
+                    'id' => $finalizedOrder->id,
+                    'order_number' => $finalizedOrder->order_number,
+                    'status' => $finalizedOrder->status,
+                    'confirmed_received_at' =>
+                        $finalizedOrder->confirmed_received_at?->toISOString(),
+                ],
+            ]);
+        } catch (ValidationException $e) {
+            $errors = $e->errors();
+
+            return response()->json([
+                'success' => false,
+                'message' => collect($errors)
+                    ->flatten()
+                    ->first() ?? 'This order cannot be confirmed yet.',
+                'errors' => $errors,
+            ], 422);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Unable to confirm receipt at this time. '
+                    . 'Please refresh your order before trying again.',
+                'result_uncertain' => true,
+            ], 500);
+        }
+    }
+
     public function rate(Request $request, Order $order)
     {
         if ($order->user_id !== Auth::id()) {
@@ -890,11 +957,15 @@ class OrderController extends Controller
         // Create item reviews
         if (!empty($request->items)) {
             foreach ($request->items as $itemReview) {
-                $order->items()->where('id', $itemReview['order_item_id'])->first()?->reviews()->create([
-                    'user_id' => Auth::id(),
-                    'rating' => $itemReview['rating'],
-                    'review' => $itemReview['review'],
-                ]);
+                $order->items()
+                    ->where('id', $itemReview['order_item_id'])
+                    ->first()
+                    ?->reviews()
+                    ->create([
+                        'user_id' => Auth::id(),
+                        'rating' => $itemReview['rating'],
+                        'review' => $itemReview['review'],
+                    ]);
             }
         }
 
@@ -947,6 +1018,7 @@ class OrderController extends Controller
             'created_at' => $order->created_at?->toISOString(),
             'confirmed_at' => $order->confirmed_at?->toISOString(),
             'delivered_at' => $order->delivered_at?->toISOString(),
+            'confirmed_received_at' => $order->confirmed_received_at?->toISOString(),
 
             'address' => [
                 'full_address' => collect($order->shipping_address)

@@ -373,6 +373,15 @@ Route::middleware('auth:sanctum')
             [OrderController::class, 'cancel']
         );
 
+        // ====================================================
+        // BUYER CONFIRM RECEIVED - MOBILE APP
+        // ====================================================
+
+        Route::post(
+            '/orders/{order}/confirm-received',
+            [OrderController::class, 'confirmReceived']
+        );
+
         Route::post(
             '/orders/{order}/rate',
             [OrderController::class, 'rate']
