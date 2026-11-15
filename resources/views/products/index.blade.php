@@ -158,6 +158,20 @@
     font-weight: 600;
   }
 
+  .products-pagination .pagination {
+    flex-wrap: wrap;
+    gap: .375rem;
+    margin-bottom: 0;
+  }
+
+  .products-pagination .pagination .page-link {
+    min-width: 2.25rem;
+    padding: .375rem .7rem;
+    margin-left: 0;
+    font-size: .875rem;
+    line-height: 1.5;
+    border-width: 1px;
+  }
 </style>
 
 @php
@@ -464,9 +478,11 @@
         @endforelse
       </div>
 
-      <div class="mt-4">
-        {{ $products->appends(request()->query())->links('pagination::bootstrap-5') }}
-      </div>
+      @if ($products->hasPages())
+        <div class="products-pagination mt-4">
+          {{ $products->appends(request()->query())->links('pagination::bootstrap-5') }}
+        </div>
+      @endif
     </div>
 
   </div>
