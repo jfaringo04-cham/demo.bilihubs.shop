@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AdminActivityLog;
 use App\Models\Logistic;
 use App\Models\Role;
 use App\Models\User;
@@ -23,6 +24,8 @@ class ApprovalHierarchyTest extends SQLiteTestCase
         (require database_path('migrations/2026_11_12_180000_add_logistics_rider_application_policies.php'))->up();
         (require database_path('migrations/2026_11_15_010000_require_email_verification_for_new_rider_applications.php'))->up();
 
+        (require database_path('migrations/2026_11_15_020000_create_admin_activity_logs_table.php'))->up();
+
         foreach (['buyer', 'seller', 'logistics', 'rider', 'admin'] as $role) {
             Role::firstOrCreate(['name' => $role]);
         }
@@ -37,6 +40,7 @@ class ApprovalHierarchyTest extends SQLiteTestCase
     {
         Schema::disableForeignKeyConstraints();
         Schema::dropIfExists('rider_policy_acceptances');
+        Schema::dropIfExists('admin_activity_logs');
 
         foreach (['email_verification_otps', 'notifications', 'orders', 'products', 'role_user', 'roles', 'logistics', 'users'] as $table) {
             Schema::dropIfExists($table);
@@ -94,6 +98,7 @@ class ApprovalHierarchyTest extends SQLiteTestCase
             $table->string('status')->default(User::STATUS_ACTIVE);
             $table->text('rejection_reason')->nullable();
             $table->timestamp('approved_at')->nullable();
+            $table->timestamp('suspended_at')->nullable();
             $table->unsignedBigInteger('logistic_id')->nullable();
             $table->string('logistic_status')->nullable();
             $table->timestamp('logistic_approved_at')->nullable();
@@ -258,6 +263,50 @@ class ApprovalHierarchyTest extends SQLiteTestCase
 
         $this->assertSame(User::STATUS_ACTIVE, $buyer->fresh()->status);
         $this->assertNotNull($buyer->fresh()->approved_at);
+    }
+
+    public function test_admin_activity_log_records_admin_mutations_and_limits_access(): void
+    {
+        $this->withoutVite();
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-15 00:30:00', 'Asia/Manila'));
+
+        $admin = $this->makeUser('admin', attributes: ['name' => 'Activity Test Admin']);
+        $buyer = $this->makeUser('buyer');
+        $log = route('admin.activity-log.index');
+
+        $this->get($log)->assertRedirect(route('login'));
+        $this->actingAs($buyer)->get($log)->assertForbidden();
+        $this->post(route('admin.users.suspend', $buyer))->assertForbidden();
+
+        $this->actingAs($admin)->from($log)->post(route('admin.users.suspend', $buyer), [
+            'unused_private_value' => 'do-not-log-this',
+        ])->assertRedirect($log);
+        $this->post(route('admin.users.suspend', $admin))->assertRedirect();
+
+        $entries = AdminActivityLog::query()->orderBy('id')->get();
+        $this->assertCount(2, $entries);
+        $this->assertSame($admin->id, $entries[0]->actor_id);
+        $this->assertSame($admin->name, $entries[0]->actor_name);
+        $this->assertSame(['user' => (string) $buyer->id], $entries[0]->targets);
+        $this->assertSame('completed', $entries[0]->outcome);
+        $this->assertSame('rejected', $entries[1]->outcome);
+        $this->assertStringNotContainsString('do-not-log-this', $entries->toJson());
+
+        $this->get(route('admin.activity-log.index', [
+            'actor_id' => $admin->id,
+            'area' => 'users',
+            'outcome' => 'completed',
+            'date' => '2026-11-15',
+        ]))->assertOk()
+            ->assertSee('Activity Test Admin')
+            ->assertSee('Nov 15, 2026 12:30:00 AM')
+            ->assertSeeText('User #' . $buyer->id)
+            ->assertDontSeeText('User #' . $admin->id);
+
+        $this->get(route('admin.activity-log.index', ['date' => '2026-11-14']))
+            ->assertOk()->assertSee('No matching admin activity.');
+
+        $this->assertDatabaseCount('admin_activity_logs', 2);
     }
 
     public function test_admin_rejects_logistics_owner_and_syncs_company(): void

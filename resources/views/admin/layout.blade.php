@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin Dashboard - Bili Hub</title>
+  <title>@yield('title', 'Admin Dashboard') - Bili Hub</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -178,6 +178,8 @@
               <i class="bi bi-bar-chart"></i> <span>Reports</span></a>
             <a class="nav-link {{ request()->routeIs('admin.messages.*') ? 'active' : '' }}" href="{{ route('admin.messages.index') }}">
               <i class="bi bi-chat-dots"></i> <span>Messages</span></a>
+            <a class="nav-link {{ request()->routeIs('admin.activity-log.*') ? 'active' : '' }}" href="{{ route('admin.activity-log.index') }}">
+              <i class="bi bi-clock-history" aria-hidden="true"></i> <span>Activity Log</span></a>
             <a class="nav-link {{ request()->routeIs('admin.settings.*') ? 'active' : '' }}" href="{{ route('admin.settings.index') }}">
               <i class="bi bi-gear"></i> <span>Settings</span></a>
           </div>

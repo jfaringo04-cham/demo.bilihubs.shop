@@ -170,7 +170,11 @@ Route::middleware('auth')->group(function () {
 
 
 
-    Route::prefix('admin')->name('admin.')->middleware('admin')->group(function () {
+    Route::prefix('admin')->name('admin.')
+        ->middleware(['admin', \App\Http\Middleware\RecordAdminActivity::class])->group(function () {
+
+        Route::get('/activity-log', \App\Http\Controllers\Admin\ActivityLogController::class)
+            ->name('activity-log.index');
 
         Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
