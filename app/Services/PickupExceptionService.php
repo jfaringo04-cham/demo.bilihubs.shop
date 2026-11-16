@@ -158,6 +158,16 @@ $originHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
             );
         }
 
+        $weightCheckEnabled = PickupWeightCapacity::enabled($shipment);
+        if ($weightCheckEnabled && PickupWeightCapacity::weightKg($shipment) === null) {
+            return self::result(
+                'pickup_weight_missing',
+                'Packed Weight Needed',
+                'Enter the packed weight to dispatch this parcel.',
+                'warning'
+            );
+        }
+
         // Show expired offers even when the scheduler has not processed them.
         $expiredOffer = PickupRequest::query()
             ->where('shipment_id', $shipment->id)
@@ -165,7 +175,7 @@ $originHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
             ->where('expires_at', '<=', now())
             ->exists();
 
-        if ($expiredOffer) {
+        if ($expiredOffer && !$weightCheckEnabled) {
             return self::result(
                 'offer_expired',
                 'Pickup Offer Expired',
@@ -173,6 +183,7 @@ $originHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
                 'warning'
             );
         }
+
         $eligibleRiders = User::query()
             ->whereHas('roles', function ($query) {
                 $query->where('name', 'rider');
@@ -183,10 +194,9 @@ $originHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
             ->where('hub_id', $originHubId)
             ->where('availability_status', 'available')
             ->where('max_capacity', '>', 0)
-            ->whereColumn('current_load', '<', 'max_capacity')
-            ->exists();
+            ->whereColumn('current_load', '<', 'max_capacity');
 
-        if (!$eligibleRiders) {
+        if (!$eligibleRiders->exists()) {
             return self::result(
                 'no_available_rider',
                 'Waiting for Available Rider',
@@ -195,6 +205,25 @@ $originHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
             );
         }
 
+        if ($weightCheckEnabled && !$eligibleRiders->orderBy('id')->lazy(50)->contains(
+            fn (User $rider) => PickupWeightCapacity::issue($shipment, $rider) === null
+        )) {
+            return self::result(
+                'pickup_weight_capacity',
+                'Waiting for Vehicle Capacity',
+                'No available pickup rider at this hub has a configured vehicle with enough known weight capacity.',
+                'warning'
+            );
+        }
+
+        if ($expiredOffer) {
+            return self::result(
+                'offer_expired',
+                'Pickup Offer Expired',
+                'The rider offer deadline has passed. Logistics can retry dispatch.',
+                'warning'
+            );
+        }
         $lastOffer = PickupRequest::query()
             ->where('shipment_id', $shipment->id)
             ->latest('id')

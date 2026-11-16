@@ -148,6 +148,7 @@
                         @forelse($shipments as $shipment)
                         @php
                         $exception = $shipment->pickup_exception;
+                        $weight = \App\Services\PickupWeightCapacity::weightKg($shipment);
 
                         $canRetry =
                         $shipment->status === 'pending'
@@ -178,6 +179,9 @@
 
                                 <small class="text-muted d-block">
                                     Seller Order #{{ $shipment->seller_order_id }}
+                                </small>
+                                <small class="text-muted d-block">
+                                    Packed weight: {{ $weight === null ? 'Unknown' : number_format($weight, 3) . ' kg' }}
                                 </small>
 
                                 <small class="text-muted d-block">
@@ -213,11 +217,18 @@
                                     action="{{ route('logistic.pickup-exceptions.retry', $shipment) }}">
                                     @csrf
 
+                                    @if ($exception['code'] === 'pickup_weight_missing')
+                                        <label for="pickup-weight-{{ $shipment->id }}" class="form-label small">Packed weight (kg)</label>
+                                        <input id="pickup-weight-{{ $shipment->id }}" name="packed_weight_kg"
+                                            type="number" min="0.001" max="99999.999" step="0.001" required
+                                            class="form-control form-control-sm mb-2">
+                                    @endif
+
                                     <button type="submit"
                                         class="btn btn-sm btn-outline-primary text-nowrap"
                                         onclick="return confirm('Retry pickup dispatch for this parcel?')">
                                         <i class="bi bi-arrow-repeat me-1"></i>
-                                        Retry Pickup
+                                        {{ $exception['code'] === 'pickup_weight_missing' ? 'Save Weight & Retry' : 'Retry Pickup' }}
                                     </button>
                                 </form>
 

@@ -67,6 +67,27 @@
               </div>
             </div>
           </div>
+          <fieldset class="mt-4">
+            <legend class="h5">Pickup Vehicle Weight Limits</legend>
+            <p class="small text-muted">
+              Enter the total parcel load limit in kilograms for each pickup vehicle type your company uses.
+              Once a limit is set, vehicle types without a limit won't receive seller pickup offers.
+              Leave all fields blank to use parcel-count capacity only.
+            </p>
+            <div class="row g-3">
+              @foreach (\App\Models\Logistic::PICKUP_VEHICLES as $vehicle)
+                <div class="col-sm-6 col-lg-3">
+                  <label for="pickup-limit-{{ $vehicle }}" class="form-label">{{ ucfirst($vehicle) }} (kg)</label>
+                  <input id="pickup-limit-{{ $vehicle }}" type="number" class="form-control"
+                         name="pickup_payload_limits_kg[{{ $vehicle }}]" step="0.001" min="0.001" max="99999.999"
+                         value="{{ old('pickup_payload_limits_kg.' . $vehicle, $logistic->pickup_payload_limits_kg[$vehicle] ?? null) }}">
+                  @error('pickup_payload_limits_kg.' . $vehicle)
+                    <div class="text-danger small">{{ $message }}</div>
+                  @enderror
+                </div>
+              @endforeach
+            </div>
+          </fieldset>
           <div class="mt-4">
             <button type="submit" class="btn btn-primary rounded-xl px-4">Save Changes</button>
           </div>

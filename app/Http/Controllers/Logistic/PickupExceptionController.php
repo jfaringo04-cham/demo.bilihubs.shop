@@ -3,12 +3,15 @@
 namespace App\Http\Controllers\Logistic;
 
 use App\Http\Controllers\Controller;
+use App\Models\PickupRequest;
 use App\Models\SellerOrder;
 use App\Models\Shipment;
 use App\Services\PickupExceptionService;
 use App\Services\PickupOfferService;
+use App\Services\PickupWeightCapacity;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 use Throwable;
 
@@ -36,6 +39,7 @@ class PickupExceptionController extends Controller
                 'sellerOrder.seller',
                 'originHub',
                 'destinationHub',
+                'logistic',
             ])
             ->latest('id')
             ->paginate(15, ['*'], 'shipments_page')
@@ -138,6 +142,32 @@ class PickupExceptionController extends Controller
             );
         }
 
+        $weight = $request->validate([
+            'packed_weight_kg' => ['nullable', 'numeric', 'min:0.001', 'max:99999.999', 'decimal:0,3'],
+        ])['packed_weight_kg'] ?? null;
+
+        if ($weight !== null) {
+            $saved = DB::transaction(function () use ($shipment, $logistic, $weight) {
+                $locked = Shipment::query()->lockForUpdate()->findOrFail($shipment->id);
+                abort_unless((int) $locked->logistic_id === (int) $logistic->id, 403);
+
+                if ($locked->status !== 'pending' || $locked->picked_up_at !== null
+                    || $locked->pickup_rider_id !== null || $locked->rider_id !== null
+                    || $locked->received_by_sorting_center || $locked->sellerOrder?->status !== 'ready_for_pickup'
+                    || !PickupWeightCapacity::enabled($locked) || PickupWeightCapacity::weightKg($locked) !== null
+                    || PickupRequest::query()->where('shipment_id', $locked->id)
+                        ->where('status', 'offered')->where('expires_at', '>', now())->exists()) {
+                    return false;
+                }
+
+                return $locked->update(['estimated_weight_kg' => $weight]);
+            });
+
+            if (!$saved) {
+                return back()->with('error', 'The packed weight can only be entered for a pending pickup with no saved weight or active offer.');
+            }
+        }
+
         try {
             // Existing service enforces hub eligibility,
             // rider availability, capacity and active-offer protection.
@@ -154,7 +184,7 @@ class PickupExceptionController extends Controller
         if (!$offer) {
             return back()->with(
                 'error',
-                'No pickup offer could be created. Check the origin hub, rider availability, approval and capacity.'
+                PickupExceptionService::forShipment($shipment->fresh())['message']
             );
         }
 

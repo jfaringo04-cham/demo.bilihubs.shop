@@ -96,6 +96,8 @@ class PickupRiderAssignmentService
                 );
             }
 
+            PickupWeightCapacity::ensureFits($lockedShipment, $lockedRider);
+
             $lockedShipment->update([
                 'pickup_rider_id' => $lockedRider->id,
                 'status' => 'assigned',

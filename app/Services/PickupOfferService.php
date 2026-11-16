@@ -143,6 +143,10 @@ class PickupOfferService
                 return $active;
             }
 
+            if (PickupWeightCapacity::enabled($shipment) && PickupWeightCapacity::weightKg($shipment) === null) {
+                return null;
+            }
+
             $pickupHubId =
                 $shipment->origin_hub_id ?: $shipment->hub_id;
 
@@ -183,25 +187,12 @@ class PickupOfferService
                 ->where('shipment_id', $shipment->id)
                 ->pluck('rider_id');
 
-            /*
-             * First pass:
-             * try a rider that has not received this shipment before.
-             */
-            $rider = (clone $baseRiderQuery)
-                ->whereNotIn('id', $previousRiderIds)
-                ->orderBy('current_load')
-                ->orderBy('id')
-                ->first();
+            $orderedRiders = $baseRiderQuery->orderBy('current_load')->orderBy('id');
+            $fits = fn (User $candidate) => PickupWeightCapacity::issue($shipment, $candidate) === null;
+            $rider = (clone $orderedRiders)->whereNotIn('id', $previousRiderIds)->lazy(50)->first($fits);
 
-            /*
-             * Everyone has already been tried.
-             * Start a new rotation cycle instead of stopping permanently.
-             */
-            if (!$rider) {
-                $rider = (clone $baseRiderQuery)
-                    ->orderBy('current_load')
-                    ->orderBy('id')
-                    ->first();
+            if (!$rider && $previousRiderIds->isNotEmpty()) {
+                $rider = (clone $orderedRiders)->whereIn('id', $previousRiderIds)->lazy(50)->first($fits);
             }
 
             if (!$rider) {

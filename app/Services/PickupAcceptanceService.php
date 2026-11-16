@@ -118,6 +118,8 @@ class PickupAcceptanceService
                 );
             }
 
+            PickupWeightCapacity::ensureFits($shipment, $lockedRider);
+
             // Pickup assignment only.
             // Final-mile rider_id stays null.
             $shipment->update([

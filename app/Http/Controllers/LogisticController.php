@@ -1492,6 +1492,7 @@ class LogisticController extends Controller
                         ->lockForUpdate()
                         ->firstOrFail();
 
+                    $pickupHubId = $shipment->origin_hub_id ?: $shipment->hub_id;
                     $eligible = $rider->roles()
                         ->where('name', 'rider')
                         ->exists();
@@ -1505,14 +1506,16 @@ class LogisticController extends Controller
                         (int) $rider->max_capacity <= 0 ||
                         (int) $rider->current_load >= (int) $rider->max_capacity ||
                         (
-                            !$shipment->hub_id ||
-                            (int) $rider->hub_id !== (int) $shipment->hub_id
+                            !$pickupHubId ||
+                            (int) $rider->hub_id !== (int) $pickupHubId
                         )
                     ) {
                         throw new \RuntimeException(
                             'The selected rider is not eligible for this pickup.'
                         );
                     }
+
+                    \App\Services\PickupWeightCapacity::ensureFits($shipment, $rider);
 
                     $pickupZone = \App\Services\SellerPickupZoneService::resolve(
                         $shipment->sellerOrder
@@ -2411,7 +2414,14 @@ class LogisticController extends Controller
             'address' => 'nullable|string|max:500',
             'api_address' => 'nullable|string|max:500',
             'logo' => 'nullable|image|mimes:jpg,jpeg,png|max:5120',
+            'pickup_payload_limits_kg' => ['sometimes', 'array:' . implode(',', Logistic::PICKUP_VEHICLES)],
+            'pickup_payload_limits_kg.*' => ['nullable', 'numeric', 'min:0.001', 'max:99999.999', 'decimal:0,3'],
         ]);
+
+        if (array_key_exists('pickup_payload_limits_kg', $validated)) {
+            $limits = array_filter($validated['pickup_payload_limits_kg'], fn ($limit) => $limit !== null);
+            $validated['pickup_payload_limits_kg'] = $limits ?: null;
+        }
 
         $apiAddress = $validated['api_address'] ?? $logistic->api_address;
 

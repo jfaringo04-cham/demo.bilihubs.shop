@@ -12,7 +12,10 @@ class Logistic extends Model
 {
     use HasFactory;
 
+    public const PICKUP_VEHICLES = ['motorcycle', 'car', 'van', 'truck'];
+
     protected $fillable = [
+        'pickup_payload_limits_kg',
         'owner_user_id',
         'company_name',
         'contact_person',
@@ -55,6 +58,7 @@ class Logistic extends Model
 
 
     protected $casts = [
+        'pickup_payload_limits_kg' => 'array',
         'approved_at' => 'datetime',
         'latitude' => 'decimal:7',
         'longitude' => 'decimal:7',
