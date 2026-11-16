@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../widgets/bottom_nav.dart';
 
+import 'logistics_cod_remittance.dart';
 import 'logistics_home.dart';
 import 'logistics_profile.dart';
 import 'logistics_wallet.dart';
@@ -20,9 +21,11 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
   // ============================================================
   // TAB INDEXES
   // ============================================================
+
   static const int _homeIndex = 0;
   static const int _scannerIndex = 1;
   static const int _trackingIndex = 2;
+  static const int _walletIndex = 4;
   static const int _profileIndex = 5;
 
   int _currentIndex = _homeIndex;
@@ -56,9 +59,7 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
     _homePage = LogisticsHome(onOpenScanner: _openScanner);
 
     _parcelsPage = const ParcelList();
-
     _walletPage = const LogisticsWallet();
-
     _profilePage = const LogisticsProfile();
   }
 
@@ -91,13 +92,27 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
   }
 
   // ============================================================
+  // OPEN COD REMITTANCE
+  // ============================================================
+
+  Future<void> _openCodRemittance() async {
+    if (!mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) {
+          return const LogisticsCodRemittance();
+        },
+      ),
+    );
+  }
+
+  // ============================================================
   // HANDLE ANDROID BACK BUTTON
   // ============================================================
 
   void _handleBack(bool didPop, Object? result) {
-    if (didPop || !mounted) {
-      return;
-    }
+    if (didPop || !mounted) return;
 
     if (_currentIndex != _homeIndex) {
       _changeTab(_homeIndex);
@@ -110,29 +125,20 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
 
   List<Widget> _buildPages() {
     return <Widget>[
-      // Home remains mounted when switching tabs.
       _homePage,
 
-      // Scanner is mounted ONLY while its tab is active.
-      //
-      // This prevents the camera from continuing to scan
-      // QR codes while the user is on another page.
+      // Scanner only mounted while active.
       if (_currentIndex == _scannerIndex)
         const ParcelScanner()
       else
         const SizedBox.shrink(),
 
-      // Tracking Map is mounted ONLY while active.
-      //
-      // The map's timer and network polling stop when
-      // the user leaves its tab because TrackingMap
-      // is disposed.
+      // Tracking map only mounted while active.
       if (_currentIndex == _trackingIndex)
         const TrackingMap()
       else
         const SizedBox.shrink(),
 
-      // These pages stay mounted to preserve UI state.
       _parcelsPage,
       _walletPage,
       _profilePage,
@@ -146,17 +152,29 @@ class _LogisticsNavigationState extends State<LogisticsNavigation> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      // On Home, allow the enclosing route to pop.
-      // On other tabs, Android Back returns to Home.
       canPop: _currentIndex == _homeIndex,
       onPopInvokedWithResult: _handleBack,
       child: Scaffold(
         backgroundColor: Colors.white,
 
-        // Keep the non-camera pages alive while switching.
-        // Scanner and Tracking Map are intentionally
-        // recreated when their tabs become active.
         body: IndexedStack(index: _currentIndex, children: _buildPages()),
+
+        // COD shortcut appears only on Wallet tab.
+        floatingActionButton: _currentIndex == _walletIndex
+            ? FloatingActionButton.extended(
+                heroTag: 'logistics_cod_remittance',
+                onPressed: _openCodRemittance,
+                backgroundColor: const Color(0xFF4F46E5),
+                foregroundColor: Colors.white,
+                icon: const Icon(Icons.payments_outlined),
+                label: const Text(
+                  'COD Remittance',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              )
+            : null,
+
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
 
         bottomNavigationBar: BottomNav(
           currentIndex: _currentIndex,

@@ -7,6 +7,7 @@ import '../../services/auth_storage.dart';
 import '../../styles/buyer_style.dart';
 
 import '../auth/login_page.dart';
+import 'buyer_wishlist.dart';
 import 'order_history.dart';
 import 'payment_methods.dart';
 
@@ -433,6 +434,22 @@ class _BuyerProfileState extends State<BuyerProfile> {
                 MaterialPageRoute<void>(
                   builder: (BuildContext context) {
                     return const OrderHistory();
+                  },
+                ),
+              );
+            },
+          ),
+          _divider(),
+          _profileItem(
+            Icons.favorite_border_rounded,
+            'My Wishlist',
+            'View your saved products',
+            () {
+              Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) {
+                    return const BuyerWishlistPage();
                   },
                 ),
               );

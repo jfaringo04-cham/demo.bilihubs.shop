@@ -421,9 +421,9 @@ class _OrderHistoryState extends State<OrderHistory> {
   // ============================================================
 
   Future<void> _openOrderDetails(Map<String, dynamic> order) async {
-    await Navigator.push<void>(
+    final bool? cancelled = await Navigator.push<bool>(
       context,
-      MaterialPageRoute<void>(
+      MaterialPageRoute<bool>(
         builder: (BuildContext context) {
           return OrderDetails(order: order);
         },
@@ -432,9 +432,14 @@ class _OrderHistoryState extends State<OrderHistory> {
 
     if (!mounted) return;
 
-    // Refresh order statuses after returning
-    // from the details screen.
+    // Always refresh so the order status is current after viewing details.
     await _refreshOrders();
+
+    if (mounted && cancelled == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Order cancelled successfully.')),
+      );
+    }
   }
 
   // ============================================================

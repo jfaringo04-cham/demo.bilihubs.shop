@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/product_model.dart';
+import '../services/wishlist_service.dart';
 import '../styles/buyer_style.dart';
 import '../utils/money_formatter.dart';
 
@@ -10,6 +11,89 @@ class ProductCard extends StatelessWidget {
   final VoidCallback onTap;
 
   const ProductCard({super.key, required this.product, required this.onTap});
+
+  // ============================================================
+  // WISHLIST
+  // ============================================================
+
+  Future<void> _toggleWishlist(BuildContext context) async {
+    final WishlistService wishlist = WishlistService.instance;
+
+    if (product.id <= 0 || wishlist.isUpdating(product.id)) {
+      return;
+    }
+
+    // Load existing favorites first so the toggle uses
+    // the current saved state instead of an empty cache.
+    if (!wishlist.isLoaded) {
+      final bool loaded = await wishlist.load();
+
+      if (!context.mounted) {
+        return;
+      }
+
+      if (!loaded) {
+        _showWishlistMessage(
+          context,
+          wishlist.errorMessage ??
+              'Unable to load your wishlist. Please try again.',
+          isError: true,
+        );
+        return;
+      }
+    }
+
+    final Map<String, dynamic> result = await wishlist.toggle(product.id);
+
+    if (!context.mounted) {
+      return;
+    }
+
+    if (result['success'] == true) {
+      _showWishlistMessage(
+        context,
+        result['wishlisted'] == true
+            ? 'Product added to wishlist.'
+            : 'Product removed from wishlist.',
+      );
+    } else {
+      _showWishlistMessage(
+        context,
+        result['message']?.toString() ?? 'Unable to update your wishlist.',
+        isError: true,
+      );
+
+      if (result['result_uncertain'] == true) {
+        await wishlist.refresh();
+      }
+    }
+  }
+
+  void _showWishlistMessage(
+    BuildContext context,
+    String message, {
+    bool isError = false,
+  }) {
+    if (!context.mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: isError
+              ? BuyerColors.danger
+              : BuyerColors.primaryDark,
+        ),
+      );
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -27,11 +111,84 @@ class ProductCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ====================================================
+              // PRODUCT IMAGE + WISHLIST HEART
+              // ====================================================
+
               AspectRatio(
                 aspectRatio: 1.25,
-                child: _ProductImage(product: product),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _ProductImage(product: product),
+
+                    // =================================================
+                    // SHARED WISHLIST HEART BUTTON
+                    // =================================================
+                    Positioned(
+                      top: 7,
+                      right: 7,
+                      child: AnimatedBuilder(
+                        animation: WishlistService.instance,
+                        builder: (BuildContext context, Widget? child) {
+                          final WishlistService wishlist =
+                              WishlistService.instance;
+
+                          final bool isFavorite = wishlist.isWishlisted(
+                            product.id,
+                          );
+
+                          final bool isUpdating = wishlist.isUpdating(
+                            product.id,
+                          );
+
+                          return Material(
+                            color: BuyerColors.white.withValues(alpha: 0.94),
+                            shape: const CircleBorder(),
+                            elevation: 2,
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: isUpdating || product.id <= 0
+                                  ? null
+                                  : () {
+                                      _toggleWishlist(context);
+                                    },
+                              child: SizedBox(
+                                width: 38,
+                                height: 38,
+                                child: Center(
+                                  child: isUpdating
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: BuyerColors.primary,
+                                          ),
+                                        )
+                                      : Icon(
+                                          isFavorite
+                                              ? Icons.favorite_rounded
+                                              : Icons.favorite_border_rounded,
+                                          size: 21,
+                                          color: isFavorite
+                                              ? BuyerColors.danger
+                                              : BuyerColors.textDark,
+                                        ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
               ),
 
+              // ====================================================
+              // PRODUCT INFORMATION
+              // ====================================================
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),

@@ -1,15 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../../services/api_services.dart';
+import '../../services/auth_storage.dart';
 import '../../styles/logistics_style.dart';
 import '../../utils/money_formatter.dart';
 import '../../widgets/app_empty_state.dart';
 import '../../widgets/app_error_state.dart';
-import '../../widgets/app_info_row.dart';
 import '../../widgets/app_loading_state.dart';
-import '../../widgets/status_chip.dart';
 
 class LogisticsWallet extends StatefulWidget {
   const LogisticsWallet({super.key});
@@ -19,21 +20,29 @@ class LogisticsWallet extends StatefulWidget {
 }
 
 class _LogisticsWalletState extends State<LogisticsWallet> {
-  static const Duration _requestTimeout = Duration(seconds: 25);
+  static const Duration _requestTimeout = Duration(seconds: 30);
+  static const int _perPage = 20;
 
   bool _isLoading = true;
   bool _isRefreshing = false;
   bool _isFetching = false;
+  bool _isLoadingMore = false;
   bool _hasLoaded = false;
-  bool _hasWalletData = false;
-  bool _hasTransactionData = false;
 
   String? _errorMessage;
+  String? _paginationError;
 
   Map<String, dynamic> _wallet = <String, dynamic>{};
+
   List<Map<String, dynamic>> _transactions = <Map<String, dynamic>>[];
 
+  List<Map<String, dynamic>> _withdrawals = <Map<String, dynamic>>[];
+
+  int _currentPage = 1;
+  int _lastPage = 1;
   int _requestId = 0;
+
+  bool get _hasMoreTransactions => _currentPage < _lastPage;
 
   @override
   void initState() {
@@ -48,93 +57,7 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
   }
 
   // ============================================================
-  // LOAD WALLET
-  // ============================================================
-
-  Future<void> _loadWallet({bool refresh = false}) async {
-    if (!mounted || _isFetching) return;
-
-    final int requestId = ++_requestId;
-
-    setState(() {
-      _isFetching = true;
-      _isLoading = !_hasLoaded;
-      _isRefreshing = _hasLoaded || refresh;
-      _errorMessage = null;
-    });
-
-    try {
-      final Map<String, dynamic> result =
-          await ApiService.getLogisticsDashboard().timeout(_requestTimeout);
-
-      if (!mounted || requestId != _requestId) return;
-
-      if (result['success'] != true) {
-        _setLoadError(
-          requestId,
-          _responseMessage(result, 'Unable to retrieve logistics wallet data.'),
-        );
-        return;
-      }
-
-      final Map<String, dynamic> walletData = _extractWalletData(result);
-
-      final _TransactionResult transactionResult = _extractTransactions(
-        result,
-        walletData,
-      );
-
-      if (!mounted || requestId != _requestId) return;
-
-      setState(() {
-        _wallet = walletData;
-        _transactions = transactionResult.items;
-
-        _hasWalletData = _containsFinancialFields(walletData);
-        _hasTransactionData = transactionResult.wasProvided;
-        _hasLoaded = true;
-
-        _isLoading = false;
-        _isRefreshing = false;
-        _isFetching = false;
-        _errorMessage = null;
-      });
-    } on TimeoutException {
-      _setLoadError(
-        requestId,
-        'The wallet request timed out. '
-        'Please check your connection and try again.',
-      );
-    } catch (error) {
-      debugPrint('Logistics wallet error: $error');
-
-      _setLoadError(
-        requestId,
-        'Unable to connect to the BiliHub server. '
-        'Please check your internet connection.',
-      );
-    }
-  }
-
-  void _setLoadError(int requestId, String message) {
-    if (!mounted || requestId != _requestId) return;
-
-    setState(() {
-      _isLoading = false;
-      _isRefreshing = false;
-      _isFetching = false;
-      _errorMessage = message;
-    });
-  }
-
-  String _responseMessage(Map<String, dynamic> result, String fallback) {
-    final String message = result['message']?.toString().trim() ?? '';
-
-    return message.isEmpty ? fallback : message;
-  }
-
-  // ============================================================
-  // RESPONSE PARSING
+  // API HELPERS
   // ============================================================
 
   Map<String, dynamic> _asMap(dynamic value) {
@@ -145,109 +68,7 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
     return <String, dynamic>{};
   }
 
-  Map<String, dynamic> _extractWalletData(Map<String, dynamic> result) {
-    final Map<String, dynamic> data = _asMap(result['data']);
-
-    final Map<String, dynamic> root = data.isNotEmpty ? data : result;
-
-    final Map<String, dynamic> wallet = _asMap(root['wallet']);
-
-    final Map<String, dynamic> earnings = _asMap(root['earnings']);
-
-    final Map<String, dynamic> logisticsWallet = _asMap(
-      root['logistics_wallet'],
-    );
-
-    // Keep financial fields only. Shipment totals, rider counts,
-    // and hub counts must not be treated as money.
-    return <String, dynamic>{
-      ...root,
-      ...earnings,
-      ...wallet,
-      ...logisticsWallet,
-    };
-  }
-
-  bool _containsFinancialFields(Map<String, dynamic> data) {
-    const List<String> financialKeys = <String>[
-      'available_balance',
-      'wallet_balance',
-      'balance',
-      'pending_balance',
-      'pending_withdrawal',
-      'total_earnings',
-      'total_earned',
-      'earnings_total',
-      'lifetime_earnings',
-      'today_earnings',
-      'daily_earnings',
-      'week_earnings',
-      'weekly_earnings',
-      'month_earnings',
-      'monthly_earnings',
-    ];
-
-    return financialKeys.any((String key) => data[key] != null);
-  }
-
-  // ============================================================
-  // TRANSACTION PARSING
-  // ============================================================
-
-  _TransactionResult _extractTransactions(
-    Map<String, dynamic> response,
-    Map<String, dynamic> wallet,
-  ) {
-    final Map<String, dynamic> data = _asMap(response['data']);
-
-    final List<Map<String, dynamic>> sources = <Map<String, dynamic>>[
-      _asMap(data['logistics_wallet']),
-      _asMap(data['wallet']),
-      _asMap(data['earnings']),
-      wallet,
-      data,
-      response,
-    ];
-
-    const List<String> keys = <String>[
-      'transactions',
-      'wallet_transactions',
-      'recent_transactions',
-      'recent_earnings',
-      'earnings_history',
-    ];
-
-    for (final Map<String, dynamic> source in sources) {
-      for (final String key in keys) {
-        final dynamic value = source[key];
-
-        if (value is List) {
-          return _TransactionResult(
-            items: _toMapList(value),
-            wasProvided: true,
-          );
-        }
-
-        if (value is Map) {
-          final Map<String, dynamic> container = _asMap(value);
-
-          if (container['data'] is List) {
-            return _TransactionResult(
-              items: _toMapList(container['data']),
-              wasProvided: true,
-            );
-          }
-        }
-      }
-    }
-
-    return const _TransactionResult(
-      items: <Map<String, dynamic>>[],
-      wasProvided: false,
-    );
-  }
-
-  List<Map<String, dynamic>> _toMapList(dynamic value) {
+  List<Map<String, dynamic>> _asMapList(dynamic value) {
     if (value is! List) {
       return <Map<String, dynamic>>[];
     }
@@ -258,81 +79,293 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
         .toList();
   }
 
+  Future<Map<String, dynamic>> _fetchWallet({int page = 1}) async {
+    final String? token = await AuthStorage.getToken();
+
+    if (token == null || token.trim().isEmpty) {
+      throw const _WalletException(
+        'Your login session has expired. Please log in again.',
+      );
+    }
+
+    final Uri uri = Uri.parse('${ApiService.baseUrl}/logistic/wallet').replace(
+      queryParameters: <String, String>{
+        'page': page.toString(),
+        'per_page': _perPage.toString(),
+      },
+    );
+
+    final http.Response response;
+
+    try {
+      response = await http
+          .get(
+            uri,
+            headers: <String, String>{
+              'Accept': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(_requestTimeout);
+    } on TimeoutException {
+      throw const _WalletException(
+        'The wallet request timed out. '
+        'Please check your internet connection.',
+      );
+    }
+
+    Map<String, dynamic> decoded;
+
+    try {
+      decoded = _asMap(jsonDecode(response.body));
+    } catch (_) {
+      throw const _WalletException(
+        'The server returned an invalid wallet response.',
+      );
+    }
+
+    if (response.statusCode == 401) {
+      throw const _WalletException(
+        'Your login session has expired. Please log in again.',
+      );
+    }
+
+    if (response.statusCode == 403) {
+      throw const _WalletException(
+        'This account does not have permission '
+        'to access the logistics wallet.',
+      );
+    }
+
+    if (response.statusCode < 200 ||
+        response.statusCode >= 300 ||
+        decoded['success'] != true) {
+      final String message = decoded['message']?.toString().trim() ?? '';
+
+      throw _WalletException(
+        message.isNotEmpty
+            ? message
+            : 'Unable to retrieve the logistics wallet.',
+      );
+    }
+
+    final Map<String, dynamic> data = _asMap(decoded['data']);
+
+    if (data['wallet'] is! Map) {
+      throw const _WalletException(
+        'The wallet API did not provide wallet information.',
+      );
+    }
+
+    if (data['transactions'] is! List) {
+      throw const _WalletException(
+        'The wallet API did not provide transaction records.',
+      );
+    }
+
+    return data;
+  }
+
   // ============================================================
-  // FINANCIAL VALUE HELPERS
+  // LOAD WALLET
   // ============================================================
 
-  dynamic _firstValue(List<String> keys) {
-    for (final String key in keys) {
-      final dynamic value = _wallet[key];
+  Future<void> _loadWallet({bool refresh = false}) async {
+    if (!mounted || _isFetching || _isLoadingMore) {
+      return;
+    }
 
-      if (value == null) continue;
+    final int requestId = ++_requestId;
 
-      if (value is String &&
-          (value.trim().isEmpty || value.trim().toLowerCase() == 'null')) {
-        continue;
+    setState(() {
+      _isFetching = true;
+      _isLoading = !_hasLoaded;
+      _isRefreshing = _hasLoaded;
+      _errorMessage = null;
+      _paginationError = null;
+    });
+
+    try {
+      final Map<String, dynamic> data = await _fetchWallet(page: 1);
+
+      if (!mounted || requestId != _requestId) {
+        return;
       }
 
+      final Map<String, dynamic> pagination = _asMap(data['pagination']);
+
+      setState(() {
+        _wallet = _asMap(data['wallet']);
+
+        _transactions = _asMapList(data['transactions']);
+
+        _withdrawals = _asMapList(data['withdrawals']);
+
+        _currentPage = 1;
+
+        _lastPage = _positiveInt(pagination['last_page'], 1);
+
+        _hasLoaded = true;
+        _isLoading = false;
+        _isRefreshing = false;
+        _isFetching = false;
+        _errorMessage = null;
+      });
+    } catch (error) {
+      if (!mounted || requestId != _requestId) {
+        return;
+      }
+
+      final String message = error is _WalletException
+          ? error.message
+          : 'Unable to connect to the BiliHub server. '
+                'Please check your connection.';
+
+      debugPrint('Logistics Wallet: $error');
+
+      setState(() {
+        _isLoading = false;
+        _isRefreshing = false;
+        _isFetching = false;
+        _errorMessage = message;
+      });
+    }
+  }
+
+  // ============================================================
+  // LOAD MORE TRANSACTIONS
+  // ============================================================
+
+  Future<void> _loadMoreTransactions() async {
+    if (!mounted ||
+        !_hasLoaded ||
+        _isFetching ||
+        _isLoadingMore ||
+        !_hasMoreTransactions) {
+      return;
+    }
+
+    final int requestId = _requestId;
+    final int nextPage = _currentPage + 1;
+
+    setState(() {
+      _isLoadingMore = true;
+      _paginationError = null;
+    });
+
+    try {
+      final Map<String, dynamic> data = await _fetchWallet(page: nextPage);
+
+      if (!mounted || requestId != _requestId) {
+        return;
+      }
+
+      final List<Map<String, dynamic>> newTransactions = _asMapList(
+        data['transactions'],
+      );
+
+      final Map<String, dynamic> pagination = _asMap(data['pagination']);
+
+      setState(() {
+        _transactions.addAll(newTransactions);
+
+        _currentPage = nextPage;
+
+        _lastPage = _positiveInt(pagination['last_page'], _lastPage);
+
+        _isLoadingMore = false;
+      });
+    } catch (error) {
+      if (!mounted || requestId != _requestId) {
+        return;
+      }
+
+      setState(() {
+        _isLoadingMore = false;
+        _paginationError = error is _WalletException
+            ? error.message
+            : 'Unable to load more transactions.';
+      });
+    }
+  }
+
+  int _positiveInt(dynamic value, int fallback) {
+    final int? parsed = int.tryParse(value?.toString() ?? '');
+
+    if (parsed == null || parsed < 1) {
+      return fallback;
+    }
+
+    return parsed;
+  }
+
+  // ============================================================
+  // MONEY HELPERS
+  // All backend minor-unit values are centavos.
+  // Display values in Philippine pesos.
+  // ============================================================
+
+  int? _minorValue(String key) {
+    final dynamic value = _wallet[key];
+
+    if (value is int) {
       return value;
     }
 
-    return null;
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(value?.toString() ?? '');
   }
 
-  String _money(List<String> keys) {
-    if (!_hasWalletData) {
+  String _moneyFromMinor(dynamic value) {
+    final int? minor;
+
+    if (value is int) {
+      minor = value;
+    } else if (value is num) {
+      minor = value.toInt();
+    } else {
+      minor = int.tryParse(value?.toString() ?? '');
+    }
+
+    if (minor == null) {
       return 'Not available';
     }
 
-    final dynamic value = _firstValue(keys);
-
-    if (value == null) {
-      return 'Not available';
-    }
-
-    // Only known monetary fields are formatted.
-    // The API must provide amounts in the units expected
-    // by MoneyFormatter.peso.
-    return MoneyFormatter.peso(value);
+    return MoneyFormatter.peso(minor / 100);
   }
 
-  String _transactionMoney(dynamic value) {
-    if (value == null) return 'Not available';
+  String _walletMoney(String key) {
+    return _moneyFromMinor(_minorValue(key));
+  }
 
-    final String text = value.toString().trim();
+  // ============================================================
+  // TEXT HELPERS
+  // ============================================================
+
+  String _displayText(dynamic value, {String fallback = 'Not available'}) {
+    final String text = value?.toString().trim() ?? '';
 
     if (text.isEmpty || text.toLowerCase() == 'null') {
+      return fallback;
+    }
+
+    return text;
+  }
+
+  String _formatLabel(dynamic value) {
+    final String text = _displayText(
+      value,
+      fallback: '',
+    ).replaceAll('_', ' ').replaceAll('-', ' ');
+
+    if (text.isEmpty) {
       return 'Not available';
     }
 
-    return MoneyFormatter.peso(value);
-  }
-
-  String _firstText(Map<String, dynamic> item, List<String> keys) {
-    for (final String key in keys) {
-      final String value = item[key]?.toString().trim() ?? '';
-
-      if (value.isNotEmpty && value.toLowerCase() != 'null') {
-        return value;
-      }
-    }
-
-    return '';
-  }
-
-  String _normalize(String value) {
-    return value.trim().toLowerCase().replaceAll(' ', '_').replaceAll('-', '_');
-  }
-
-  String _formatStatus(String value) {
-    final String cleaned = value
-        .trim()
-        .replaceAll('_', ' ')
-        .replaceAll('-', ' ');
-
-    if (cleaned.isEmpty) return 'Not available';
-
-    return cleaned
+    return text
         .split(RegExp(r'\s+'))
         .where((String word) => word.isNotEmpty)
         .map(
@@ -343,24 +376,47 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
         .join(' ');
   }
 
+  String _formatDate(dynamic value) {
+    final String text = _displayText(value, fallback: '');
+
+    if (text.isEmpty) {
+      return 'Date unavailable';
+    }
+
+    final DateTime? date = DateTime.tryParse(text);
+
+    if (date == null) {
+      return text;
+    }
+
+    final DateTime local = date.toLocal();
+
+    final String month = local.month.toString().padLeft(2, '0');
+
+    final String day = local.day.toString().padLeft(2, '0');
+
+    final String hour = local.hour.toString().padLeft(2, '0');
+
+    final String minute = local.minute.toString().padLeft(2, '0');
+
+    return '${local.year}-$month-$day $hour:$minute';
+  }
+
   Color _statusColor(String status) {
-    switch (_normalize(status)) {
+    switch (status.toLowerCase().trim()) {
       case 'paid':
       case 'completed':
       case 'credited':
-      case 'released':
-      case 'confirmed':
         return LogisticsColors.success;
 
       case 'pending':
       case 'processing':
-      case 'awaiting_payment':
+      case 'eligible':
         return LogisticsColors.warning;
 
       case 'rejected':
       case 'failed':
       case 'cancelled':
-      case 'canceled':
         return LogisticsColors.danger;
 
       default:
@@ -400,11 +456,13 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
         actions: [
           IconButton(
             tooltip: 'Refresh wallet',
-            onPressed: _isFetching ? null : () => _loadWallet(refresh: true),
+            onPressed: _isFetching || _isLoadingMore
+                ? null
+                : () => _loadWallet(refresh: true),
             icon: _isRefreshing
                 ? const SizedBox(
-                    height: 19,
                     width: 19,
+                    height: 19,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
                       color: LogisticsColors.primary,
@@ -457,26 +515,19 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
                   ),
                   const SizedBox(height: 14),
                 ],
-
                 if (_errorMessage != null) ...[
                   _errorBanner(),
                   const SizedBox(height: 14),
                 ],
-
-                if (!_hasWalletData) ...[
-                  _walletUnavailableNotice(),
-                  const SizedBox(height: 14),
-                ],
-
                 _walletOverview(),
-
                 const SizedBox(height: 22),
-
                 _earningsSummary(),
-
                 const SizedBox(height: 22),
-
+                _withdrawalSummary(),
+                const SizedBox(height: 22),
                 _transactionSection(),
+                const SizedBox(height: 22),
+                _withdrawalHistorySection(),
               ],
             ],
           ),
@@ -486,12 +537,11 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
   }
 
   // ============================================================
-  // ERROR WARNING
+  // ERROR BANNER
   // ============================================================
 
   Widget _errorBanner() {
     return Container(
-      width: double.infinity,
       padding: const EdgeInsets.all(13),
       decoration: LogisticsStyle.card,
       child: Row(
@@ -500,7 +550,6 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
           const Icon(
             Icons.info_outline_rounded,
             color: LogisticsColors.warning,
-            size: 21,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -519,66 +568,18 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
     );
   }
 
-  Widget _walletUnavailableNotice() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(13),
-      decoration: BoxDecoration(
-        color: LogisticsColors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: LogisticsColors.border),
-      ),
-      child: const Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            Icons.info_outline_rounded,
-            color: LogisticsColors.warning,
-            size: 21,
-          ),
-          SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'The logistics dashboard responded, but '
-              'did not provide confirmed earnings or '
-              'wallet balances. Monetary information '
-              'will remain unavailable until the '
-              'appropriate wallet API data is provided.',
-              style: LogisticsStyle.small,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   // ============================================================
   // WALLET OVERVIEW
   // ============================================================
 
   Widget _walletOverview() {
-    final String available = _money([
-      'available_balance',
-      'wallet_balance',
-      'available',
-      'balance',
-    ]);
+    final String available = _walletMoney('available_balance_minor');
 
-    final String pending = _money([
-      'pending_balance',
-      'pending_withdrawal',
-      'pending',
-    ]);
+    final String totalEarned = _walletMoney('total_earned_minor');
 
-    final String totalEarned = _money([
-      'total_earnings',
-      'total_earned',
-      'earnings_total',
-      'lifetime_earnings',
-    ]);
+    final bool hasPendingWithdrawal = _wallet['has_pending_withdrawal'] == true;
 
     return Container(
-      width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: LogisticsStyle.card,
       child: Column(
@@ -600,16 +601,12 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
               ),
             ],
           ),
-
           const SizedBox(height: 5),
-
           const Text(
-            'Logistics earnings and balances',
+            'Actual balances from the Laravel logistics wallet',
             style: LogisticsStyle.small,
           ),
-
           const SizedBox(height: 16),
-
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(17),
@@ -631,9 +628,7 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
                     Text('Available Balance', style: LogisticsStyle.small),
                   ],
                 ),
-
                 const SizedBox(height: 10),
-
                 Text(
                   available,
                   maxLines: 2,
@@ -644,35 +639,33 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-
                 const SizedBox(height: 8),
-
                 const Text(
-                  'Confirmed available logistics earnings, '
-                  'when provided by Laravel.',
+                  'Confirmed wallet balance recorded by Laravel.',
                   style: LogisticsStyle.small,
                 ),
               ],
             ),
           ),
-
           const SizedBox(height: 12),
-
           Row(
             children: [
               Expanded(
-                child: _walletStatCard(
-                  title: 'Pending',
-                  value: pending,
-                  icon: Icons.hourglass_top_rounded,
+                child: _statCard(
+                  title: 'Total Earned',
+                  value: totalEarned,
+                  icon: Icons.payments_outlined,
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: _walletStatCard(
-                  title: 'Total Earned',
-                  value: totalEarned,
-                  icon: Icons.payments_outlined,
+                child: _statCard(
+                  title: 'Withdrawal Status',
+                  value: hasPendingWithdrawal
+                      ? 'Pending'
+                      : 'No pending request',
+                  icon: Icons.hourglass_top_rounded,
+                  moneyValue: false,
                 ),
               ),
             ],
@@ -682,10 +675,11 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
     );
   }
 
-  Widget _walletStatCard({
+  Widget _statCard({
     required String title,
     required String value,
     required IconData icon,
+    bool moneyValue = true,
   }) {
     return Container(
       padding: const EdgeInsets.all(13),
@@ -698,8 +692,8 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            height: 36,
             width: 36,
+            height: 36,
             decoration: BoxDecoration(
               color: LogisticsColors.lightPurple,
               borderRadius: BorderRadius.circular(10),
@@ -729,52 +723,28 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Earnings Summary', style: LogisticsStyle.sectionTitle),
-
         const SizedBox(height: 5),
-
         const Text(
-          'Values reported by the Laravel backend',
+          'Based on the same credited transactions as Logistics Web',
           style: LogisticsStyle.small,
         ),
-
         const SizedBox(height: 12),
-
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          childAspectRatio: 1.30,
+        Row(
           children: [
-            _summaryCard(
-              title: 'Today',
-              value: _money(['today_earnings', 'daily_earnings', 'today']),
-              icon: Icons.today_outlined,
+            Expanded(
+              child: _statCard(
+                title: "Today's Earnings",
+                value: _walletMoney('today_earned_minor'),
+                icon: Icons.today_outlined,
+              ),
             ),
-            _summaryCard(
-              title: 'This Week',
-              value: _money(['week_earnings', 'weekly_earnings', 'this_week']),
-              icon: Icons.date_range_outlined,
-            ),
-            _summaryCard(
-              title: 'This Month',
-              value: _money([
-                'month_earnings',
-                'monthly_earnings',
-                'this_month',
-              ]),
-              icon: Icons.calendar_month_outlined,
-            ),
-            _summaryCard(
-              title: 'Total Earnings',
-              value: _money([
-                'total_earnings',
-                'total_earned',
-                'earnings_total',
-                'lifetime_earnings',
-              ]),
-              icon: Icons.account_balance_wallet_outlined,
+            const SizedBox(width: 10),
+            Expanded(
+              child: _statCard(
+                title: 'Total Earnings',
+                value: _walletMoney('total_earned_minor'),
+                icon: Icons.account_balance_wallet_outlined,
+              ),
             ),
           ],
         ),
@@ -782,46 +752,68 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
     );
   }
 
-  Widget _summaryCard({
-    required String title,
-    required String value,
-    required IconData icon,
-  }) {
+  // ============================================================
+  // WITHDRAWAL SUMMARY
+  // ============================================================
+
+  Widget _withdrawalSummary() {
+    final bool pending = _wallet['has_pending_withdrawal'] == true;
+
     return Container(
-      padding: const EdgeInsets.all(13),
+      padding: const EdgeInsets.all(17),
       decoration: LogisticsStyle.card,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 36,
-            width: 36,
-            decoration: BoxDecoration(
-              color: LogisticsColors.lightPurple,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: LogisticsColors.primary, size: 19),
-          ),
-          const Spacer(),
-          Text(
-            value,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: LogisticsColors.textDark,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
+          const Text('Withdrawal Summary', style: LogisticsStyle.sectionTitle),
           const SizedBox(height: 5),
-          Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          const Text(
+            'Withdrawal information from the existing Web wallet',
             style: LogisticsStyle.small,
+          ),
+          const SizedBox(height: 15),
+          _detailRow('Total Withdrawn', _walletMoney('total_withdrawn_minor')),
+          const Divider(height: 22),
+          _detailRow(
+            'Minimum Withdrawal',
+            _walletMoney('minimum_withdrawal_minor'),
+          ),
+          const Divider(height: 22),
+          _detailRow('Pending Request', pending ? 'Yes' : 'No'),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: LogisticsColors.background,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text(
+              'Withdrawal requests and COD remittance are '
+              'separate financial workflows. This screen '
+              'currently displays verified wallet records only.',
+              style: LogisticsStyle.small,
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: Text(label, style: LogisticsStyle.small)),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style: LogisticsStyle.cardTitle,
+          ),
+        ),
+      ],
     );
   }
 
@@ -834,65 +826,76 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Wallet Activity', style: LogisticsStyle.sectionTitle),
-
         const SizedBox(height: 5),
-
         const Text(
-          'Recent recorded wallet transactions',
+          'Recent wallet transactions recorded by Laravel',
           style: LogisticsStyle.small,
         ),
-
         const SizedBox(height: 12),
 
-        if (!_hasTransactionData)
-          const AppEmptyState(
-            title: 'Transaction Data Unavailable',
-            message:
-                'The current API response does not include '
-                'a wallet transaction history.',
-            icon: Icons.receipt_long_outlined,
-            color: LogisticsColors.primary,
-            compact: true,
-          )
-        else if (_transactions.isEmpty)
+        if (_transactions.isEmpty)
           const AppEmptyState(
             title: 'No Wallet Transactions',
-            message: 'The server returned an empty transaction list.',
+            message: 'No wallet transactions have been recorded yet.',
             icon: Icons.receipt_long_outlined,
             color: LogisticsColors.primary,
             compact: true,
           )
-        else
+        else ...[
           ..._transactions.map(
             (Map<String, dynamic> item) => _transactionItem(item),
           ),
+
+          if (_paginationError != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              _paginationError!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: LogisticsColors.danger,
+                fontSize: 12,
+              ),
+            ),
+          ],
+
+          if (_hasMoreTransactions) ...[
+            const SizedBox(height: 12),
+            Center(
+              child: OutlinedButton.icon(
+                onPressed: _isLoadingMore ? null : _loadMoreTransactions,
+                icon: _isLoadingMore
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.expand_more_rounded),
+                label: Text(
+                  _isLoadingMore ? 'Loading...' : 'Load More Transactions',
+                ),
+              ),
+            ),
+          ],
+        ],
       ],
     );
   }
 
   Widget _transactionItem(Map<String, dynamic> item) {
-    final String title = _firstText(item, [
-      'description',
-      'transaction_type',
-      'earning_type',
-      'type',
-    ]);
+    final String type = _formatLabel(item['type']);
 
-    final String status = _firstText(item, ['status', 'transaction_status']);
+    final String description = _displayText(
+      item['description'],
+      fallback: type,
+    );
 
-    final String tracking = _firstText(item, [
-      'tracking_number',
-      'tracking_code',
-      'waybill_number',
-    ]);
+    final String tracking = _displayText(item['tracking_number'], fallback: '');
 
-    final dynamic amount =
-        item['amount'] ??
-        item['earnings'] ??
-        item['earning_amount'] ??
-        item['value'];
+    final int amountMinor = _minorFromValue(item['amount_minor']);
 
-    final Color statusColor = _statusColor(status);
+    final Color amountColor = amountMinor < 0
+        ? LogisticsColors.danger
+        : LogisticsColors.success;
 
     return Container(
       width: double.infinity,
@@ -903,8 +906,8 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            height: 42,
             width: 42,
+            height: 42,
             decoration: BoxDecoration(
               color: LogisticsColors.lightPurple,
               borderRadius: BorderRadius.circular(12),
@@ -912,80 +915,146 @@ class _LogisticsWalletState extends State<LogisticsWallet> {
             child: const Icon(
               Icons.receipt_long_outlined,
               color: LogisticsColors.primary,
-              size: 21,
             ),
           ),
-
           const SizedBox(width: 11),
-
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  title.isEmpty ? 'Wallet Transaction' : _formatStatus(title),
-                  maxLines: 2,
+                  description,
+                  maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: LogisticsStyle.cardTitle,
                 ),
-
+                const SizedBox(height: 5),
+                Text(type, style: LogisticsStyle.small),
                 if (tracking.isNotEmpty) ...[
                   const SizedBox(height: 6),
-                  AppInfoRow(
-                    label: 'Tracking',
-                    value: tracking,
-                    icon: Icons.qr_code_2_rounded,
-                    iconColor: LogisticsColors.primary,
-                    compact: true,
-                  ),
+                  Text('Tracking: $tracking', style: LogisticsStyle.small),
                 ],
-
-                if (status.isNotEmpty) ...[
-                  const SizedBox(height: 7),
-                  StatusChip(status: status),
-                ],
+                const SizedBox(height: 6),
+                Text(
+                  _formatDate(item['created_at']),
+                  style: LogisticsStyle.small,
+                ),
               ],
             ),
           ),
-
           const SizedBox(width: 10),
-
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                _transactionMoney(amount),
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  color: statusColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-
-              if (status.isNotEmpty) ...[
-                const SizedBox(height: 5),
-                Text(
-                  _formatStatus(status),
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    color: statusColor,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ],
+          Text(
+            _moneyFromMinor(item['amount_minor']),
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              color: amountColor,
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
+            ),
           ),
         ],
       ),
     );
   }
+
+  int _minorFromValue(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  // ============================================================
+  // WITHDRAWAL HISTORY
+  // ============================================================
+
+  Widget _withdrawalHistorySection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Withdrawal History', style: LogisticsStyle.sectionTitle),
+        const SizedBox(height: 5),
+        const Text(
+          'Recent withdrawal requests and their statuses',
+          style: LogisticsStyle.small,
+        ),
+        const SizedBox(height: 12),
+
+        if (_withdrawals.isEmpty)
+          const AppEmptyState(
+            title: 'No Withdrawal Requests',
+            message: 'No logistics withdrawal requests have been recorded.',
+            icon: Icons.account_balance_outlined,
+            color: LogisticsColors.primary,
+            compact: true,
+          )
+        else
+          ..._withdrawals.map((Map<String, dynamic> withdrawal) {
+            final String status = _displayText(withdrawal['status']);
+
+            final Color color = _statusColor(status);
+
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(15),
+              decoration: LogisticsStyle.card,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.account_balance_outlined,
+                    color: LogisticsColors.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _formatLabel(withdrawal['payment_method']),
+                          style: LogisticsStyle.cardTitle,
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          _formatDate(withdrawal['created_at']),
+                          style: LogisticsStyle.small,
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          _formatLabel(status),
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    _moneyFromMinor(withdrawal['amount_minor']),
+                    style: LogisticsStyle.cardTitle,
+                  ),
+                ],
+              ),
+            );
+          }),
+      ],
+    );
+  }
 }
 
-class _TransactionResult {
-  final List<Map<String, dynamic>> items;
-  final bool wasProvided;
+class _WalletException implements Exception {
+  final String message;
 
-  const _TransactionResult({required this.items, required this.wasProvided});
+  const _WalletException(this.message);
+
+  @override
+  String toString() => message;
 }

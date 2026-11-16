@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 
 import '../../models/product_model.dart';
 import '../../services/api_services.dart';
+import '../../services/wishlist_service.dart';
 import '../../styles/buyer_style.dart';
 import '../../widgets/app_empty_state.dart';
 import '../../widgets/app_error_state.dart';
@@ -78,11 +79,17 @@ class _ProductListState extends State<ProductList> {
   // ============================================================
 
   Future<void> _loadInitialData() async {
+    // Load saved wishlist hearts without blocking product loading.
+    unawaited(WishlistService.instance.load());
+
     await Future.wait<void>([_loadCategories(), _loadProducts()]);
   }
 
   Future<void> _refreshProducts() async {
     _searchDebounce?.cancel();
+
+    // Synchronize wishlist hearts with the Laravel database.
+    unawaited(WishlistService.instance.refresh());
 
     await Future.wait<void>([_loadCategories(), _loadProducts()]);
   }

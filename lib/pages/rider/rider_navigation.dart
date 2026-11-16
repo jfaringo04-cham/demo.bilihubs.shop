@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../widgets/bottom_nav.dart';
 
+import 'cod_remittance.dart';
 import 'rider_deliveries.dart';
 import 'rider_earnings.dart';
 import 'rider_home.dart';
@@ -22,6 +23,7 @@ class _RiderNavigationState extends State<RiderNavigation> {
 
   static const int _homeIndex = 0;
   static const int _deliveriesIndex = 1;
+  static const int _walletIndex = 3;
   static const int _profileIndex = 4;
 
   static const int _firstTabIndex = _homeIndex;
@@ -29,8 +31,6 @@ class _RiderNavigationState extends State<RiderNavigation> {
 
   int _currentIndex = _homeIndex;
 
-  // Incrementing this value creates a fresh RiderDeliveries
-  // instance and triggers a new API request.
   int _deliveriesRefreshVersion = 0;
 
   // ============================================================
@@ -87,14 +87,6 @@ class _RiderNavigationState extends State<RiderNavigation> {
       return;
     }
 
-    // Refresh the data whenever the user opens
-    // the Deliveries tab.
-    //
-    // This includes:
-    // - Returning after accepting a pickup offer
-    // - Opening My Deliveries from Rider Home
-    // - Returning from another tab
-    // - Tapping Deliveries again to reload
     if (index == _deliveriesIndex) {
       setState(() {
         _refreshDeliveries();
@@ -124,6 +116,22 @@ class _RiderNavigationState extends State<RiderNavigation> {
   }
 
   // ============================================================
+  // OPEN COD REMITTANCE SCREEN
+  // ============================================================
+
+  Future<void> _openCodRemittance() async {
+    if (!mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) {
+          return const CodRemittance();
+        },
+      ),
+    );
+  }
+
+  // ============================================================
   // HANDLE ANDROID BACK BUTTON
   // ============================================================
 
@@ -150,7 +158,32 @@ class _RiderNavigationState extends State<RiderNavigation> {
       onPopInvokedWithResult: _handleBack,
       child: Scaffold(
         backgroundColor: Colors.white,
+
         body: IndexedStack(index: _currentIndex, children: _pages),
+
+        // ======================================================
+        // COD REMITTANCE SHORTCUT ON RIDER WALLET TAB
+        // ======================================================
+        floatingActionButton: _currentIndex == _walletIndex
+            ? FloatingActionButton.extended(
+                heroTag: 'rider_cod_remittance_button',
+                onPressed: _openCodRemittance,
+                backgroundColor: const Color(0xFF4F46E5),
+                foregroundColor: Colors.white,
+                elevation: 3,
+                icon: const Icon(Icons.payments_outlined, size: 21),
+                label: const Text(
+                  'COD Remittance',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              )
+            : null,
+
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+
+        // ======================================================
+        // EXISTING BOTTOM NAVIGATION
+        // ======================================================
         bottomNavigationBar: BottomNav(
           currentIndex: _currentIndex,
           items: _items,

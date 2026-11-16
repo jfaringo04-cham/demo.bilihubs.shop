@@ -635,6 +635,274 @@ class ApiService {
     }
   }
 
+  // ============================================================
+  // BUYER WISHLIST - MOBILE APP
+  // ============================================================
+
+  /// GET /api/buyer/wishlist
+  /// Retrieve the authenticated buyer's saved products.
+  static Future<Map<String, dynamic>> getBuyerWishlist({
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Session expired. Please login again.',
+        };
+      }
+
+      final int safePage = page < 1 ? 1 : page;
+      final int safePerPage = perPage.clamp(1, 100).toInt();
+
+      final Uri uri = Uri.parse('$baseUrl/buyer/wishlist').replace(
+        queryParameters: {
+          'page': safePage.toString(),
+          'per_page': safePerPage.toString(),
+        },
+      );
+
+      final http.Response response = await http
+          .get(uri, headers: _authHeaders(token))
+          .timeout(const Duration(seconds: 25));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 &&
+          decoded is Map &&
+          decoded['success'] == true &&
+          decoded['data'] is List) {
+        return {
+          'success': true,
+          'status_code': 200,
+          'data': _extractList(decoded, keys: const ['data', 'wishlists']),
+          'meta': _extractMeta(decoded),
+        };
+      }
+
+      if (response.statusCode == 200) {
+        return {
+          'success': false,
+          'status_code': 200,
+          'message': 'Invalid wishlist response from server.',
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'Only buyers can access the wishlist.',
+        notFoundMessage: 'Buyer wishlist API is not available.',
+        fallback: 'Unable to load your wishlist.',
+      );
+    } on TimeoutException {
+      return {
+        'success': false,
+        'message': 'Loading wishlist timed out. Please try again.',
+      };
+    } catch (error) {
+      debugPrint('Get buyer wishlist error: $error');
+
+      return {
+        'success': false,
+        'message':
+            'Unable to load your wishlist. '
+            'Please check your internet connection.',
+      };
+    }
+  }
+
+  /// POST /api/buyer/wishlist/{product}
+  /// Add a product to the authenticated buyer's wishlist.
+  static Future<Map<String, dynamic>> addBuyerWishlist(int productId) async {
+    if (productId <= 0) {
+      return {
+        'success': false,
+        'status_code': 422,
+        'message': 'Invalid product ID.',
+      };
+    }
+
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Session expired. Please login again.',
+        };
+      }
+
+      final http.Response response = await http
+          .post(
+            Uri.parse('$baseUrl/buyer/wishlist/$productId'),
+            headers: _authHeaders(token, json: true),
+            body: jsonEncode(<String, dynamic>{}),
+          )
+          .timeout(const Duration(seconds: 25));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if ((response.statusCode == 200 || response.statusCode == 201) &&
+          decoded is Map &&
+          decoded['success'] == true &&
+          decoded['wishlisted'] == true) {
+        final dynamic rawData = decoded['data'];
+
+        return {
+          'success': true,
+          'status_code': response.statusCode,
+          'wishlisted': true,
+          'message': _getMessage(
+            decoded,
+            fallback: 'Product added to wishlist.',
+          ),
+          'data': rawData is Map
+              ? Map<String, dynamic>.from(rawData)
+              : <String, dynamic>{},
+        };
+      }
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return {
+          'success': false,
+          'status_code': response.statusCode,
+          'message': 'Unable to confirm wishlist update.',
+        };
+      }
+
+      if (response.statusCode == 422) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': _getMessage(
+            decoded,
+            fallback: 'This product cannot be added to wishlist.',
+          ),
+          'errors': decoded is Map ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'Only buyers can add products to the wishlist.',
+        notFoundMessage: 'Product or wishlist endpoint was not found.',
+        fallback: 'Unable to add product to wishlist.',
+      );
+    } on TimeoutException {
+      return {
+        'success': false,
+        'result_uncertain': true,
+        'message':
+            'Wishlist request timed out. '
+            'Please refresh your wishlist to check if the product was saved.',
+      };
+    } catch (error) {
+      debugPrint('Add buyer wishlist error: $error');
+
+      return {
+        'success': false,
+        'result_uncertain': true,
+        'message':
+            'Unable to confirm wishlist update. '
+            'Please refresh your wishlist before trying again.',
+      };
+    }
+  }
+
+  /// DELETE /api/buyer/wishlist/{product}
+  /// Remove a saved product from the authenticated buyer's wishlist.
+  static Future<Map<String, dynamic>> removeBuyerWishlist(int productId) async {
+    if (productId <= 0) {
+      return {
+        'success': false,
+        'status_code': 422,
+        'message': 'Invalid product ID.',
+      };
+    }
+
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Session expired. Please login again.',
+        };
+      }
+
+      final http.Response response = await http
+          .delete(
+            Uri.parse('$baseUrl/buyer/wishlist/$productId'),
+            headers: _authHeaders(token),
+          )
+          .timeout(const Duration(seconds: 25));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 &&
+          decoded is Map &&
+          decoded['success'] == true &&
+          decoded['wishlisted'] == false) {
+        final dynamic rawData = decoded['data'];
+
+        return {
+          'success': true,
+          'status_code': 200,
+          'wishlisted': false,
+          'message': _getMessage(
+            decoded,
+            fallback: 'Product removed from wishlist.',
+          ),
+          'data': rawData is Map
+              ? Map<String, dynamic>.from(rawData)
+              : <String, dynamic>{},
+        };
+      }
+
+      if (response.statusCode == 200) {
+        return {
+          'success': false,
+          'status_code': 200,
+          'message': 'Unable to confirm wishlist removal.',
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'Only buyers can remove products from the wishlist.',
+        notFoundMessage: 'Product or wishlist endpoint was not found.',
+        fallback: 'Unable to remove product from wishlist.',
+      );
+    } on TimeoutException {
+      return {
+        'success': false,
+        'result_uncertain': true,
+        'message':
+            'Wishlist removal timed out. '
+            'Please refresh your wishlist to check its status.',
+      };
+    } catch (error) {
+      debugPrint('Remove buyer wishlist error: $error');
+
+      return {
+        'success': false,
+        'result_uncertain': true,
+        'message':
+            'Unable to confirm wishlist removal. '
+            'Please refresh your wishlist before trying again.',
+      };
+    }
+  }
+
   /// GET /api/buyer/vouchers/claimed
   /// Loads all vouchers claimed by the authenticated buyer.
   static Future<Map<String, dynamic>> getClaimedBuyerVouchers() async {
@@ -1117,6 +1385,226 @@ class ApiService {
         'message':
             'Unable to place your order. Please check your internet '
             'connection and try again.',
+      };
+    }
+  }
+
+  // ============================================================
+  // CANCEL BUYER ORDER
+  // POST /api/orders/{order}/cancel
+  // ============================================================
+
+  static Future<Map<String, dynamic>> cancelBuyerOrder({
+    required int orderId,
+  }) async {
+    if (orderId <= 0) {
+      return {
+        'success': false,
+        'status_code': 422,
+        'message': 'Invalid order ID.',
+      };
+    }
+
+    // Once the HTTP request starts, a connection failure cannot prove that
+    // Laravel did not process it. Verify the order status before retrying.
+    bool requestStarted = false;
+
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return {
+          'success': false,
+          'status_code': 401,
+          'message': 'Your session has expired. Please log in again.',
+        };
+      }
+
+      requestStarted = true;
+      final http.Response response = await http
+          .post(
+            Uri.parse('$baseUrl/orders/$orderId/cancel'),
+            headers: _authHeaders(token.trim()),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (decoded is! Map || decoded['success'] == false) {
+          return {
+            'success': false,
+            'status_code': response.statusCode,
+            'result_uncertain': true,
+            'message':
+                'The cancellation result could not be confirmed. '
+                'Please refresh your order history to verify its status.',
+          };
+        }
+
+        return {
+          'success': true,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            decoded,
+            fallback: 'Order cancelled successfully.',
+          ),
+          if (decoded['data'] is Map)
+            'data': Map<String, dynamic>.from(decoded['data'] as Map),
+        };
+      }
+
+      if (response.statusCode == 422) {
+        return {
+          'success': false,
+          'status_code': 422,
+          'message': _getMessage(
+            decoded,
+            fallback: 'This order can no longer be cancelled.',
+          ),
+          'errors': decoded is Map ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'You cannot cancel this order.',
+        notFoundMessage: 'Order not found.',
+        fallback: 'Unable to cancel the order. Please try again.',
+      );
+    } on TimeoutException {
+      return {
+        'success': false,
+        'result_uncertain': true,
+        'message':
+            'The cancellation request timed out. '
+            'Please refresh your order history before trying again.',
+      };
+    } catch (error) {
+      debugPrint('Cancel buyer order error: $error');
+      return {
+        'success': false,
+        'result_uncertain': requestStarted,
+        'message': requestStarted
+            ? 'Unable to confirm the cancellation. Please refresh your '
+                  'order history before trying again.'
+            : 'Unable to prepare the cancellation request. '
+                  'Please check your session and try again.',
+      };
+    }
+  }
+
+  // ============================================================
+  // BUYER CONFIRM RECEIVED - MOBILE APP
+  // POST /api/orders/{order}/confirm-received
+  // ============================================================
+
+  static Future<Map<String, dynamic>> confirmBuyerOrderReceived({
+    required int orderId,
+  }) async {
+    if (orderId <= 0) {
+      return <String, dynamic>{
+        'success': false,
+        'status_code': 422,
+        'message': 'Invalid order ID.',
+      };
+    }
+
+    bool requestStarted = false;
+
+    try {
+      final String? token = await AuthStorage.getToken();
+
+      if (token == null || token.trim().isEmpty) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': 401,
+          'message': 'Your session has expired. Please log in again.',
+        };
+      }
+
+      requestStarted = true;
+
+      final http.Response response = await http
+          .post(
+            Uri.parse('$baseUrl/orders/$orderId/confirm-received'),
+            headers: _authHeaders(token.trim(), json: true),
+            body: jsonEncode(<String, dynamic>{}),
+          )
+          .timeout(const Duration(seconds: 45));
+
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (decoded is! Map || decoded['success'] != true) {
+          return <String, dynamic>{
+            'success': false,
+            'status_code': response.statusCode,
+            'result_uncertain': true,
+            'message':
+                'Unable to verify the confirmation result. '
+                'Please refresh your order history.',
+          };
+        }
+
+        final dynamic rawData = decoded['data'];
+
+        return <String, dynamic>{
+          'success': true,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            Map<String, dynamic>.from(decoded),
+            fallback: 'Order received successfully.',
+          ),
+          'data': rawData is Map
+              ? Map<String, dynamic>.from(rawData)
+              : <String, dynamic>{},
+        };
+      }
+
+      if (response.statusCode == 422 || response.statusCode == 409) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            decoded,
+            fallback:
+                'This order cannot be confirmed yet. '
+                'All parcels must be delivered first.',
+          ),
+          'errors': decoded is Map ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'You are not authorized to confirm this order.',
+        notFoundMessage:
+            'Order not found or Confirm Received API is unavailable.',
+        fallback: 'Unable to confirm receipt. Please refresh your order.',
+      );
+    } on TimeoutException {
+      return <String, dynamic>{
+        'success': false,
+        'result_uncertain': true,
+        'message':
+            'Confirmation request timed out. '
+            'The server may have processed your request. '
+            'Please refresh your order history before trying again.',
+      };
+    } catch (error) {
+      debugPrint('Confirm buyer order received error: $error');
+
+      return <String, dynamic>{
+        'success': false,
+        'result_uncertain': requestStarted,
+        'message': requestStarted
+            ? 'Unable to verify whether your order was confirmed. '
+                  'Please refresh your order history before trying again.'
+            : 'Unable to prepare the confirmation request. '
+                  'Please check your session.',
       };
     }
   }
@@ -2103,6 +2591,188 @@ class ApiService {
         'message':
             'Collection result is uncertain. Do not collect cash again. '
             'Verify COD status before retrying.',
+      };
+    }
+  }
+
+  // ============================================================
+  // RIDER COD REMITTANCES - SAME BACKEND AS WEB
+  // ============================================================
+
+  /// GET /api/rider/cod-remittances
+  /// Returns the authenticated rider's eligible COD payments and history.
+  static Future<Map<String, dynamic>> getRiderCodRemittances({
+    int page = 1,
+    int perPage = 50,
+  }) async {
+    try {
+      final String? token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': 401,
+          'message': 'Session expired. Please log in again.',
+        };
+      }
+
+      final Uri uri = Uri.parse('$baseUrl/rider/cod-remittances').replace(
+        queryParameters: <String, String>{
+          'page': (page < 1 ? 1 : page).toString(),
+          'per_page': perPage.clamp(1, 50).toString(),
+        },
+      );
+
+      final http.Response response = await http
+          .get(uri, headers: _authHeaders(token.trim()))
+          .timeout(const Duration(seconds: 30));
+      final dynamic decoded = _decodeResponse(response.body);
+
+      if (response.statusCode == 200 &&
+          decoded is Map &&
+          decoded['success'] == true &&
+          decoded['data'] is Map) {
+        return <String, dynamic>{
+          'success': true,
+          'status_code': 200,
+          'data': Map<String, dynamic>.from(decoded['data'] as Map),
+        };
+      }
+
+      if (response.statusCode == 200) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': 200,
+          'message': 'Invalid COD remittance response from the server.',
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage: 'Only an authorized Rider can view COD remittances.',
+        notFoundMessage:
+            'Rider COD remittance API is not deployed on the server yet.',
+        fallback: 'Unable to load COD remittance records.',
+      );
+    } on TimeoutException {
+      return <String, dynamic>{
+        'success': false,
+        'message': 'Loading COD remittances timed out. Please refresh.',
+      };
+    } catch (error) {
+      debugPrint('Get Rider COD remittances error: $error');
+      return <String, dynamic>{
+        'success': false,
+        'message': 'Unable to load COD remittances. Check your connection.',
+      };
+    }
+  }
+
+  /// POST /api/rider/cod-remittances
+  /// paymentIds are payment IDs, NOT shipment IDs.
+  /// The Laravel backend validates and computes the actual amount.
+  static Future<Map<String, dynamic>> submitRiderCodRemittance({
+    required List<int> paymentIds,
+    String? notes,
+  }) async {
+    final List<int> ids = paymentIds.toSet().toList()..sort();
+    if (ids.isEmpty || ids.any((int id) => id <= 0)) {
+      return <String, dynamic>{
+        'success': false,
+        'status_code': 422,
+        'message': 'Select valid COD payments before submitting.',
+      };
+    }
+
+    bool requestStarted = false;
+    try {
+      final String? token = await AuthStorage.getToken();
+      if (token == null || token.trim().isEmpty) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': 401,
+          'message': 'Session expired. Please log in again.',
+        };
+      }
+
+      final String normalizedNotes = notes?.trim() ?? '';
+      requestStarted = true;
+      final http.Response response = await http
+          .post(
+            Uri.parse('$baseUrl/rider/cod-remittances'),
+            headers: _authHeaders(token.trim(), json: true),
+            body: jsonEncode(<String, dynamic>{
+              'payment_ids': ids,
+              if (normalizedNotes.isNotEmpty) 'notes': normalizedNotes,
+            }),
+          )
+          .timeout(const Duration(seconds: 40));
+
+      final dynamic decoded = _decodeResponse(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (decoded is! Map || decoded['success'] != true) {
+          return <String, dynamic>{
+            'success': false,
+            'result_uncertain': true,
+            'status_code': response.statusCode,
+            'message':
+                'Submission result is unclear. Refresh remittance history '
+                'before submitting again.',
+          };
+        }
+
+        return <String, dynamic>{
+          'success': true,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            Map<String, dynamic>.from(decoded),
+            fallback:
+                'COD remittance submitted. Awaiting Logistics confirmation.',
+          ),
+          'data': decoded['data'] is Map
+              ? Map<String, dynamic>.from(decoded['data'] as Map)
+              : <String, dynamic>{},
+        };
+      }
+
+      if (response.statusCode == 422 || response.statusCode == 409) {
+        return <String, dynamic>{
+          'success': false,
+          'status_code': response.statusCode,
+          'message': _getMessage(
+            decoded,
+            fallback:
+                'These COD payments cannot be remitted. Refresh the list.',
+          ),
+          'errors': decoded is Map ? decoded['errors'] : null,
+        };
+      }
+
+      return _authApiError(
+        response.statusCode,
+        decoded,
+        forbiddenMessage:
+            'This Rider is not authorized to remit these payments.',
+        notFoundMessage: 'Rider COD remittance API is not deployed yet.',
+        fallback: 'Unable to verify COD remittance submission.',
+      );
+    } on TimeoutException {
+      return <String, dynamic>{
+        'success': false,
+        'result_uncertain': true,
+        'message':
+            'Remittance request timed out. It may have been submitted. '
+            'Refresh your history before trying again.',
+      };
+    } catch (error) {
+      debugPrint('Submit Rider COD remittance error: $error');
+      return <String, dynamic>{
+        'success': false,
+        'result_uncertain': requestStarted,
+        'message': requestStarted
+            ? 'Cannot confirm submission. Refresh your remittance history '
+                  'before trying again.'
+            : 'Unable to prepare COD remittance. Check your session.',
       };
     }
   }

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../services/api_services.dart';
+import 'order_tracking.dart';
+
 import '../../styles/buyer_style.dart';
 import '../../utils/date_formatter.dart';
 import '../../utils/money_formatter.dart';
@@ -8,13 +11,262 @@ import '../../widgets/app_empty_state.dart';
 import '../../widgets/app_info_row.dart';
 import '../../widgets/status_chip.dart';
 
-class OrderDetails extends StatelessWidget {
+class OrderDetails extends StatefulWidget {
   final Map<String, dynamic> order;
 
   const OrderDetails({super.key, required this.order});
 
+  @override
+  State<OrderDetails> createState() => _OrderDetailsState();
+}
+
+class _OrderDetailsState extends State<OrderDetails> {
+  bool _isCancelling = false;
+  bool _isConfirmingReceived = false;
+
+  Map<String, dynamic> get order => widget.order;
+
   static const String _supabaseProductBaseUrl =
       'https://furccwxvsinfibcdhxtn.supabase.co/storage/v1/object/public/bilihub-products';
+
+  // UI eligibility is advisory. Laravel revalidates order and shipment
+  // custody at cancellation time, including fields not returned by the API.
+  bool get _canCancelOrder {
+    final int orderId = int.tryParse(order['id']?.toString() ?? '') ?? 0;
+    if (orderId <= 0) return false;
+
+    final String status =
+        order['status']?.toString().trim().toLowerCase() ?? '';
+
+    if (!const <String>{
+      'pending',
+      'placed',
+      'confirmed',
+      'preparing',
+    }.contains(status)) {
+      return false;
+    }
+
+    const Set<String> blockedShipmentStatuses = <String>{
+      'picked_up',
+      'in_transit',
+      'at_sorting_center',
+      'sorted',
+      'staged',
+      'assigned_to_rider',
+      'out_for_delivery',
+      'delivery_failed',
+      'failed_return_at_sorting_center',
+      'delivered',
+      'completed',
+      'failed',
+      'cancelled',
+      'canceled',
+    };
+
+    const List<String> custodyTimestampFields = <String>[
+      'picked_up_at',
+      'seller_scan_confirmed_at',
+      'scanned_at_seller',
+      'hub_picked_up_at',
+      'received_at',
+      'at_sorting_center_at',
+      'origin_hub_received_at',
+      'destination_hub_received_at',
+      'transfer_dispatched_at',
+      'linehaul_started_at',
+      'linehaul_completed_at',
+      'scanned_at',
+      'sorted_at',
+      'staged_at',
+      'failed_returned_to_sorting_center_at',
+      'failed_return_received_at',
+    ];
+
+    for (final Map<String, dynamic> sellerOrder in _mapList(
+      order['seller_orders'],
+    )) {
+      final dynamic shipment = sellerOrder['shipment'];
+      if (shipment is! Map) continue;
+
+      final String shipmentStatus =
+          shipment['status']?.toString().trim().toLowerCase() ?? '';
+      if (blockedShipmentStatuses.contains(shipmentStatus)) return false;
+
+      for (final String field in custodyTimestampFields) {
+        final dynamic value = shipment[field];
+        if (value != null && value.toString().trim().isNotEmpty) {
+          return false;
+        }
+      }
+
+      final dynamic received = shipment['received_by_sorting_center'];
+      if (received == true ||
+          received == 1 ||
+          received == '1' ||
+          received?.toString().toLowerCase() == 'true') {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  // ============================================================
+  // BUYER CONFIRM RECEIVED
+  // ============================================================
+
+  // The server validates delivery of every seller parcel before finalizing.
+  bool get _canConfirmReceived {
+    final int orderId = int.tryParse(order['id']?.toString() ?? '') ?? 0;
+    final String status =
+        order['status']?.toString().trim().toLowerCase() ?? '';
+    final String confirmedReceivedAt =
+        order['confirmed_received_at']?.toString().trim() ?? '';
+
+    return orderId > 0 &&
+        status == 'delivered' &&
+        confirmedReceivedAt.isEmpty &&
+        !_isCancelling;
+  }
+
+  Future<void> _confirmOrderReceived() async {
+    if (_isConfirmingReceived || !_canConfirmReceived) return;
+
+    final int orderId = int.tryParse(order['id']?.toString() ?? '') ?? 0;
+    if (orderId <= 0) return;
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Confirm Order Received?'),
+          content: const Text(
+            'Please confirm only if you have physically received all '
+            'the items in this order. This action finalizes the order '
+            'and cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Not Yet'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Yes, Received'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || confirmed != true || !_canConfirmReceived) return;
+
+    setState(() => _isConfirmingReceived = true);
+
+    Map<String, dynamic> result;
+
+    try {
+      result = await ApiService.confirmBuyerOrderReceived(orderId: orderId);
+    } catch (error) {
+      result = <String, dynamic>{
+        'success': false,
+        'result_uncertain': true,
+        'message':
+            'Unable to verify confirmation. Please refresh your '
+            'order history before trying again.',
+      };
+    }
+
+    if (!mounted) return;
+
+    setState(() => _isConfirmingReceived = false);
+
+    if (result['success'] == true) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+
+    final String serverMessage = result['message']?.toString().trim() ?? '';
+    final String message = serverMessage.isNotEmpty
+        ? serverMessage
+        : 'Unable to confirm receipt of this order.';
+
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+
+    if (result['result_uncertain'] == true) {
+      // The server may have finalized the order.
+      // Return to history before the buyer tries again.
+      Navigator.of(context).pop(false);
+    }
+  }
+
+  // ============================================================
+  // CANCEL BUYER ORDER
+  // ============================================================
+
+  Future<void> _confirmCancelOrder() async {
+    if (_isCancelling || _isConfirmingReceived || !_canCancelOrder) return;
+
+    final int orderId = int.tryParse(order['id']?.toString() ?? '') ?? 0;
+    if (orderId <= 0) return;
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Cancel this order?'),
+          content: const Text(
+            'Are you sure you want to cancel this order? '
+            'This action cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Keep Order'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Yes, Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || confirmed != true) return;
+
+    setState(() => _isCancelling = true);
+
+    final Map<String, dynamic> result = await ApiService.cancelBuyerOrder(
+      orderId: orderId,
+    );
+
+    if (!mounted) return;
+
+    setState(() => _isCancelling = false);
+
+    if (result['success'] == true) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+
+    final String serverMessage = result['message']?.toString().trim() ?? '';
+    final String message = serverMessage.isNotEmpty
+        ? serverMessage
+        : 'Unable to cancel this order.';
+
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+
+    if (result['result_uncertain'] == true) {
+      // The request may have completed on the server; returning to history
+      // refreshes the order status before the buyer can try again.
+      Navigator.of(context).pop(false);
+    }
+  }
 
   // ============================================================
   // BUILD
@@ -91,6 +343,11 @@ class OrderDetails extends StatelessWidget {
       fallback: '',
     );
 
+    final String receivedAt = DateFormatter.dateTime(
+      order['confirmed_received_at'],
+      fallback: '',
+    );
+
     final String address = _extractAddress(order);
 
     final String notes = _cleanText(order['notes']);
@@ -129,6 +386,61 @@ class OrderDetails extends StatelessWidget {
           ),
         ),
       ),
+      bottomNavigationBar: _canCancelOrder || _canConfirmReceived
+          ? SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                child: _canConfirmReceived
+                    ? ElevatedButton.icon(
+                        onPressed: _isConfirmingReceived
+                            ? null
+                            : _confirmOrderReceived,
+                        icon: _isConfirmingReceived
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.check_circle_outline_rounded),
+                        label: Text(
+                          _isConfirmingReceived
+                              ? 'Confirming Receipt...'
+                              : 'Confirm Received',
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: BuyerColors.primary,
+                          foregroundColor: BuyerColors.white,
+                          minimumSize: const Size.fromHeight(50),
+                        ),
+                      )
+                    : OutlinedButton.icon(
+                        onPressed: _isCancelling ? null : _confirmCancelOrder,
+                        icon: _isCancelling
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.cancel_outlined),
+                        label: Text(
+                          _isCancelling
+                              ? 'Cancelling Order...'
+                              : 'Cancel Order',
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red.shade700,
+                          side: BorderSide(color: Colors.red.shade300),
+                          minimumSize: const Size.fromHeight(50),
+                        ),
+                      ),
+              ),
+            )
+          : null,
       body: SafeArea(
         top: false,
         child: SingleChildScrollView(
@@ -307,6 +619,16 @@ class OrderDetails extends StatelessWidget {
                     ),
                   ],
 
+                  if (receivedAt.isNotEmpty) ...[
+                    const Divider(height: 1, color: BuyerColors.border),
+                    AppInfoRow(
+                      label: 'Receipt Confirmed',
+                      value: receivedAt,
+                      icon: Icons.verified_outlined,
+                      iconColor: BuyerColors.primary,
+                    ),
+                  ],
+
                   const Divider(height: 1, color: BuyerColors.border),
 
                   AppInfoRow(
@@ -347,6 +669,31 @@ class OrderDetails extends StatelessWidget {
                     iconColor: BuyerColors.primary,
                   ),
                 ],
+              ),
+
+              const SizedBox(height: 24),
+
+              // ==================================================
+              // TRACK ORDER
+              // ==================================================
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    await Navigator.of(context).push<void>(
+                      MaterialPageRoute<void>(
+                        builder: (BuildContext context) =>
+                            OrderTracking(order: order),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.local_shipping_outlined),
+                  label: const Text('Track Order'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: BuyerColors.primary,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                ),
               ),
 
               const SizedBox(height: 24),
@@ -806,7 +1153,10 @@ class OrderDetails extends StatelessWidget {
   String _statusMessage(String status) {
     switch (status.toLowerCase().trim()) {
       case 'delivered':
-        return 'This order has been delivered successfully.';
+        return 'This order has been delivered. Confirm receipt only after receiving all items.';
+
+      case 'completed':
+        return 'You have confirmed receipt of this order.';
 
       case 'shipped':
       case 'in transit':

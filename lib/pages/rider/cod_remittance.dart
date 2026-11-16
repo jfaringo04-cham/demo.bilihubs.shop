@@ -16,6 +16,7 @@ class CodRemittance extends StatefulWidget {
 class _CodRemittanceState extends State<CodRemittance> {
   bool _isLoading = true;
   bool _isRefreshing = false;
+  bool _isSubmitting = false;
 
   String? _errorMessage;
 
@@ -52,7 +53,8 @@ class _CodRemittanceState extends State<CodRemittance> {
     });
 
     try {
-      final Map<String, dynamic> result = await ApiService.getRiderEarnings();
+      final Map<String, dynamic> result =
+          await ApiService.getRiderCodRemittances();
 
       if (!mounted) {
         return;
@@ -147,6 +149,7 @@ class _CodRemittanceState extends State<CodRemittance> {
 
   List<Map<String, dynamic>> _extractCollections(Map<String, dynamic> data) {
     final List<dynamic> candidates = <dynamic>[
+      data['eligible_payments'],
       data['available_cod_collections'],
       data['available_collections'],
       data['cod_collections'],
@@ -218,19 +221,25 @@ class _CodRemittanceState extends State<CodRemittance> {
   Map<String, dynamic> _normalizeCollection(Map<String, dynamic> raw) {
     final Map<String, dynamic> map = Map<String, dynamic>.from(raw);
 
-    map['id'] ??=
-        map['payment_id'] ?? map['collection_id'] ?? map['shipment_id'] ?? 0;
+    // Use payment IDs exclusively; never fall back to a shipment ID.
+    map['id'] ??= map['payment_id'] ?? 0;
 
     map['tracking_number'] ??=
-        map['tracking_code'] ?? map['waybill_number'] ?? map['shipment'] ?? '';
+        map['tracking_code'] ??
+        map['waybill_number'] ??
+        'Shipment #${map['shipment_id'] ?? '-'}';
 
     map['payment_reference'] ??=
-        map['reference'] ?? map['payment_ref'] ?? map['payment'] ?? '';
+        map['reference'] ?? map['payment_ref'] ?? 'Payment #${map['id']}';
 
-    map['amount'] ??=
-        map['cod_amount'] ?? map['collected_amount'] ?? map['cash_amount'] ?? 0;
+    map['amount'] ??= map['amount_minor'] is num
+        ? (map['amount_minor'] as num) / 100
+        : map['cod_amount'] ?? map['collected_amount'] ?? 0;
 
-    map['logistics_name'] ??= map['logistics'] ?? map['courier_name'] ?? '';
+    map['logistics_name'] ??=
+        map['logistics'] ??
+        map['courier_name'] ??
+        'Logistics #${map['logistic_id'] ?? '-'}';
 
     map['collected_at'] ??=
         map['paid_at'] ?? map['delivered_at'] ?? map['created_at'] ?? '';
@@ -255,10 +264,13 @@ class _CodRemittanceState extends State<CodRemittance> {
 
     map['submitted_at'] ??= map['created_at'] ?? map['date'] ?? '';
 
-    map['payments_count'] ??=
-        map['payment_count'] ?? map['collections_count'] ?? 0;
+    map['payments_count'] ??= map['payments'] is List
+        ? (map['payments'] as List).length
+        : map['payment_count'] ?? map['collections_count'] ?? 0;
 
-    map['amount'] ??= map['total_amount'] ?? map['remittance_amount'] ?? 0;
+    map['amount'] ??= map['total_minor'] is num
+        ? (map['total_minor'] as num) / 100
+        : map['total_amount'] ?? map['remittance_amount'] ?? 0;
 
     return map;
   }
@@ -784,6 +796,31 @@ class _CodRemittanceState extends State<CodRemittance> {
                     : (bool? value) {
                         setState(() {
                           if (value == true) {
+                            final int? selectedLogisticId =
+                                _selectedPaymentIds.isEmpty
+                                ? null
+                                : _toInt(
+                                    _availableCollections.firstWhere(
+                                      (Map<String, dynamic> payment) =>
+                                          _selectedPaymentIds.contains(
+                                            _toInt(payment['id']),
+                                          ),
+                                    )['logistic_id'],
+                                  );
+                            final int? candidateLogisticId = _toInt(
+                              item['logistic_id'],
+                            );
+                            if (selectedLogisticId != null &&
+                                candidateLogisticId != selectedLogisticId) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Select payments from one Logistics company per remittance.',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
                             _selectedPaymentIds.add(id);
                           } else {
                             _selectedPaymentIds.remove(id);
@@ -990,40 +1027,60 @@ class _CodRemittanceState extends State<CodRemittance> {
   // SUBMIT REMITTANCE
   // ============================================================
 
-  void _submitRemittance() {
-    if (_selectedPaymentIds.isEmpty) {
-      return;
-    }
+  Future<void> _submitRemittance() async {
+    if (_selectedPaymentIds.isEmpty || _isSubmitting) return;
 
-    showDialog<void>(
+    final bool? confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Remit COD to Logistics'),
+        content: Text(
+          'Submit ${_selectedPaymentIds.length} COD payment(s) totaling '
+          '$_selectedAmountText?\n\n'
+          'This will be marked pending until Logistics confirms cash receipt.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
           ),
-          title: const Text(
-            'Submit Remittance',
-            style: RiderStyle.sectionTitle,
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Confirm submission'),
           ),
-          content: Text(
-            'You selected ${_selectedPaymentIds.length} payment(s) '
-            'with a total amount of $_selectedAmountText.\n\n'
-            'The final remittance submission will be enabled once '
-            'the Laravel Rider remittance endpoint is connected.',
-            style: RiderStyle.small,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-              },
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
+    if (confirmed != true || !mounted || _isSubmitting) return;
+
+    final List<int> paymentIds = _selectedPaymentIds.toList();
+    setState(() => _isSubmitting = true);
+    try {
+      final Map<String, dynamic> result =
+          await ApiService.submitRiderCodRemittance(paymentIds: paymentIds);
+      if (!mounted) return;
+
+      final bool success = result['success'] == true;
+      final bool uncertain = result['result_uncertain'] == true;
+      final String message =
+          result['message']?.toString() ??
+          (success ? 'Remittance submitted.' : 'Unable to submit remittance.');
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+
+      // The server may have accepted the request even if the response
+      // timed out. Reload before allowing another submission.
+      if (success ||
+          uncertain ||
+          result['status_code'] == 422 ||
+          result['status_code'] == 409) {
+        _selectedPaymentIds.clear();
+        await _loadRemittanceData(refresh: true);
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
   }
 
   // ============================================================

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/product_model.dart';
 import '../../services/api_services.dart';
 import '../../services/cart_service.dart';
+import '../../services/wishlist_service.dart';
 import '../../styles/buyer_style.dart';
 import '../../utils/money_formatter.dart';
 
@@ -32,6 +33,81 @@ class _ProductDetailsState extends State<ProductDetails> {
     _product = widget.product;
 
     _loadProductDetails();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        WishlistService.instance.load();
+      }
+    });
+  }
+
+  // ============================================================
+  // WISHLIST
+  // ============================================================
+
+  Future<void> _toggleWishlist() async {
+    final WishlistService wishlist = WishlistService.instance;
+
+    if (_product.id <= 0 || wishlist.isUpdating(_product.id)) {
+      return;
+    }
+
+    if (!wishlist.isLoaded) {
+      final bool loaded = await wishlist.load();
+
+      if (!mounted) {
+        return;
+      }
+
+      if (!loaded) {
+        _showWishlistMessage(
+          wishlist.errorMessage ?? 'Unable to load wishlist. Please try again.',
+          isError: true,
+        );
+        return;
+      }
+    }
+
+    final Map<String, dynamic> result = await wishlist.toggle(_product.id);
+
+    if (!mounted) {
+      return;
+    }
+
+    if (result['success'] == true) {
+      _showWishlistMessage(
+        result['wishlisted'] == true
+            ? 'Product added to wishlist.'
+            : 'Product removed from wishlist.',
+      );
+    } else {
+      _showWishlistMessage(
+        result['message']?.toString() ?? 'Unable to update wishlist.',
+        isError: true,
+      );
+
+      if (result['result_uncertain'] == true) {
+        await wishlist.refresh();
+      }
+    }
+  }
+
+  void _showWishlistMessage(String message, {bool isError = false}) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: isError
+              ? BuyerColors.danger
+              : BuyerColors.primaryDark,
+        ),
+      );
   }
 
   bool get isOutOfStock => _product.stock <= 0;
@@ -142,9 +218,7 @@ class _ProductDetailsState extends State<ProductDetails> {
           content: Row(
             children: [
               const Icon(Icons.check_circle_outline, color: Colors.white),
-
               const SizedBox(width: 10),
-
               Expanded(
                 child: Text(
                   updatedQuantity > 1
@@ -199,7 +273,6 @@ class _ProductDetailsState extends State<ProductDetails> {
   @override
   Widget build(BuildContext context) {
     final double width = MediaQuery.of(context).size.width;
-
     final double height = MediaQuery.of(context).size.height;
 
     final ProductModel product = _product;
@@ -217,6 +290,39 @@ class _ProductDetailsState extends State<ProductDetails> {
         iconTheme: const IconThemeData(color: BuyerColors.textDark),
         title: const Text('Product Details', style: BuyerStyle.title),
         actions: [
+          AnimatedBuilder(
+            animation: WishlistService.instance,
+            builder: (BuildContext context, Widget? child) {
+              final WishlistService wishlist = WishlistService.instance;
+
+              final bool saved = wishlist.isWishlisted(product.id);
+
+              final bool pending = wishlist.isUpdating(product.id);
+
+              return IconButton(
+                tooltip: pending
+                    ? 'Updating wishlist'
+                    : saved
+                    ? 'Remove from wishlist'
+                    : 'Add to wishlist',
+                onPressed: pending ? null : _toggleWishlist,
+                icon: pending
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        saved
+                            ? Icons.favorite_rounded
+                            : Icons.favorite_border_rounded,
+                        color: saved
+                            ? BuyerColors.danger
+                            : BuyerColors.textDark,
+                      ),
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Refresh',
             onPressed: _isLoadingProduct
@@ -250,14 +356,12 @@ class _ProductDetailsState extends State<ProductDetails> {
                 // ========================================================
                 // API LOADING INDICATOR
                 // ========================================================
-
                 if (_isLoadingProduct) ...[
                   const LinearProgressIndicator(
                     color: BuyerColors.primary,
                     backgroundColor: BuyerColors.lightPurple,
                     minHeight: 2,
                   ),
-
                   const SizedBox(height: 14),
                 ],
 
@@ -281,9 +385,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                           color: BuyerColors.primary,
                           size: 20,
                         ),
-
                         const SizedBox(width: 9),
-
                         Expanded(
                           child: Text(
                             '$_loadError Showing the available product information.',
@@ -294,9 +396,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                             ),
                           ),
                         ),
-
                         const SizedBox(width: 5),
-
                         InkWell(
                           onTap: _loadProductDetails,
                           child: const Padding(
@@ -311,7 +411,6 @@ class _ProductDetailsState extends State<ProductDetails> {
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 14),
                 ],
 
@@ -343,9 +442,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                                 color: BuyerColors.primary,
                               ),
                             ),
-
                             const SizedBox(height: 10),
-
                             const Text(
                               'Product Image',
                               style: BuyerStyle.small,
@@ -382,9 +479,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                                           color: BuyerColors.primary,
                                         ),
                                       ),
-
                                       const SizedBox(height: 10),
-
                                       const Text(
                                         'Unable to load image',
                                         style: BuyerStyle.small,
@@ -401,15 +496,12 @@ class _ProductDetailsState extends State<ProductDetails> {
                 // ========================================================
                 if (product.hasSecondaryImage) ...[
                   const SizedBox(height: 12),
-
                   SizedBox(
                     height: 72,
                     child: Row(
                       children: [
                         _imageThumbnail(product.imageUrl, selected: true),
-
                         const SizedBox(width: 10),
-
                         _imageThumbnail(product.secondaryImageUrl),
                       ],
                     ),
@@ -444,10 +536,8 @@ class _ProductDetailsState extends State<ProductDetails> {
                         color: BuyerColors.primary,
                       ),
                     ),
-
                     if (product.hasDiscount) ...[
                       const SizedBox(width: 10),
-
                       Padding(
                         padding: const EdgeInsets.only(bottom: 2),
                         child: Text(
@@ -466,7 +556,6 @@ class _ProductDetailsState extends State<ProductDetails> {
 
                 if (product.hasDiscount) ...[
                   const SizedBox(height: 7),
-
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
@@ -489,7 +578,6 @@ class _ProductDetailsState extends State<ProductDetails> {
                           ),
                         ),
                       ),
-
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,
@@ -535,9 +623,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                             size: 18,
                             color: BuyerColors.primary,
                           ),
-
                           const SizedBox(width: 4),
-
                           Text(
                             product.rating.toStringAsFixed(1),
                             style: const TextStyle(
@@ -546,10 +632,8 @@ class _ProductDetailsState extends State<ProductDetails> {
                               color: BuyerColors.textDark,
                             ),
                           ),
-
                           if (product.reviewsCount > 0) ...[
                             const SizedBox(width: 4),
-
                             Text(
                               '(${product.reviewsCount})',
                               style: BuyerStyle.small,
@@ -558,13 +642,9 @@ class _ProductDetailsState extends State<ProductDetails> {
                         ],
                       ),
                     ),
-
                     const SizedBox(width: 10),
-
                     Container(height: 20, width: 1, color: BuyerColors.border),
-
                     const SizedBox(width: 10),
-
                     Text('${product.soldCount} sold', style: BuyerStyle.small),
                   ],
                 ),
@@ -574,7 +654,6 @@ class _ProductDetailsState extends State<ProductDetails> {
                 // ========================================================
                 if (product.categoryName.trim().isNotEmpty) ...[
                   const SizedBox(height: 12),
-
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -625,9 +704,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                           size: 21,
                         ),
                       ),
-
                       const SizedBox(width: 12),
-
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -639,9 +716,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                                 color: BuyerColors.textGrey,
                               ),
                             ),
-
                             const SizedBox(height: 3),
-
                             Text(
                               isOutOfStock
                                   ? 'Out of stock'
@@ -657,7 +732,6 @@ class _ProductDetailsState extends State<ProductDetails> {
                           ],
                         ),
                       ),
-
                       Icon(
                         isOutOfStock
                             ? Icons.cancel_outlined
@@ -698,18 +772,14 @@ class _ProductDetailsState extends State<ProductDetails> {
                               size: 20,
                             ),
                           ),
-
                           const SizedBox(width: 10),
-
                           const Text(
                             'Description',
                             style: BuyerStyle.sectionTitle,
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 14),
-
                       Text(
                         product.description.trim().isEmpty
                             ? 'No description available for this product.'
@@ -723,6 +793,7 @@ class _ProductDetailsState extends State<ProductDetails> {
                     ],
                   ),
                 ),
+
                 const SizedBox(height: 22),
 
                 // ========================================================
@@ -739,25 +810,19 @@ class _ProductDetailsState extends State<ProductDetails> {
                         'Delivery Information',
                         style: BuyerStyle.sectionTitle,
                       ),
-
                       const SizedBox(height: 15),
-
                       _deliveryItem(
                         icon: Icons.local_shipping_outlined,
                         title: 'Fast Delivery',
                         subtitle: 'Get your order delivered to your address.',
                       ),
-
                       const SizedBox(height: 14),
-
                       _deliveryItem(
                         icon: Icons.verified_outlined,
                         title: 'Verified Seller',
                         subtitle: 'Products are listed by verified sellers.',
                       ),
-
                       const SizedBox(height: 14),
-
                       _deliveryItem(
                         icon: Icons.lock_outline,
                         title: 'Secure Checkout',
@@ -882,17 +947,13 @@ class _ProductDetailsState extends State<ProductDetails> {
           ),
           child: Icon(icon, color: BuyerColors.primary, size: 20),
         ),
-
         const SizedBox(width: 12),
-
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(title, style: BuyerStyle.cardTitle),
-
               const SizedBox(height: 3),
-
               Text(subtitle, style: BuyerStyle.small),
             ],
           ),
