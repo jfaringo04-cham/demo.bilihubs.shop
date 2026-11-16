@@ -28,6 +28,7 @@ use App\Http\Controllers\Api\Rider\EarningsController as RiderEarningsController
 use App\Http\Controllers\Api\Rider\NotificationController as RiderNotificationController;
 use App\Http\Controllers\Api\Rider\PickupOfferController as RiderPickupOfferController;
 use App\Http\Controllers\Api\Rider\CodCollectionController as RiderCodCollectionController;
+use App\Http\Controllers\Api\Rider\CodRemittanceController as RiderCodRemittanceController;
 
 // ============================================================
 // LOGISTICS MOBILE API CONTROLLERS
@@ -35,6 +36,9 @@ use App\Http\Controllers\Api\Rider\CodCollectionController as RiderCodCollection
 
 use App\Http\Controllers\Api\Logistic\DashboardController as LogisticDashboardController;
 use App\Http\Controllers\Api\Logistic\ShipmentController as LogisticShipmentController;
+use App\Http\Controllers\Api\Logistic\WalletController as LogisticWalletController;
+use App\Http\Controllers\Api\Logistic\CodRemittanceController as LogisticCodRemittanceController;
+use App\Http\Controllers\Api\Logistic\CodAdminRemittanceController as LogisticCodAdminRemittanceController;
 
 /*
 |--------------------------------------------------------------------------
@@ -148,26 +152,6 @@ Route::prefix('addresses')
             '/regions/{regionCode}/cities',
             [AddressApiController::class, 'regionCities']
         )->name('regionCities');
-
-        Route::get(
-            '/provinces',
-            [AddressApiController::class, 'provinces']
-        )->name('provinces');
-
-        Route::get(
-            '/provinces/{provinceCode}',
-            [AddressApiController::class, 'province']
-        )->name('province');
-
-        Route::get(
-            '/provinces/{provinceCode}/municipalities',
-            [AddressApiController::class, 'provinceMunicipalities']
-        )->name('provinceMunicipalities');
-
-        Route::get(
-            '/provinces/{provinceCode}/cities',
-            [AddressApiController::class, 'provinceCities']
-        )->name('provinceCities');
 
         Route::get(
             '/cities',
@@ -407,7 +391,7 @@ Route::middleware('auth:sanctum')
                     [BuyerVoucherController::class, 'claimed']
                 )->name('claimed');
 
-                // Claim a voucher
+                // Claim voucher
                 Route::post(
                     '/{voucher}/claim',
                     [BuyerVoucherController::class, 'claim']
@@ -588,6 +572,20 @@ Route::middleware([
         )->name('shipments.cod.collect');
 
         // ====================================================
+        // RIDER COD REMITTANCES - CASH HANDOVER TO LOGISTICS
+        // ====================================================
+
+        Route::get(
+            '/cod-remittances',
+            [RiderCodRemittanceController::class, 'index']
+        )->name('cod-remittances.index');
+
+        Route::post(
+            '/cod-remittances',
+            [RiderCodRemittanceController::class, 'store']
+        )->name('cod-remittances.store');
+
+        // ====================================================
         // RIDER EARNINGS
         // ====================================================
 
@@ -695,6 +693,48 @@ Route::middleware([
             '/dashboard',
             [LogisticDashboardController::class, 'index']
         )->name('dashboard');
+
+        // ====================================================
+        // LOGISTICS WALLET - SAME EARNINGS AS WEB
+        // ====================================================
+
+        Route::get(
+            '/wallet',
+            [LogisticWalletController::class, 'index']
+        )->name('wallet.index');
+
+        // ====================================================
+        // RIDER TO LOGISTICS COD REMITTANCES
+        // ====================================================
+
+        Route::get(
+            '/cod-remittances',
+            [LogisticCodRemittanceController::class, 'index']
+        )->name('cod-remittances.index');
+
+        Route::post(
+            '/cod-remittances/{remittance}/confirm',
+            [LogisticCodRemittanceController::class, 'confirm']
+        )->name('cod-remittances.confirm');
+
+        Route::post(
+            '/cod-remittances/{remittance}/reject',
+            [LogisticCodRemittanceController::class, 'reject']
+        )->name('cod-remittances.reject');
+
+        // ====================================================
+        // LOGISTICS TO ADMIN COD REMITTANCES
+        // ====================================================
+
+        Route::get(
+            '/cod-admin-remittances',
+            [LogisticCodAdminRemittanceController::class, 'index']
+        )->name('cod-admin-remittances.index');
+
+        Route::post(
+            '/cod-admin-remittances',
+            [LogisticCodAdminRemittanceController::class, 'store']
+        )->name('cod-admin-remittances.store');
 
         // ====================================================
         // LOGISTICS SHIPMENTS
