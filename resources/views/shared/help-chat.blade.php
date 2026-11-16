@@ -30,6 +30,7 @@
             ['Find my messages', 'Buksan ang Messages para makita ang conversations mo.', 'rider.messages.index', 'Open Messages'],
         ],
         'guest' => [
+            ['Track my order', 'Mag-sign in sa buyer account para makita ang status ng order mo.', 'login', 'Sign in'],
             ['Create a buyer account', 'Sa Register, piliin ang buyer at sundin ang email verification steps.', 'register', 'Open Register'],
             ['Become a seller', 'Sa Register, piliin ang seller at ihanda ang details na hinihingi sa form.', 'register', 'Open Register'],
             ['Become a rider', 'Buksan ang rider application at sundin ang requirements sa form.', 'apply.rider', 'Open Rider Application'],
@@ -41,6 +42,8 @@
 
 @if ($helpChatTopics)
     <details class="bili-help" id="bili-help-chat" data-catalog-url="{{ route('products.index', [], false) }}"
+             @if ($helpChatRole === 'buyer') data-orders-url="{{ route('orders.index', [], false) }}" @endif
+             data-sign-in-url="{{ route('login', [], false) }}"
              data-shopping-help="{{ in_array($helpChatRole, ['buyer', 'guest'], true) ? 'yes' : 'no' }}">
         <summary class="bili-help__launcher" aria-label="BiliHub Help Chat">
             <img class="bili-help__cat" src="{{ asset('images/bilihub-chat-cat.webp') }}" alt="" width="48" height="48">
@@ -106,7 +109,7 @@
             const input = form.querySelector('input');
             const topics = [...chat.querySelectorAll('[data-answer]')];
             const keywords = {
-                'Track my order': /\b(track(?:ing)?|nasaan|saan na|order status)\b/,
+                'Track my order': /^(?:track(?:ing)?|order status)$|\b(?:track(?:ing)?|nasaan|saan na|status|dumating na)\b.*\b(?:order|parcel|package)\b|\b(?:order|parcel|package)\b.*\b(?:track(?:ing)?|status|nasaan|saan na)\b/,
                 'Cancel an order': /\b(cancel|cancellation|kansel)\b/,
                 'Return or refund': /\b(return|refund|ibalik|sira|damaged|damage)\b/,
                 'Contact support': /\b(support|ticket|contact|agent)\b/,
@@ -331,13 +334,90 @@
                 }
             };
 
+            const showOrderTracking = async (orderId = null) => {
+                const signIn = [{ url: chat.dataset.signInUrl, label: 'Sign in' }];
+                if (!chat.dataset.ordersUrl) {
+                    addReply('Mag-sign in sa buyer account para makita ang status ng order mo.', signIn);
+                    return;
+                }
+
+                const myOrders = [{ url: chat.dataset.ordersUrl, label: 'Open My Orders' }];
+                const send = form.querySelector('button');
+                send.disabled = true;
+                input.readOnly = true;
+
+                try {
+                    const url = new URL(chat.dataset.ordersUrl, window.location.href);
+                    url.searchParams.set('format', 'help-chat');
+                    if (orderId !== null) url.searchParams.set('order_id', orderId);
+
+                    const response = await fetch(url, {
+                        headers: { Accept: 'application/json' },
+                        cache: 'no-store',
+                    });
+
+                    if (response.status === 401 || response.redirected) {
+                        addReply('Mag-sign in ulit para ma-check ang orders mo.', signIn);
+                        return;
+                    }
+                    if (response.status === 404 && orderId !== null) {
+                        addReply('Hindi makita ang order na iyon. Buksan ang My Orders para sa listahan mo.', myOrders);
+                        return;
+                    }
+                    if (!response.ok) throw new Error('Orders unavailable');
+
+                    const { orders } = await response.json();
+                    if (orderId !== null) {
+                        const order = orders[0];
+                        const delivery = order.delivery_status && order.delivery_status !== order.status
+                            ? ` Delivery: ${order.delivery_status}.` : '';
+                        addReply(`Order ${order.order_number}: ${order.status}.${delivery}`,
+                            [{ url: order.tracking_url, label: 'View Tracking' }]);
+                        return;
+                    }
+
+                    if (!orders.length) {
+                        addReply('Wala ka pang order.', myOrders);
+                        return;
+                    }
+
+                    addReply('Piliin ang order na gusto mong i-track.', myOrders);
+                    const list = document.createElement('div');
+                    list.className = 'bili-help__topics';
+                    list.setAttribute('aria-label', 'Recent orders');
+                    orders.forEach(order => {
+                        const button = document.createElement('button');
+                        button.type = 'button';
+                        button.textContent = order.order_number;
+                        button.addEventListener('click', () => {
+                            if (input.readOnly) return;
+                            addMessage(order.order_number, 'bili-help__message');
+                            showOrderTracking(order.id);
+                        });
+                        list.appendChild(button);
+                    });
+                    messages.appendChild(list);
+                    messages.scrollTop = messages.scrollHeight;
+                } catch {
+                    addReply('Hindi ma-load ang order status ngayon. Subukan ulit o buksan ang My Orders.', myOrders);
+                } finally {
+                    send.disabled = false;
+                    input.readOnly = false;
+                }
+            };
+
             topics.forEach(topic => topic.addEventListener('click', () => {
                 if (input.readOnly) return;
                 followUp = null;
                 pendingBudget = null;
                 pendingDetail = null;
-                addMessage(topic.textContent.trim(), 'bili-help__message');
-                reply(topic);
+                const question = topic.textContent.trim();
+                addMessage(question, 'bili-help__message');
+                if (question === 'Track my order') {
+                    showOrderTracking();
+                } else {
+                    reply(topic);
+                }
             }));
 
             form.addEventListener('submit', async event => {
@@ -359,6 +439,10 @@
                 }
 
                 const matches = topics.filter(topic => keywords[topic.textContent.trim()]?.test(normalized));
+                if (matches.length === 1 && matches[0].textContent.trim() === 'Track my order') {
+                    await showOrderTracking();
+                    return;
+                }
                 if (!shoppingHelp) {
                     reply(matches.length === 1 ? matches[0] : null);
                     return;

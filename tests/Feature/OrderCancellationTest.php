@@ -152,6 +152,7 @@ class OrderCancellationTest extends SQLiteTestCase
 
             $table->unsignedBigInteger('price_minor');
 
+            $table->decimal('packed_weight_kg', 7, 3)->nullable();
             $table->integer('stock');
 
             $table->timestamps();
@@ -341,6 +342,10 @@ class OrderCancellationTest extends SQLiteTestCase
             $table->foreignId('logistic_id')->nullable();
             $table->string('name');
             $table->string('status')->default('active');
+            $table->boolean('is_default')->default(false);
+            $table->string('barangay')->nullable();
+            $table->string('city')->nullable();
+            $table->string('province')->nullable();
             $table->decimal('latitude', 10, 7)->nullable();
             $table->decimal('longitude', 10, 7)->nullable();
             $table->timestamps();
@@ -356,6 +361,7 @@ class OrderCancellationTest extends SQLiteTestCase
 
             $table->foreignId('linehaul_rider_id')->nullable();
             $table->string('required_vehicle_type', 30)->nullable();
+            $table->decimal('estimated_weight_kg', 14, 3)->nullable();
             $table->decimal('parcel_weight_kg', 10, 2)->nullable();
             $table->decimal('estimated_distance_km', 10, 2)->nullable();
             $table->string('linehaul_status', 40)->default('not_required');
@@ -389,6 +395,7 @@ class OrderCancellationTest extends SQLiteTestCase
 
             $table->foreignId('size_id')->nullable();
 
+            $table->decimal('packed_weight_kg', 7, 3)->nullable();
             $table->string('product_name');
 
             $table->unsignedBigInteger('price_minor');
@@ -591,7 +598,7 @@ class OrderCancellationTest extends SQLiteTestCase
 
     private function placeOrder(): Order
     {
-        $this->checkout()->assertSessionHasNoErrors();
+        $this->checkout()->assertRedirect()->assertSessionHasNoErrors()->assertSessionHas('success');
 
         $this->assertDatabaseCount('orders', 1);
 
@@ -670,6 +677,63 @@ class OrderCancellationTest extends SQLiteTestCase
     }
 
 
+
+    public function test_help_chat_tracking_only_returns_owned_orders_and_fresh_status(): void
+    {
+        Schema::table('orders', function (Blueprint $table) {
+            $table->string('delivery_status')->nullable();
+        });
+
+        $buyer = $this->buyer();
+        $listUrl = route('orders.index', ['format' => 'help-chat']);
+        $this->getJson($listUrl)->assertUnauthorized();
+
+        $this->actingAs($buyer)->getJson($listUrl)
+            ->assertOk()->assertExactJson(['orders' => []]);
+
+        $order = Order::forceCreate([
+            'user_id' => $buyer->id,
+            'order_number' => 'ORD-TRACKING-TEST',
+            'status' => 'ready_for_pickup',
+            'subtotal_minor' => 10000,
+            'shipping_minor' => 5000,
+            'total_minor' => 15000,
+            'shipping_address' => ['address' => 'Test buyer address'],
+            'payment_method' => 'cod',
+            'payment_status' => 'unpaid',
+        ]);
+        $otherBuyer = $buyer->replicate();
+        $otherBuyer->email = 'another-buyer@example.test';
+        $otherBuyer->save();
+        $otherOrder = $order->replicate();
+        $otherOrder->forceFill([
+            'user_id' => $otherBuyer->id,
+            'order_number' => 'ORD-SOMEONE-ELSE',
+            'reference' => 'REFERENCE-SOMEONE-ELSE',
+        ])->save();
+
+        $response = $this->getJson($listUrl)->assertOk()
+            ->assertJsonCount(1, 'orders')
+            ->assertJsonPath('orders.0.id', $order->id)
+            ->assertJsonPath('orders.0.order_number', $order->order_number)
+            ->assertJsonPath('orders.0.tracking_url', route('orders.show', $order, false) . '#order-tracking')
+            ->assertJsonMissingPath('orders.0.shipping_address')
+            ->assertJsonMissingPath('orders.0.payment_status');
+        $this->assertStringContainsString('no-store', $response->headers->get('Cache-Control'));
+
+        $order->forceFill(['status' => 'out_for_delivery', 'delivery_status' => 'partially_delivered'])->save();
+
+        $this->getJson(route('orders.index', ['format' => 'help-chat', 'order_id' => $order->id]))
+            ->assertOk()
+            ->assertJsonPath('orders.0.status', 'Out For Delivery')
+            ->assertJsonPath('orders.0.delivery_status', 'Partially Delivered');
+
+        $this->getJson(route('orders.index', ['format' => 'help-chat', 'order_id' => $otherOrder->id]))
+            ->assertNotFound();
+
+        $buyer->forceFill(['email_verified_at' => null])->save();
+        $this->getJson($listUrl)->assertForbidden();
+    }
 
     public function test_cancellation_restores_product_variant_and_size_stock(): void
 

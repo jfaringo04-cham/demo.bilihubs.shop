@@ -7,10 +7,12 @@ use App\Models\Order;
 use App\Models\Review;
 use App\Services\ComplianceMonitor;
 use App\Services\OrderReceiptFinalizationService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class OrderController extends Controller
@@ -31,13 +33,46 @@ class OrderController extends Controller
         ]);
     }
 
-    public function index()
+    public function index(Request $request)
     {
-        $orders = Order::where('user_id', Auth::id())
-            ->latest()
-            ->paginate(10);
+        if ($request->query('format') === 'help-chat' && $request->expectsJson()) {
+            return $this->helpChatOrders($request);
+        }
+
+        $orders = $request->user()->orders()->latest()->paginate(10);
 
         return view('orders.index', compact('orders'));
+    }
+
+    private function helpChatOrders(Request $request): JsonResponse
+    {
+        $filters = $request->validate([
+            'order_id' => ['sometimes', 'required', 'integer', 'min:1'],
+        ]);
+
+        $orders = $request->user()->orders()
+            ->select('id', 'order_number', 'status', 'delivery_status')
+            ->latest()->orderByDesc('id');
+
+        if (isset($filters['order_id'])) {
+            $orders->whereKey($filters['order_id']);
+        }
+
+        $recent = isset($filters['order_id'])
+            ? collect([$orders->firstOrFail()])
+            : $orders->limit(5)->get();
+
+        return response()->json([
+            'orders' => $recent->map(fn (Order $order) => [
+                'id' => $order->id,
+                'order_number' => $order->order_number,
+                'status' => Str::headline($order->status),
+                'delivery_status' => $order->delivery_status && $order->delivery_status !== 'pending'
+                    ? Str::headline($order->delivery_status)
+                    : null,
+                'tracking_url' => route('orders.show', $order, false) . '#order-tracking',
+            ]),
+        ])->header('Cache-Control', 'private, no-store');
     }
 
     public function show(Order $order)

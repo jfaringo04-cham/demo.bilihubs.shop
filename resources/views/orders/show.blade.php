@@ -92,7 +92,7 @@
       }
       @endphp
 
-      <div class="card mb-4">
+      <div class="card mb-4" id="order-tracking">
         <div class="card-header bg-white">
           <h5 class="mb-0">Order Tracking</h5>
         </div>
